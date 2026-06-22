@@ -8,6 +8,10 @@ import {
   sendWhatsAppMessage,
   sendWhatsAppTemplateMessage,
 } from '../../../services/whatsapp.js';
+import {
+  isTemplateMediaHeaderFormat,
+  uploadTemplateHeaderMediaForSend,
+} from '../../../services/templateSendHeader.js';
 import type { MessagingProvider, SendMessageInput, SendMessageResult } from './messaging.provider.js';
 
 export class MetaCloudMessagingProvider implements MessagingProvider {
@@ -40,6 +44,12 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
       let language = input.language ?? 'en';
       let bodyPattern = '';
       let variables: string[] = input.variables ?? [];
+      let templateRecord: {
+        headerFormat: string | null;
+        headerMediaStorageKey: string | null;
+        headerMediaMimeType: string | null;
+        headerMediaFileName: string | null;
+      } | null = null;
 
       if (input.templateId) {
         const template = await prisma.template.findFirst({
@@ -52,6 +62,7 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
         templateName = template.name;
         language = template.language;
         bodyPattern = template.bodyPattern;
+        templateRecord = template;
         if (template.variables.length && variables.length < template.variables.length) {
           variables = [...variables, ...Array(template.variables.length - variables.length).fill('')];
         }
@@ -65,13 +76,30 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
         ? renderTemplateBody(bodyPattern, variables)
         : `[Template: ${templateName}]`;
 
+      let headerMedia:
+        | {
+            format: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+            waMediaId: string;
+            fileName?: string;
+          }
+        | undefined;
+
+      if (templateRecord && isTemplateMediaHeaderFormat(templateRecord.headerFormat)) {
+        headerMedia = await uploadTemplateHeaderMediaForSend(
+          credentials.accessToken,
+          credentials.phoneNumberId,
+          templateRecord
+        );
+      }
+
       const result = await sendWhatsAppTemplateMessage(
         credentials.accessToken,
         credentials.phoneNumberId,
         contact.phone,
         templateName,
         language,
-        variables
+        variables,
+        headerMedia ? { headerMedia } : undefined
       );
       waMessageId = result.waMessageId;
     } else {

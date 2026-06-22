@@ -69,6 +69,11 @@ export async function sendWhatsAppTemplateMessage(
   bodyParameters: string[],
   options?: {
     buttonUrlParameter?: string;
+    headerMedia?: {
+      format: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+      waMediaId: string;
+      fileName?: string;
+    };
   }
 ): Promise<SendWhatsAppResult> {
   const recipient = normalizeWhatsAppRecipient(to);
@@ -80,7 +85,7 @@ export async function sendWhatsAppTemplateMessage(
       type: string;
       sub_type?: string;
       index?: string;
-      parameters: Array<{ type: string; text: string }>;
+      parameters: Array<Record<string, unknown>>;
     }>;
   } = {
     name: templateName,
@@ -88,6 +93,18 @@ export async function sendWhatsAppTemplateMessage(
   };
 
   const components: NonNullable<(typeof template)['components']> = [];
+
+  if (options?.headerMedia) {
+    const mediaType = options.headerMedia.format.toLowerCase();
+    const mediaPayload: Record<string, unknown> = { id: options.headerMedia.waMediaId };
+    if (mediaType === 'document' && options.headerMedia.fileName?.trim()) {
+      mediaPayload.filename = options.headerMedia.fileName.trim();
+    }
+    components.push({
+      type: 'header',
+      parameters: [{ type: mediaType, [mediaType]: mediaPayload }],
+    });
+  }
 
   if (bodyParameters.length > 0) {
     components.push({

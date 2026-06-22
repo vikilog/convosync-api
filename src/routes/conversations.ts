@@ -40,6 +40,10 @@ import {
   sendWhatsAppTemplateMessage,
 } from '../services/whatsapp.js';
 import {
+  isTemplateMediaHeaderFormat,
+  uploadTemplateHeaderMediaForSend,
+} from '../services/templateSendHeader.js';
+import {
   resolveOutboundInstagramKind,
   sendInstagramMediaMessage,
 } from '../services/instagramMedia.js';
@@ -426,10 +430,42 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
   fastify.post('/:id/messages/template', auth, async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const { templateId, variables } = request.body as {
-      templateId?: string;
-      variables?: string[];
-    };
+
+    let templateId: string | undefined;
+    let variables: string[] = [];
+    let headerMediaBuffer: Buffer | null = null;
+    let headerMediaMimeType = '';
+    let headerMediaFileName = '';
+
+    if (request.isMultipart()) {
+      const parts = request.parts();
+      for await (const part of parts) {
+        if (part.type === 'file' && part.fieldname === 'headerMedia') {
+          headerMediaBuffer = await part.toBuffer();
+          headerMediaMimeType = part.mimetype || 'application/octet-stream';
+          headerMediaFileName = part.filename || 'file';
+        } else if (part.type === 'field') {
+          if (part.fieldname === 'templateId') {
+            templateId = String(part.value ?? '').trim() || undefined;
+          }
+          if (part.fieldname === 'variables') {
+            try {
+              const parsed = JSON.parse(String(part.value ?? '[]'));
+              variables = Array.isArray(parsed) ? parsed.map((v) => String(v)) : [];
+            } catch {
+              return reply.code(400).send({ error: 'Invalid variables payload' });
+            }
+          }
+        }
+      }
+    } else {
+      const body = request.body as {
+        templateId?: string;
+        variables?: string[];
+      };
+      templateId = body.templateId;
+      variables = Array.isArray(body.variables) ? body.variables.map((v) => String(v)) : [];
+    }
 
     if (!templateId) {
       return reply.code(400).send({ error: 'templateId is required' });
@@ -494,6 +530,38 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
 
     const displayContent = renderTemplateBody(template.bodyPattern, bodyParams);
 
+    let headerMedia:
+      | {
+          format: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+          waMediaId: string;
+          fileName?: string;
+        }
+      | undefined;
+
+    if (isTemplateMediaHeaderFormat(template.headerFormat)) {
+      try {
+        const uploaded =
+          headerMediaBuffer && headerMediaBuffer.length > 0
+            ? {
+                buffer: headerMediaBuffer,
+                mimeType: headerMediaMimeType,
+                fileName: headerMediaFileName || undefined,
+              }
+            : null;
+        const resolved = await uploadTemplateHeaderMediaForSend(
+          credentials.accessToken,
+          credentials.phoneNumberId,
+          template,
+          uploaded
+        );
+        headerMedia = resolved;
+      } catch (err) {
+        return reply.code(400).send({
+          error: err instanceof Error ? err.message : 'Template header media is required',
+        });
+      }
+    }
+
     let waMessageId: string | undefined;
     try {
       const sent = await sendWhatsAppTemplateMessage(
@@ -502,7 +570,8 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         conv.contact.phone,
         template.name,
         template.language,
-        bodyParams
+        bodyParams,
+        headerMedia ? { headerMedia } : undefined
       );
       waMessageId = sent.waMessageId;
     } catch (err) {
@@ -523,6 +592,12 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
           templateId: template.id,
           templateName: template.name,
           variables: bodyParams,
+          ...(headerMedia
+            ? {
+                headerFormat: headerMedia.format,
+                headerMediaFileName: headerMedia.fileName ?? null,
+              }
+            : {}),
         },
       },
     });

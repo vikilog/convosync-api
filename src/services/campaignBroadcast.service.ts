@@ -12,6 +12,10 @@ import {
 import { findOrReopenConversationForInbound } from './conversationThread.service.js';
 import { getWorkspaceWhatsAppCredentials } from './whatsappCredentials.js';
 import { sendWhatsAppTemplateMessage, renderTemplateBody, formatMetaSendError } from './whatsapp.js';
+import {
+  isTemplateMediaHeaderFormat,
+  uploadTemplateHeaderMediaForSend,
+} from './templateSendHeader.js';
 
 type CampaignAudienceFilter = {
   channel?: CampaignAudienceChannel;
@@ -85,13 +89,30 @@ async function executeWhatsAppCampaignBroadcast(
 
   for (const contact of contacts) {
     try {
+      let headerMedia:
+        | {
+            format: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+            waMediaId: string;
+            fileName?: string;
+          }
+        | undefined;
+
+      if (isTemplateMediaHeaderFormat(template.headerFormat)) {
+        headerMedia = await uploadTemplateHeaderMediaForSend(
+          credentials.accessToken,
+          credentials.phoneNumberId,
+          template
+        );
+      }
+
       const sent = await sendWhatsAppTemplateMessage(
         credentials.accessToken,
         credentials.phoneNumberId,
         contact.phone,
         template.name,
         template.language,
-        bodyParams
+        bodyParams,
+        headerMedia ? { headerMedia } : undefined
       );
 
       const { conversation } = await findOrReopenConversationForInbound({

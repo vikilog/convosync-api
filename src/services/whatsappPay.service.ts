@@ -4,6 +4,10 @@ import { RazorpayService } from '../modules/billing/razorpay.service.js';
 import { findWhatsAppContact, upsertWhatsAppContact } from '../lib/whatsappContact.js';
 import { getWorkspaceWhatsAppCredentials } from './whatsappCredentials.js';
 import { formatMetaSendError, renderTemplateBody, sendWhatsAppCtaUrlMessage, sendWhatsAppTemplateMessage } from './whatsapp.js';
+import {
+  isTemplateMediaHeaderFormat,
+  uploadTemplateHeaderMediaForSend,
+} from './templateSendHeader.js';
 import { extractVariableIndexes } from './metaMessageTemplates.js';
 import {
   resolveWhatsAppConversationForOutbound,
@@ -293,6 +297,22 @@ export class WhatsAppPayService {
           throw new Error('Template variables are missing or invalid');
         }
 
+        let headerMedia:
+          | {
+              format: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+              waMediaId: string;
+              fileName?: string;
+            }
+          | undefined;
+
+        if (isTemplateMediaHeaderFormat(template.headerFormat)) {
+          headerMedia = await uploadTemplateHeaderMediaForSend(
+            credentials.accessToken,
+            credentials.phoneNumberId,
+            template
+          );
+        }
+
         const sent = await sendWhatsAppTemplateMessage(
           credentials.accessToken,
           credentials.phoneNumberId,
@@ -300,9 +320,12 @@ export class WhatsAppPayService {
           template.name,
           template.language,
           bodyParams,
-          template.buttonType === 'URL'
-            ? { buttonUrlParameter: templateButtonUrlParameter(template.buttonUrl, paymentLinkUrl) }
-            : undefined
+          {
+            ...(template.buttonType === 'URL'
+              ? { buttonUrlParameter: templateButtonUrlParameter(template.buttonUrl, paymentLinkUrl) }
+              : {}),
+            ...(headerMedia ? { headerMedia } : {}),
+          }
         );
         waMessageId = sent.waMessageId;
         inboxContent = renderTemplateBody(template.bodyPattern, bodyParams);
