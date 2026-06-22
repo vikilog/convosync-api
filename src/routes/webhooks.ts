@@ -40,6 +40,7 @@ function logWebhook(label: string, payload: unknown) {
 
 export default async function webhookRoutes(fastify: FastifyInstance) {
   fastify.get('/whatsapp', async (request, reply) => {
+    console.log('[WhatsApp Webhook] GET hit — verification request', new Date().toISOString());
     const { 'hub.mode': mode, 'hub.verify_token': token, 'hub.challenge': challenge } = request.query as {
       'hub.mode'?: string;
       'hub.verify_token'?: string;
@@ -58,6 +59,7 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post('/whatsapp', async (request, reply) => {
+    console.log('[WhatsApp Webhook] POST hit — incoming event', new Date().toISOString());
     const body = request.body as {
       entry?: Array<{ changes?: Array<{ field?: string; value?: Record<string, unknown> }> }>;
     };
@@ -285,6 +287,7 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
   });
 
   fastify.get('/instagram', async (request, reply) => {
+    console.log('[Instagram Webhook] GET hit — verification request', new Date().toISOString());
     const { 'hub.mode': mode, 'hub.verify_token': token, 'hub.challenge': challenge } = request.query as {
       'hub.mode'?: string;
       'hub.verify_token'?: string;
@@ -307,6 +310,7 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post('/instagram', async (request, reply) => {
+    console.log('[Instagram Webhook] POST hit — incoming event', new Date().toISOString());
     const body = request.body as PageMessagingWebhookBody;
 
     logInstagramWebhook('POST payload', body);
