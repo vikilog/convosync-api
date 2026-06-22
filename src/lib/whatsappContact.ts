@@ -1,0 +1,189 @@
+import type { PrismaClient, Contact } from '@prisma/client';
+
+export type WhatsAppWebhookContact = {
+  profile?: { name?: string };
+  wa_id?: string;
+};
+
+export function normalizeWhatsAppContactPhone(phone: string): string {
+  return phone.replace(/\D/g, '');
+}
+
+export function phonesMatch(a: string, b: string): boolean {
+  return normalizeWhatsAppContactPhone(a) === normalizeWhatsAppContactPhone(b);
+}
+
+export function extractWhatsAppProfileName(
+  contacts: WhatsAppWebhookContact[] | undefined,
+  waId: string
+): string | undefined {
+  if (!contacts?.length) return undefined;
+  const match =
+    contacts.find((c) => c.wa_id === waId || c.wa_id === normalizeWhatsAppContactPhone(waId)) ??
+    contacts[0];
+  const name = match?.profile?.name?.trim();
+  return name || undefined;
+}
+
+export function formatWhatsAppDisplayPhone(phone: string): string {
+  const digits = normalizeWhatsAppContactPhone(phone);
+  if (!digits) return phone;
+  return `+${digits}`;
+}
+
+export function resolveWhatsAppContactName(profileName: string | undefined, phone: string): string {
+  if (profileName?.trim()) return profileName.trim();
+  return formatWhatsAppDisplayPhone(phone);
+}
+
+export function isPlaceholderWhatsAppContactName(name: string, phone: string): boolean {
+  const trimmed = name.trim();
+  if (!trimmed) return true;
+  const nameDigits = normalizeWhatsAppContactPhone(trimmed);
+  const phoneDigits = normalizeWhatsAppContactPhone(phone);
+  return nameDigits === phoneDigits;
+}
+
+export async function findWhatsAppContacts(
+  db: PrismaClient,
+  workspaceId: string,
+  waFrom: string
+): Promise<Contact[]> {
+  const digits = normalizeWhatsAppContactPhone(waFrom);
+  if (!digits) return [];
+
+  return db.contact.findMany({
+    where: {
+      workspaceId,
+      OR: [{ phone: waFrom }, { phone: digits }, { phone: `+${digits}` }],
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+}
+
+/** @deprecated Prefer findWhatsAppContacts — kept for callers that expect a single row. */
+export async function findWhatsAppContact(
+  db: PrismaClient,
+  workspaceId: string,
+  waFrom: string
+): Promise<Contact | null> {
+  const matches = await findWhatsAppContacts(db, workspaceId, waFrom);
+  if (matches.length === 0) return null;
+  return pickCanonicalWhatsAppContact(db, matches);
+}
+
+async function pickCanonicalWhatsAppContact(
+  db: PrismaClient,
+  matches: Contact[]
+): Promise<Contact> {
+  if (matches.length === 1) return matches[0];
+
+  const scored = await Promise.all(
+    matches.map(async (contact) => ({
+      contact,
+      conversationCount: await db.conversation.count({ where: { contactId: contact.id } }),
+    }))
+  );
+
+  scored.sort((a, b) => {
+    if (b.conversationCount !== a.conversationCount) {
+      return b.conversationCount - a.conversationCount;
+    }
+    return a.contact.createdAt.getTime() - b.contact.createdAt.getTime();
+  });
+
+  return scored[0].contact;
+}
+
+async function mergeDuplicateWhatsAppContacts(
+  db: PrismaClient,
+  primary: Contact,
+  duplicates: Contact[]
+): Promise<Contact> {
+  const normalizedPhone = normalizeWhatsAppContactPhone(primary.phone);
+
+  for (const duplicate of duplicates) {
+    if (duplicate.id === primary.id) continue;
+
+    await db.conversation.updateMany({
+      where: { contactId: duplicate.id },
+      data: { contactId: primary.id },
+    });
+    await db.journeyExecution.updateMany({
+      where: { contactId: duplicate.id },
+      data: { contactId: primary.id },
+    });
+    await db.agentFlowSession.updateMany({
+      where: { contactId: duplicate.id },
+      data: { contactId: primary.id },
+    });
+    await db.contact.delete({ where: { id: duplicate.id } });
+  }
+
+  if (!phonesMatch(primary.phone, normalizedPhone)) {
+    return db.contact.update({
+      where: { id: primary.id },
+      data: { phone: normalizedPhone },
+    });
+  }
+
+  return primary;
+}
+
+export async function upsertWhatsAppContact(params: {
+  db: PrismaClient;
+  workspaceId: string;
+  waFrom: string;
+  profileName?: string;
+}): Promise<Contact> {
+  const { db, workspaceId, waFrom, profileName } = params;
+  const phone = normalizeWhatsAppContactPhone(waFrom);
+  const contactName = resolveWhatsAppContactName(profileName, phone);
+
+  let matches = await findWhatsAppContacts(db, workspaceId, waFrom);
+
+  if (matches.length === 0) {
+    return db.contact.create({
+      data: {
+        name: contactName,
+        phone,
+        workspaceId,
+        source: 'WhatsApp',
+      },
+    });
+  }
+
+  let existing = await pickCanonicalWhatsAppContact(db, matches);
+  if (matches.length > 1) {
+    existing = await mergeDuplicateWhatsAppContacts(db, existing, matches);
+    matches = [existing];
+  }
+
+  const shouldUpdateName =
+    profileName && isPlaceholderWhatsAppContactName(existing.name, existing.phone);
+
+  if (shouldUpdateName) {
+    return db.contact.update({
+      where: { id: existing.id },
+      data: { name: contactName },
+    });
+  }
+
+  if (!phonesMatch(existing.phone, phone)) {
+    const conflict = await db.contact.findFirst({
+      where: {
+        workspaceId,
+        phone,
+        id: { not: existing.id },
+      },
+    });
+    if (!conflict) {
+      return db.contact.update({
+        where: { id: existing.id },
+        data: { phone },
+      });
+    }
+  }
+
+  return existing;
+}

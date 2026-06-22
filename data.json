@@ -1,0 +1,1114 @@
+{
+    "faqs": [],
+    "salon": {
+      "name": "chau mink",
+      "email": "vipinswami000+venue1@gmail.com",
+      "phone": "+917056957726",
+      "address": "2nd floor above arogyam hospital, near hp pump, bus stand sirsa New delhi Delhi 110070 India, 2nd floor above arogyam hospital, near hp pump, bus stand sirsa, New delhi, Delhi, 110070, India, [object Object]",
+      "currency": "INR",
+      "timezone": "Asia/Kolkata",
+      "workingHours": [
+        {
+          "day": "MONDAY",
+          "open": "07:00",
+          "close": "22:00",
+          "isOpen": true,
+          "open24Hours": false,
+          "offPeakHours": []
+        },
+        {
+          "day": "TUESDAY",
+          "open": "10:00",
+          "close": "20:00",
+          "isOpen": true,
+          "open24Hours": false,
+          "offPeakHours": []
+        },
+        {
+          "day": "WEDNESDAY",
+          "open": "10:00",
+          "close": "20:00",
+          "isOpen": true,
+          "open24Hours": false,
+          "offPeakHours": []
+        },
+        {
+          "day": "THURSDAY",
+          "open": "10:00",
+          "close": "20:00",
+          "isOpen": true,
+          "open24Hours": false,
+          "offPeakHours": []
+        },
+        {
+          "day": "FRIDAY",
+          "open": "10:00",
+          "close": "20:00",
+          "isOpen": true,
+          "open24Hours": false,
+          "offPeakHours": []
+        },
+        {
+          "day": "SATURDAY",
+          "open": "10:00",
+          "close": "20:00",
+          "isOpen": true,
+          "open24Hours": false,
+          "offPeakHours": []
+        },
+        {
+          "day": "SUNDAY",
+          "open": "10:00",
+          "close": "20:00",
+          "isOpen": true,
+          "open24Hours": false,
+          "offPeakHours": []
+        }
+      ]
+    },
+    "staff": [
+      {
+        "id": "694418633d45ccf45fbb2df6",
+        "name": "",
+        "role": "OWNER",
+        "skills": [],
+        "experience": ""
+      }
+    ],
+    "branches": [],
+    "packages": [],
+    "policies": [],
+    "products": [
+      {
+        "id": "68c7f8e43097ff61c933c45c",
+        "name": "shampoo",
+        "price": 0,
+        "stock": null,
+        "category": "General",
+        "description": "best for hair growth"
+      },
+      {
+        "id": "68bff71d1833b2f85e2af3a0",
+        "name": "face glowver",
+        "price": 0,
+        "stock": null,
+        "category": "General",
+        "description": "One of the best products in the market"
+      },
+      {
+        "id": "68bbdc4e6f17fd859c689f48",
+        "name": "shampoo",
+        "price": 0,
+        "stock": null,
+        "category": "General",
+        "description": "best shampoo for hair growth"
+      },
+      {
+        "id": "68c7fa4a3097ff61c933c45e",
+        "name": "shampoo",
+        "price": 0,
+        "stock": null,
+        "category": "General",
+        "description": "best for hair growth"
+      },
+      {
+        "id": "69e9ddf4d7ad018636c3fcba",
+        "name": "hair serum",
+        "price": 0,
+        "stock": null,
+        "category": "General",
+        "description": "for growth"
+      }
+    ],
+    "services": [
+      {
+        "id": "68bff4821833b2f85e2af391",
+        "name": "Tattoo",
+        "price": 10000,
+        "category": "AT_VENUE",
+        "duration": 300,
+        "description": "custom  Tattoo"
+      },
+      {
+        "id": "68bff4341833b2f85e2af38c",
+        "name": "Body Treatments",
+        "price": 1200,
+        "category": "AT_VENUE",
+        "duration": 120,
+        "description": "Body Treatments"
+      },
+      {
+        "id": "68bab3ea6f17fd859c689dc9",
+        "name": "Beard Styling & Trimming",
+        "price": 300,
+        "category": "AT_VENUE",
+        "duration": 60,
+        "description": "Precision beard trim and styling with blade finish."
+      },
+      {
+        "id": "697466f4cef85d0b1415024f",
+        "name": "Nail Care",
+        "price": 90,
+        "category": "AT_VENUE",
+        "duration": 15,
+        "description": ""
+      },
+      {
+        "id": "69e8b356d7ad018636c3fca5",
+        "name": "eyelash",
+        "price": 500,
+        "category": "AT_VENUE",
+        "duration": 30,
+        "description": ""
+      }
+    ],
+    "syncLogs": [
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (location, partnerId)",
+        "collection": "Venue",
+        "durationMs": 882,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId)",
+        "collection": "Service",
+        "durationMs": 912,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId)",
+        "collection": "Staff",
+        "durationMs": 879,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (_id)",
+        "collection": "Venue",
+        "durationMs": 787,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, partnerId, venueId, venue, salonId, branchId, locationId)",
+        "collection": "Service",
+        "durationMs": 809,
+        "documentsFetched": 5
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "Staff",
+        "durationMs": 741,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ServicingStaff",
+        "durationMs": 781,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "Client",
+        "durationMs": 870,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "Product",
+        "durationMs": 144,
+        "documentsFetched": 5
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueId, venueIds, venue, salonId, branchId, locationId)",
+        "collection": "Appointment",
+        "durationMs": 399,
+        "documentsFetched": 81
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ServiceSubCategory",
+        "durationMs": 674,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ProductCategory",
+        "durationMs": 809,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "MemberShip",
+        "durationMs": 801,
+        "documentsFetched": 2
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "Package",
+        "durationMs": 923,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "Voucher",
+        "durationMs": 692,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "Amenity",
+        "durationMs": 789,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "AppointmentItem",
+        "durationMs": 742,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "Banner",
+        "durationMs": 826,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "BannerDismissal",
+        "durationMs": 196,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "BannerView",
+        "durationMs": 809,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "BAStaff",
+        "durationMs": 819,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, partnerId, venueId, venue, salonId, branchId, locationId)",
+        "collection": "BookALook",
+        "durationMs": 686,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "BusinessAssociate",
+        "durationMs": 783,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "BusinessAssociateBankDetails",
+        "durationMs": 860,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "BusinessAssociateEarning",
+        "durationMs": 700,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "BusinessType",
+        "durationMs": 217,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "Chat",
+        "durationMs": 192,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ChatMessage",
+        "durationMs": 859,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ChatMessageReply",
+        "durationMs": 890,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "ClientMembership",
+        "durationMs": 211,
+        "documentsFetched": 10
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "ClientVoucher",
+        "durationMs": 782,
+        "documentsFetched": 11
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "ConnectedBankAccount",
+        "durationMs": 870,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "Country",
+        "durationMs": 861,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "CountryAdsManagerSetting",
+        "durationMs": 832,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "CountryGetFeatureSetting",
+        "durationMs": 246,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "CountryPartnerOnlineBookingSetting",
+        "durationMs": 749,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "CountryVenueTrustedBadgeSetting",
+        "durationMs": 825,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "CreativeStudioTemplate",
+        "durationMs": 1217,
+        "documentsFetched": 14
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, venueIds, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "FavoriteVenue",
+        "durationMs": 999,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "FieldExecutiveStaffTarget",
+        "durationMs": 956,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, venueIds, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "FieldVisit",
+        "durationMs": 180,
+        "documentsFetched": 5
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "FollowUpReport",
+        "durationMs": 858,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "GeneratedReport",
+        "durationMs": 1430,
+        "documentsFetched": 19
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "GiftCard",
+        "durationMs": 1307,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, partnerId, venueId, venue, salonId, branchId, locationId)",
+        "collection": "GiftCardTemplate",
+        "durationMs": 769,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "InActiveCustomerRemainder",
+        "durationMs": 1018,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "Message",
+        "durationMs": 810,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, partnerId, venueIds, venue, salonId, branchId, locationId)",
+        "collection": "MessageCenterCampaign",
+        "durationMs": 178,
+        "documentsFetched": 5
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "MessageCenterCreditTransaction",
+        "durationMs": 814,
+        "documentsFetched": 47
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "MessageCenterPlan",
+        "durationMs": 806,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "MonthlyStat",
+        "durationMs": 277,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "Notification",
+        "durationMs": 680,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "NotificationAttempt",
+        "durationMs": 931,
+        "documentsFetched": 32
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "NotificationReadStatus",
+        "durationMs": 846,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "NotificationTemplate",
+        "durationMs": 164,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, venueIds, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "OfferUsage",
+        "durationMs": 756,
+        "documentsFetched": 3
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "Otp",
+        "durationMs": 822,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "Partner",
+        "durationMs": 863,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "PartnerAnniversaryPromotionSetting",
+        "durationMs": 692,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "PartnerBirthDayPromotionSetting",
+        "durationMs": 992,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "PartnerClient",
+        "durationMs": 1314,
+        "documentsFetched": 16
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "PartnerClientNote",
+        "durationMs": 186,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "PartnerGiftCardSetting",
+        "durationMs": 769,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, venueIds, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "PartnerIssue",
+        "durationMs": 884,
+        "documentsFetched": 14
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "PartnerMessageCenterAccount",
+        "durationMs": 694,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "PartnerMessageCenterPreference",
+        "durationMs": 766,
+        "documentsFetched": 29
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "PartnerOnboardingFeePlan",
+        "durationMs": 175,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "PartnerOnlineBookingSetting",
+        "durationMs": 874,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "PartnerReportSetting",
+        "durationMs": 182,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "PartnerServiceDueSetting",
+        "durationMs": 187,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "PartnerStaffEmploymentHistory",
+        "durationMs": 2306,
+        "documentsFetched": 5
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueId, venueIds, venue, salonId, branchId, locationId)",
+        "collection": "PartnerSubscription",
+        "durationMs": 281,
+        "documentsFetched": 45
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "PartnerSubscriptionPlan",
+        "durationMs": 167,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "PartnerTaxSetting",
+        "durationMs": 161,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "PaymentActivityLog",
+        "durationMs": 167,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "PaymentTransaction",
+        "durationMs": 908,
+        "documentsFetched": 13
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "Pincode",
+        "durationMs": 456,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "PlatformSettings",
+        "durationMs": 1208,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ProductBrand",
+        "durationMs": 967,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, venueIds, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ProductStock",
+        "durationMs": 716,
+        "documentsFetched": 2
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ProductSubCategory",
+        "durationMs": 940,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ProspectivePartnerFieldVisitReport",
+        "durationMs": 1227,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "Recommendation",
+        "durationMs": 1369,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "RecommendationUsage",
+        "durationMs": 771,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "RegisteredPartnerFieldVisitReport",
+        "durationMs": 3132,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ReminderNotification",
+        "durationMs": 1470,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, venueIds, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ReviewBoostPrompt",
+        "durationMs": 182,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, venueIds, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "Sale",
+        "durationMs": 974,
+        "documentsFetched": 7
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "SaleActivity",
+        "durationMs": 917,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "SaleItem",
+        "durationMs": 171,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "SalePaymentTransaction",
+        "durationMs": 794,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "SaleTip",
+        "durationMs": 220,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "SaleTipSplit",
+        "durationMs": 827,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ServiceCategory",
+        "durationMs": 224,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueId, venueIds, venue, salonId, branchId, locationId)",
+        "collection": "ServiceDueReminderNotification",
+        "durationMs": 890,
+        "documentsFetched": 2
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "ServiceRemainder",
+        "durationMs": 1222,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "SpecialAttribute",
+        "durationMs": 1484,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "staff_performance_snapshots",
+        "durationMs": 185,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "StaffAttendance",
+        "durationMs": 923,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "StaffAttendanceLeave",
+        "durationMs": 822,
+        "documentsFetched": 2
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "StaffCommissionRecord",
+        "durationMs": 201,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "StaffLeave",
+        "durationMs": 2068,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "StaffReview",
+        "durationMs": 786,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "StockHistory",
+        "durationMs": 691,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "SubscriptionPayment",
+        "durationMs": 1516,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "SupportTicket",
+        "durationMs": 779,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "SupportTicketActivity",
+        "durationMs": 834,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "SupportTicketNote",
+        "durationMs": 1676,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "TypingIndicator",
+        "durationMs": 747,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "User",
+        "durationMs": 802,
+        "documentsFetched": 10
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "UserAddress",
+        "durationMs": 1039,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "UserAsset",
+        "durationMs": 1891,
+        "documentsFetched": 15
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, partnerId, venueIds, venue, salonId, branchId, locationId)",
+        "collection": "VenueActivationRequest",
+        "durationMs": 164,
+        "documentsFetched": 7
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "VenueActivationVerificationOtp",
+        "durationMs": 1483,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "VenueDailyReport",
+        "durationMs": 865,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "VenueMonthlyReport",
+        "durationMs": 712,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, venueIds, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "VenueMonthlySnapshot",
+        "durationMs": 875,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, partnerId, venueIds, venue, salonId, branchId, locationId)",
+        "collection": "VenueMonthlyTarget",
+        "durationMs": 830,
+        "documentsFetched": 6
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, venueIds, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "VenueNote",
+        "durationMs": 174,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, venueIds, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "VenueReview",
+        "durationMs": 744,
+        "documentsFetched": 1
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "VenueReviewComment",
+        "durationMs": 191,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "VenueStaffAssignmentHistory",
+        "durationMs": 1011,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueId, venueIds, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "VenueTrustedBadge",
+        "durationMs": 1554,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "VenueWhatsAppTemplate",
+        "durationMs": 878,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "VoucherRemainder",
+        "durationMs": 259,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "whatsAppCampaign",
+        "durationMs": 267,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "WhatsappCampaignAudience",
+        "durationMs": 1019,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "whatsAppCannedResponse",
+        "durationMs": 489,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "whatsAppChat",
+        "durationMs": 766,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "WhatsappContact",
+        "durationMs": 829,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "WhatsAppCredential",
+        "durationMs": 773,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (venueIds, venueId, venue, partnerId, salonId, branchId, locationId)",
+        "collection": "whatsAppMessage",
+        "durationMs": 180,
+        "documentsFetched": 0
+      },
+      {
+        "action": "fetch",
+        "detail": "Single collection sync (partnerId, venueIds, venueId, venue, salonId, branchId, locationId)",
+        "collection": "WhatsAppOutboundDelivery",
+        "durationMs": 1594,
+        "documentsFetched": 0
+      }
+    ],
+    "vouchers": [],
+    "memberships": [],
+    "resolvedStats": {
+      "totalDocuments": 426,
+      "totalDurationMs": 105011,
+      "collectionsTouched": 41
+    },
+    "businessSettings": {
+      "raw": {},
+      "taxRate": null,
+      "depositRequired": false,
+      "cancellationPolicy": "",
+      "bookingLeadTimeMinutes": null
+    },
+    "customersSummary": [],
+    "serviceCategories": []
+  }
