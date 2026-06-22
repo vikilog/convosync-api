@@ -65,7 +65,7 @@ async function ensureSuperAdminWorkspace(env: SuperAdminEnv) {
     return existing;
   }
 
-  const unlimited = Number.MAX_SAFE_INTEGER;
+  const unlimited = 2147483647;
 
   const workspace = await prisma.workspace.create({
     data: {
