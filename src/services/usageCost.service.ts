@@ -1,5 +1,6 @@
 import { prisma } from '../index.js';
 import {
+  applyAiUsageMarkup,
   EMAIL_RATE_INR_PER_1K,
   WA_CONVERSATION_RATES_INR,
   WA_SERVICE_FREE_CONVERSATIONS,
@@ -213,7 +214,7 @@ export async function getWorkspaceUsageCost(
 
   const aiTotalTokens = aiInputTokens + aiOutputTokens;
   const tokenRates = getTokenRateInrPer1k();
-  const aiGrossCostInr = round2(tokenBreakdown.costInr);
+  const aiGrossCostInr = round2(applyAiUsageMarkup(tokenBreakdown.costInr));
   const tokenBilling = computeTokenBillingCosts({
     used: aiTotalTokens,
     costInr: aiGrossCostInr,

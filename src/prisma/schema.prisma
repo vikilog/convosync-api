@@ -47,6 +47,8 @@ model Workspace {
   useCases        String[] @default([])
   heardAbout      String?
   referralCode    String?
+  /// Razorpay customer for subscriptions and wallet auto-recharge.
+  razorpayCustomerId String?
   waNumberId    String?
   waToken       String?
   wabaId        String?
@@ -105,6 +107,8 @@ model Workspace {
   cachedResponses        CachedResponse[]
   aiProviderConfig       WorkspaceAiProviderConfig?
   whatsappPaymentRequests WhatsAppPaymentRequest[]
+  wallet                  WorkspaceWallet?
+  walletTransactions      WalletTransaction[]
 }
 
 enum GoogleConnectionStatus {
@@ -490,6 +494,7 @@ model Conversation {
   agentFlowSession  AgentFlowSession?
 
   @@index([workspaceId, contactId])
+  @@index([workspaceId, channelAccountId])
 }
 
 model Message {
@@ -1201,6 +1206,47 @@ model WorkspaceUsageLimits {
   @@map("workspace_usage_limits")
 }
 
+/// Prepaid usage wallet — credits for WhatsApp templates, AI tokens, and other metered features.
+model WorkspaceWallet {
+  workspaceId              String    @id
+  workspace                Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  balancePaise             Int       @default(0)
+  lowBalanceThresholdPaise Int       @default(50000)
+  lowBalanceAlertAt        DateTime?
+  autoRechargeEnabled      Boolean   @default(false)
+  autoRechargeAmountPaise  Int       @default(100000)
+  razorpayTokenId          String?
+  autoRechargeStatus       String    @default("idle")
+  lastAutoRechargeAt       DateTime?
+  autoRechargeFailCount    Int       @default(0)
+  autoRechargeCooldownUntil DateTime?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  @@map("workspace_wallets")
+}
+
+/// Ledger entries for wallet credits (top-up) and debits (feature usage).
+model WalletTransaction {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type              String
+  category          String
+  amountPaise       Int
+  balanceAfterPaise Int
+  description       String?
+  referenceType     String?
+  referenceId       String?
+  idempotencyKey    String?         @unique
+  metadata          Json?
+  createdAt         DateTime        @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([category])
+  @@map("wallet_transactions")
+}
+
 /// Platform operators (super admin) — separate from tenant User records.
 model PlatformAdmin {
   id        String   @id @default(cuid())
@@ -1291,3 +1337,4 @@ model WhatsAppPaymentRequest {
   @@index([razorpayPaymentLinkId])
   @@map("whatsapp_payment_requests")
 }
+

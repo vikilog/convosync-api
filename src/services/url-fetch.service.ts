@@ -1,6 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import * as cheerio from 'cheerio';
 import { prisma } from '../index.js';
+import { indexKnowledgeItemInBackground } from '../modules/ai-agent/knowledge/knowledge-index.service.js';
 
 const FETCH_TIMEOUT_MS = 10_000;
 const RATE_LIMIT_MS = 60 * 60 * 1000;
@@ -136,6 +137,8 @@ export async function fetchUrlKnowledge(params: {
       status: 'ready',
     },
   });
+
+  void indexKnowledgeItemInBackground(params.workspaceId, item);
 
   return {
     success: true,

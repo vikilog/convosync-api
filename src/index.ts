@@ -46,6 +46,7 @@ import { startDeveloperSyncWorker } from './modules/developers/workers/sync-even
 import { startGbpSyncWorker } from './modules/google/business-profile/workers/gbp-sync.worker.js';
 import { startGbpScheduler } from './modules/google/business-profile/workers/gbp-scheduler.worker.js';
 import { startTrialScheduler } from './workers/trial.scheduler.js';
+// import { startWalletAutoRechargeWorker } from './workers/wallet-auto-recharge.worker.js';
 import { initJourneyModule } from './modules/journey/container.js';
 import { initEmailModule } from './modules/email/container.js';
 import { initGoogleModule } from './modules/google/container.js';
@@ -122,6 +123,8 @@ async function start() {
   startGbpSyncWorker();
   startGbpScheduler();
   startTrialScheduler();
+  // AUTO_RECHARGE_DISABLED — re-enable later
+  // startWalletAutoRechargeWorker();
 
   setInterval(() => {
     const idleService = new IdleTimeoutService(fastify);
@@ -133,7 +136,7 @@ async function start() {
   console.log(`🚀 ConvoSync backend: http://localhost:${config.port}`);
   console.log('CORS allowlist:', config.corsAllowedOrigins.join(', ') || '(none)');
   console.log('CORS dev relaxed (localhost/ngrok/devtunnels):', config.corsDevRelaxed);
-  console.log('Resend email webhook:', config.resendWebhookUrl);
+  console.log('Resend BYOP webhook (optional):', config.resendWebhookUrl);
 }
 
 start().catch((err) => {

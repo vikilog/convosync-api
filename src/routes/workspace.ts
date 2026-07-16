@@ -30,6 +30,7 @@ import {
   serializeTenantSubscriptionPlan,
 } from '../services/subscriptionPlans.js';
 import { serializeTrialInfo } from '../services/trial.js';
+import { validateAvatarValue } from '../services/userProfile.js';
 
 const customPlanQuoteSchema = z.object({
   contacts: z.coerce.number().int().min(CUSTOM_PLAN_PRICING_RULES.limits.contacts.min).max(CUSTOM_PLAN_PRICING_RULES.limits.contacts.max),
@@ -98,7 +99,7 @@ const companyUpdateSchema = z.object({
   postalCode: z.string().optional().nullable(),
   timezone: z.string().optional().nullable(),
   taxId: z.string().optional().nullable(),
-  logoUrl: z.string().max(2000).optional().nullable(),
+  logoUrl: z.union([z.string(), z.null()]).optional(),
 });
 
 function normalizeOptionalUrls<T extends Record<string, unknown>>(data: T): T {
@@ -195,6 +196,9 @@ export default async function workspaceRoutes(fastify: FastifyInstance) {
     const { workspaceId } = getJwtUser(request);
 
     const body = normalizeOptionalUrls(companyUpdateSchema.parse(request.body));
+    if ('logoUrl' in body) {
+      body.logoUrl = validateAvatarValue(body.logoUrl as string | null | undefined);
+    }
 
     const workspace = await prisma.workspace.update({
       where: { id: workspaceId },

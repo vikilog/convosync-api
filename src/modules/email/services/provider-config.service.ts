@@ -1,10 +1,11 @@
 import type { EmailProviderConfig } from '@prisma/client';
-import { config } from '../../../config.js';
 import { decryptJson, encryptJson, hasEncryptedPayload } from '../../../lib/field-encryption.js';
 import type { EmailRepository } from '../repositories/email.repository.js';
 import {
   EmailProviderFactory,
 } from '../providers/provider-factory.js';
+import { isPlatformSesConfigured } from '../providers/ses.provider.js';
+import { isPlatformResendConfigured } from '../providers/resend.provider.js';
 import type {
   EmailProviderConfigPublic,
   EmailProviderConfigStatus,
@@ -23,11 +24,32 @@ function isManagedProvider(provider: string): boolean {
   return normalizeEmailProviderType(provider) === 'CONVOSYNC_MANAGED';
 }
 
+function isPlatformManagedReady(): boolean {
+  return isPlatformResendConfigured() || isPlatformSesConfigured();
+}
+
+function hasWorkspaceResendKey(encryptedConfig: string): boolean {
+  if (!encryptedConfig) return false;
+  try {
+    const cfg = decryptJson<ResendProviderConfig>(encryptedConfig);
+    return Boolean(cfg.apiKey?.trim());
+  } catch {
+    return false;
+  }
+}
+
+function hasProviderCredentials(provider: string, encryptedConfig: string): boolean {
+  if (isManagedProvider(provider)) return isPlatformManagedReady();
+  const type = normalizeEmailProviderType(provider);
+  if (type === 'RESEND') {
+    return hasWorkspaceResendKey(encryptedConfig);
+  }
+  return hasEncryptedPayload(encryptedConfig);
+}
+
 function toPublic(row: EmailProviderConfig): EmailProviderConfigPublic {
   const provider = normalizeEmailProviderType(row.provider);
-  const hasCredentials = isManagedProvider(row.provider)
-      ? Boolean(config.email.resendApiKey)
-      : hasEncryptedPayload(row.encryptedConfig);
+  const hasCredentials = hasProviderCredentials(row.provider, row.encryptedConfig);
 
   return {
     id: row.id,
@@ -48,11 +70,13 @@ function validateConfigPayload(
   switch (provider) {
     case 'CONVOSYNC_MANAGED':
       return;
-    case 'RESEND':
-      if (!(payload as ResendProviderConfig).apiKey?.trim()) {
+    case 'RESEND': {
+      const cfg = payload as ResendProviderConfig;
+      if (!cfg.apiKey?.trim()) {
         throw new Error('Resend API key is required');
       }
       return;
+    }
     case 'AWS_SES': {
       const cfg = payload as SesProviderConfig;
       if (!cfg.accessKeyId?.trim() || !cfg.secretAccessKey?.trim() || !cfg.region?.trim()) {
@@ -125,7 +149,12 @@ function deriveInitialStatus(
   payload: ProviderConfigPayload
 ): EmailProviderConfigStatus {
   if (provider === 'CONVOSYNC_MANAGED') {
-    return config.email.resendApiKey ? 'active' : 'credentials_missing';
+    return isPlatformManagedReady() ? 'active' : 'credentials_missing';
+  }
+  if (provider === 'RESEND') {
+    const cfg = payload as ResendProviderConfig;
+    if (cfg.apiKey?.trim()) return 'active';
+    return 'credentials_missing';
   }
   try {
     validateConfigPayload(provider, payload);
@@ -141,15 +170,33 @@ export class EmailProviderConfigService {
     private readonly factory: EmailProviderFactory
   ) {}
 
-  /** Ensures existing workspaces keep ConvoSync Managed Resend without manual setup. */
+  /**
+   * Ensures every workspace has the opaque ConvoSync platform provider.
+   * Underlying transport (Resend/SES) stays server-side only.
+   */
   async ensureWorkspaceProviders(workspaceId: string): Promise<EmailProviderConfig[]> {
-    const existing = await this.repo.listProviderConfigs(workspaceId);
+    let existing = await this.repo.listProviderConfigs(workspaceId);
+
+    // Platform-seeded RESEND (no workspace API key) → CONVOSYNC_MANAGED so tenants never see Resend.
+    for (const row of existing) {
+      if (
+        normalizeEmailProviderType(row.provider) === 'RESEND' &&
+        !hasWorkspaceResendKey(row.encryptedConfig)
+      ) {
+        await this.repo.updateProviderConfig(row.id, {
+          provider: 'CONVOSYNC_MANAGED',
+          encryptedConfig: encryptJson({}),
+          status: isPlatformManagedReady() ? 'active' : 'credentials_missing',
+        });
+      }
+    }
+    existing = await this.repo.listProviderConfigs(workspaceId);
     if (existing.length > 0) return existing;
 
     const row = await this.repo.createProviderConfig({
       provider: 'CONVOSYNC_MANAGED',
       isDefault: true,
-      status: config.email.resendApiKey ? 'active' : 'credentials_missing',
+      status: isPlatformManagedReady() ? 'active' : 'credentials_missing',
       encryptedConfig: encryptJson({}),
       workspace: { connect: { id: workspaceId } },
     });
@@ -187,25 +234,33 @@ export class EmailProviderConfigService {
     return { ...resolved, row };
   }
 
-  async getResendBackedProvider(workspaceId: string): Promise<ResolvedEmailProvider> {
+  async getDomainManagementProvider(workspaceId: string): Promise<ResolvedEmailProvider> {
     if (!(await this.repo.isEmailIntegrationEnabled(workspaceId))) {
       throw new Error('Email integration is not enabled for this workspace');
     }
     await this.ensureWorkspaceProviders(workspaceId);
     const rows = await this.repo.listProviderConfigs(workspaceId);
-    const resendRow =
+    const domainRow =
       rows.find((r) => isManagedProvider(r.provider)) ??
-      rows.find((r) => r.provider === 'RESEND');
+      rows.find((r) => {
+        const type = normalizeEmailProviderType(r.provider);
+        return type === 'RESEND' || type === 'AWS_SES';
+      });
 
-    if (!resendRow) {
+    if (!domainRow) {
       throw new Error(
-        'Domain verification requires ConvoSync Managed or a Resend BYOP provider'
+        'Domain verification requires ConvoSync platform email, or a Resend / AWS SES provider'
       );
     }
-    if (resendRow.status !== 'active') {
-      throw new Error('Resend provider is not active');
+    if (domainRow.status !== 'active') {
+      throw new Error('Email provider is not active');
     }
-    return this.factory.resolve(resendRow);
+    return this.factory.resolve(domainRow);
+  }
+
+  /** @deprecated Use getDomainManagementProvider */
+  async getResendBackedProvider(workspaceId: string): Promise<ResolvedEmailProvider> {
+    return this.getDomainManagementProvider(workspaceId);
   }
 
   async createProvider(workspaceId: string, input: CreateProviderDto) {
@@ -282,7 +337,8 @@ export class EmailProviderConfigService {
     if (row.isDefault) {
       const remaining = await this.repo.listProviderConfigs(workspaceId);
       const fallback =
-        remaining.find((r) => r.provider === 'CONVOSYNC_MANAGED') ?? remaining[0];
+        remaining.find((r) => normalizeEmailProviderType(r.provider) === 'RESEND') ??
+        remaining[0];
       if (fallback) {
         await this.repo.updateProviderConfig(fallback.id, { isDefault: true });
       }
@@ -305,7 +361,7 @@ export class EmailProviderConfigService {
     const row = await this.repo.findProviderConfigById(workspaceId, id);
     if (!row) throw new Error('Provider not found');
 
-    const providerType = row.provider as EmailProviderConfigType;
+    const providerType = normalizeEmailProviderType(row.provider);
     const result = await this.factory.testConnection(
       providerType,
       row.encryptedConfig

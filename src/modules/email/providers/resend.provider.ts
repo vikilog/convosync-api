@@ -72,6 +72,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export function isPlatformResendConfigured(): boolean {
+  return Boolean(config.email.resendApiKey?.trim());
+}
+
 export class ResendProvider implements EmailProvider {
   readonly name = 'resend' as const;
   private client: Resend | null;

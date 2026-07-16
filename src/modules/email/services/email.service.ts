@@ -6,6 +6,11 @@ import type { CreateDomainDto, CreateSenderDto, SendEmailDto } from '../dto/emai
 import type { EmailProviderConfigService } from './provider-config.service.js';
 import type { EmailTemplateService } from './email-template.service.js';
 import { assertEmailSendAllowed } from '../../../services/planUsageGuards.js';
+import {
+  assertEmailSendAffordable,
+  chargeEmailSendUsage,
+} from '../../../services/walletUsage.js';
+import { InsufficientWalletBalanceError } from '../../../services/wallet.service.js';
 
 function domainNeedsProviderSync(row: EmailDomain): boolean {
   if (!row.providerDomainId) return false;
@@ -20,7 +25,7 @@ export class EmailDomainService {
   ) {}
 
   private async pullProviderStatus(row: EmailDomain): Promise<DomainStatusResult> {
-    const resolved = await this.providerConfigService.getResendBackedProvider(row.workspaceId);
+    const resolved = await this.providerConfigService.getDomainManagementProvider(row.workspaceId);
     return resolved.provider.getDomainStatus(row.providerDomainId!);
   }
 
@@ -52,7 +57,22 @@ export class EmailDomainService {
         }
       })
     );
-    return synced.sort(
+    let hideVendor = false;
+    try {
+      const resolved =
+        await this.providerConfigService.getDomainManagementProvider(workspaceId);
+      hideVendor = resolved.configType === 'CONVOSYNC_MANAGED';
+    } catch {
+      /* no domain provider configured */
+    }
+
+    return synced
+      .map((domain) =>
+        hideVendor && (domain.provider === 'resend' || domain.provider === 'ses')
+          ? { ...domain, provider: 'ConvoSync' }
+          : domain
+      )
+      .sort(
       (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
     );
   }
@@ -65,12 +85,12 @@ export class EmailDomainService {
     const existing = await this.repo.findDomainByName(workspaceId, domain);
     if (existing) throw new Error('Domain already added');
 
-    const resolved = await this.providerConfigService.getResendBackedProvider(workspaceId);
+    const resolved = await this.providerConfigService.getDomainManagementProvider(workspaceId);
     const created = await resolved.provider.createDomain(domain);
 
     return this.repo.createDomain({
       domain,
-      provider: resolved.transportName,
+      provider: resolved.configType === 'CONVOSYNC_MANAGED' ? 'ConvoSync' : resolved.transportName,
       status: 'pending',
       providerDomainId: created.providerDomainId,
       spfVerified: false,
@@ -86,7 +106,7 @@ export class EmailDomainService {
     if (!row) throw new Error('Domain not found');
     if (!row.providerDomainId) throw new Error('Domain is not linked to a provider');
 
-    const resolved = await this.providerConfigService.getResendBackedProvider(workspaceId);
+    const resolved = await this.providerConfigService.getDomainManagementProvider(workspaceId);
     const status = await resolved.provider.verifyDomain(row.providerDomainId);
     return this.applyProviderStatus(row, status);
   }
@@ -103,43 +123,107 @@ export class EmailDomainService {
 export class EmailSenderService {
   constructor(private readonly repo: EmailRepository) {}
 
+  private async workspaceBrand(workspaceId: string) {
+    const ws = await this.repo.getWorkspaceBrand(workspaceId);
+    return {
+      slug: ws?.slug ?? 'workspace',
+      name: ws?.name?.trim() || 'ConvoSync',
+    };
+  }
+
   async listSenders(workspaceId: string) {
+    const brand = await this.workspaceBrand(workspaceId);
+    const defs = getSharedSenderDefinitions(brand);
     const enabled = await this.repo.isEmailIntegrationEnabled(workspaceId);
+
     if (!enabled) {
-      const sharedDefault = getSharedSenderDefinitions().find((s) => s.isDefault);
+      const sharedDefault = defs.find((s) => s.isDefault);
       return {
         enabled: false,
         shared: [],
         custom: [],
+        companyName: brand.name,
         defaultSenderEmail: sharedDefault?.email ?? null,
       };
     }
 
     const custom = await this.repo.listAddresses(workspaceId);
-    const shared = getSharedSenderDefinitions().map((s) => ({
-      id: `shared:${s.email}`,
-      workspaceId,
-      domainId: null,
-      email: s.email,
-      displayName: s.displayName,
-      isDefault: s.isDefault,
-      isShared: true,
-      createdAt: new Date(0),
-      updatedAt: new Date(0),
-      domain: null,
-    }));
-    return { enabled: true, shared, custom };
+    const defaultRow = custom.find((a) => a.isDefault);
+    const customIsDefault =
+      Boolean(defaultRow) &&
+      !isSharedSenderEmail(defaultRow!.email) &&
+      !defaultRow!.isShared;
+
+    const shared = defs.map((s) => {
+      const branded = s.email.toLowerCase();
+      const row =
+        custom.find((a) => a.email.toLowerCase() === branded) ??
+        custom.find((a) => isSharedSenderEmail(a.email));
+      return {
+        id: row?.id ?? `shared:${s.email}`,
+        workspaceId,
+        domainId: null as string | null,
+        email: s.email,
+        displayName: s.displayName,
+        isDefault: !customIsDefault,
+        isShared: true as const,
+        localPart: s.localPart,
+        createdAt: row?.createdAt ?? new Date(0),
+        updatedAt: row?.updatedAt ?? new Date(0),
+        domain: null,
+      };
+    });
+
+    const customOnly = custom.filter((a) => !isSharedSenderEmail(a.email));
+
+    return { enabled: true, shared, custom: customOnly, companyName: brand.name };
+  }
+
+  async setDefaultSender(workspaceId: string, email: string) {
+    if (!(await this.repo.isEmailIntegrationEnabled(workspaceId))) {
+      throw new Error('Email integration is not enabled for this workspace');
+    }
+    const brand = await this.workspaceBrand(workspaceId);
+    const normalized = email.toLowerCase().trim();
+    const defs = getSharedSenderDefinitions(brand);
+    const sharedDef = defs.find((d) => d.email.toLowerCase() === normalized);
+
+    await this.repo.clearDefaultSenders(workspaceId);
+
+    if (sharedDef) {
+      const existing = await this.repo.findAddressByEmail(workspaceId, normalized);
+      if (existing) {
+        return this.repo.updateAddress(existing.id, {
+          isDefault: true,
+          isShared: true,
+          displayName: sharedDef.displayName,
+        });
+      }
+      return this.repo.createAddress({
+        email: normalized,
+        displayName: sharedDef.displayName,
+        isDefault: true,
+        isShared: true,
+        workspace: { connect: { id: workspaceId } },
+      });
+    }
+
+    const existing = await this.repo.findAddressByEmail(workspaceId, normalized);
+    if (!existing) throw new Error('Sender address is not registered for this workspace');
+    return this.repo.updateAddress(existing.id, { isDefault: true });
   }
 
   async createSender(workspaceId: string, input: CreateSenderDto) {
     if (!(await this.repo.isEmailIntegrationEnabled(workspaceId))) {
       throw new Error('Email integration is not enabled for this workspace');
     }
+    const brand = await this.workspaceBrand(workspaceId);
     const email = input.email.toLowerCase().trim();
 
     if (input.useSharedDomain) {
       if (!isSharedSenderEmail(email)) {
-        throw new Error(`Use a shared address on ${getSharedSenderDefinitions()[0]?.email.split('@')[1]}`);
+        const example = getSharedSenderDefinitions(brand)[0]?.email;
+        throw new Error(`Use a shared address like ${example}`);
       }
     } else {
       const domainPart = email.split('@')[1];
@@ -180,9 +264,13 @@ export class EmailSenderService {
       await this.repo.clearDefaultSenders(workspaceId);
     }
 
+    const sharedDef = getSharedSenderDefinitions(brand).find(
+      (d) => d.email.toLowerCase() === email
+    );
+
     return this.repo.createAddress({
       email,
-      displayName: input.displayName,
+      displayName: input.displayName || sharedDef?.displayName,
       isDefault: input.isDefault,
       isShared: true,
       workspace: { connect: { id: workspaceId } },
@@ -209,14 +297,20 @@ export class EmailService {
   }> {
     const normalized = fromEmail.toLowerCase().trim();
     const { transportName } = await this.providerConfigService.getDefaultForSending(workspaceId);
+    const brand = await this.repo.getWorkspaceBrand(workspaceId);
+    const workspace = {
+      slug: brand?.slug ?? 'workspace',
+      name: brand?.name?.trim() || 'ConvoSync',
+    };
 
     if (isSharedSenderEmail(normalized)) {
-      const shared = getSharedSenderDefinitions().find(
+      const shared = getSharedSenderDefinitions(workspace).find(
         (s) => s.email.toLowerCase() === normalized
       );
+      const row = await this.repo.findAddressByEmail(workspaceId, normalized);
       return {
         email: normalized,
-        displayName: shared?.displayName,
+        displayName: row?.displayName ?? shared?.displayName,
         provider: transportName,
         isShared: true,
       };
@@ -251,7 +345,11 @@ export class EmailService {
     const customDefault = addresses.find((a) => a.isDefault);
     if (customDefault) return customDefault.email;
 
-    const sharedDefault = getSharedSenderDefinitions().find((s) => s.isDefault);
+    const brand = await this.repo.getWorkspaceBrand(workspaceId);
+    const sharedDefault = getSharedSenderDefinitions({
+      slug: brand?.slug ?? 'workspace',
+      name: brand?.name?.trim() || 'ConvoSync',
+    }).find((s) => s.isDefault);
     if (sharedDefault) return sharedDefault.email;
 
     throw new Error('No default sender configured');
@@ -263,6 +361,14 @@ export class EmailService {
     }
     const recipientCount = Array.isArray(input.to) ? input.to.length : 1;
     await assertEmailSendAllowed(workspaceId, recipientCount);
+    try {
+      await assertEmailSendAffordable(workspaceId, recipientCount);
+    } catch (err) {
+      if (err instanceof InsufficientWalletBalanceError) {
+        throw new Error(err.message);
+      }
+      throw err;
+    }
     let subject = input.subject?.trim() ?? '';
     let html = input.template
       ? applyTemplate(input.template, input.variables ?? {})
@@ -296,8 +402,8 @@ export class EmailService {
       sender: sender.email,
       recipient: Array.isArray(input.to) ? input.to.join(', ') : input.to,
       subject,
-      provider: resolved.transportName,
-      providerName: resolved.configType,
+      provider: resolved.configType === 'CONVOSYNC_MANAGED' ? 'platform' : resolved.transportName,
+      providerName: resolved.configType === 'CONVOSYNC_MANAGED' ? 'ConvoSync' : resolved.configType,
       providerConfig: { connect: { id: resolved.configId } },
       status: 'queued',
       metadata: {
@@ -319,10 +425,22 @@ export class EmailService {
         replyTo: input.replyTo,
       });
 
-      return this.repo.updateLog(log.id, {
+      const updated = await this.repo.updateLog(log.id, {
         status: 'sent',
         messageId: result.messageId,
       });
+
+      try {
+        await chargeEmailSendUsage({
+          workspaceId,
+          referenceId: log.id,
+          sendCount: recipientCount,
+        });
+      } catch (err) {
+        console.error('[wallet] Email debit failed', err);
+      }
+
+      return updated;
     } catch (err) {
       await this.repo.updateLog(log.id, {
         status: 'failed',
@@ -366,6 +484,26 @@ export class EmailService {
   }
 
   listLogs(workspaceId: string, limit?: number) {
-    return this.repo.listLogs(workspaceId, limit);
+    return this.repo.listLogs(workspaceId, limit).then((logs) =>
+      logs.map((log) => {
+        const linked = log.providerConfig?.provider;
+        const name = log.providerName ?? '';
+        const provider = log.provider ?? '';
+        const fromManagedConfig =
+          linked === 'CONVOSYNC_MANAGED' || linked === 'WABIZ_MANAGED';
+        if (
+          fromManagedConfig ||
+          name === 'CONVOSYNC_MANAGED' ||
+          name === 'WABIZ_MANAGED' ||
+          name === 'ConvoSync' ||
+          provider === 'platform'
+        ) {
+          const { providerConfig: _cfg, ...rest } = log;
+          return { ...rest, provider: 'platform', providerName: 'ConvoSync' };
+        }
+        const { providerConfig: _cfg, ...rest } = log;
+        return rest;
+      })
+    );
   }
 }

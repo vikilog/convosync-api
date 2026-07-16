@@ -74,6 +74,23 @@ export const config = {
     maxHistoryMessages: parseInt(process.env.AI_MAX_HISTORY_MESSAGES || '6', 10),
     idleTimeoutMinutes: parseInt(process.env.AI_IDLE_TIMEOUT_MINUTES || '15', 10),
   },
+  pinecone: {
+    apiKey: process.env.PINECONE_API_KEY || '',
+    indexName: process.env.PINECONE_INDEX || 'text-embedding-3-small',
+    /** Serverless index host URL from Pinecone console (optional if index resolves by name). */
+    host: (process.env.PINECONE_HOST || '').replace(/\/$/, ''),
+    /** pinecone = Pinecone Inference (llama-text-embed-v2). openai = OpenAI embeddings API. */
+    embeddingProvider: (process.env.PINECONE_EMBEDDING_PROVIDER === 'openai'
+      ? 'openai'
+      : 'pinecone') as 'openai' | 'pinecone',
+    embeddingModel:
+      process.env.PINECONE_EMBEDDING_MODEL ||
+      (process.env.PINECONE_EMBEDDING_PROVIDER === 'openai'
+        ? 'text-embedding-3-small'
+        : 'llama-text-embed-v2'),
+    topK: parseInt(process.env.PINECONE_TOP_K || '5', 10),
+    enabled: Boolean(process.env.PINECONE_API_KEY?.trim()),
+  },
   email: {
     resendApiKey: process.env.RESEND_API_KEY || '',
     /** Resend dashboard webhook signing secret (whsec_…) for delivery/open/bounce events. */
@@ -102,7 +119,30 @@ export const config = {
     keySecret: process.env.RAZORPAY_KEY_SECRET || '',
     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
     enabled: Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET),
-    /** Razorpay Subscriptions + UPI Autopay / card mandate. Off = one-time order checkout per billing period. */
-    recurringEnabled: process.env.RAZORPAY_RECURRING_ENABLED === 'true',
+    /** Razorpay Subscriptions + UPI Autopay / card mandate. Auto-on when plan IDs are configured. */
+    recurringEnabled:
+      process.env.RAZORPAY_RECURRING_ENABLED === 'true' ||
+      ['STARTER', 'GROWTH', 'PRO'].some((slug) => {
+        const monthly = process.env[`RAZORPAY_PLAN_${slug}_MONTHLY`]?.trim();
+        const annual = process.env[`RAZORPAY_PLAN_${slug}_ANNUAL`]?.trim();
+        return (
+          (monthly?.startsWith('plan_') && monthly.length > 5) ||
+          (annual?.startsWith('plan_') && annual.length > 5)
+        );
+      }),
+  },
+  aws: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+    region: process.env.AWS_REGION || 'ap-south-1',
+    bucketName: process.env.AWS_BUCKET_NAME || '',
+    s3Prefix: (process.env.AWS_S3_PREFIX || 'uploads').replace(/\/$/, ''),
+    /** Optional override, e.g. https://convosync.s3.ap-south-1.amazonaws.com */
+    s3Endpoint: (process.env.AWS_S3_ENDPOINT || '').replace(/\/$/, ''),
+    enabled: Boolean(
+      process.env.AWS_BUCKET_NAME &&
+        process.env.AWS_ACCESS_KEY_ID &&
+        process.env.AWS_SECRET_ACCESS_KEY
+    ),
   },
 };

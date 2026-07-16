@@ -1,5 +1,6 @@
 import { prisma } from '../index.js';
 import { OpenAiProvider, type OpenAiMessage } from '../modules/ai-chat/providers/openai.provider.js';
+import { retrieveKnowledgeChunks } from '../modules/ai-agent/knowledge/knowledge-retrieval.js';
 
 type ConversationTurn = { role: 'user' | 'assistant'; content: string };
 
@@ -39,12 +40,9 @@ INSTRUCTIONS: ${s.instructions || 'Not specified'}`
     .join('\n');
 }
 
-function buildKnowledgeBlock(
-  items: { title: string; content: string | null; status: string }[]
-): string {
-  const ready = items.filter((k) => k.status === 'ready');
-  if (ready.length === 0) return 'No knowledge items available yet.';
-  return ready.map((k) => `${k.title}: ${k.content ?? ''}`).join('\n');
+function buildKnowledgeBlock(items: { title: string; content: string | null }[]): string {
+  if (items.length === 0) return 'No knowledge items available yet.';
+  return items.map((k) => `${k.title}: ${k.content ?? ''}`).join('\n');
 }
 
 export async function testAgentChat(params: {
@@ -79,6 +77,14 @@ export async function testAgentChat(params: {
     agent.systemPrompt?.trim() ||
     'Follow brand guidelines and assist users professionally.';
 
+  const readyKnowledge = agent.knowledgeItems.filter((k) => k.status === 'ready');
+  const { chunks: knowledgeChunks } = await retrieveKnowledgeChunks({
+    workspaceId: params.workspaceId,
+    agentId: params.agentId,
+    query: params.message,
+    fallbackItems: readyKnowledge,
+  });
+
   const systemPrompt = `You are ${agent.name}, an AI assistant for ${agent.workspace.name}.
 
 Tone: ${agent.toneOfVoice}
@@ -97,7 +103,7 @@ Your Skills (use these for specific scenarios):
 ${buildSkillsBlock(agent.skills)}
 
 Knowledge Base:
-${buildKnowledgeBlock(agent.knowledgeItems)}
+${buildKnowledgeBlock(knowledgeChunks)}
 
 Always respond helpfully in the user's language when possible. If you cannot answer, politely say you will connect them to a human agent.`;
 

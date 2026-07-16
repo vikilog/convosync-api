@@ -37,6 +37,11 @@ export default async function billingRoutes(fastify: FastifyInstance) {
   fastify.get('/billing/workspace', auth, controller.getWorkspaceBilling);
   fastify.get('/billing/invoices', auth, controller.listTransactions);
   fastify.get('/billing/usage', auth, controller.getUsageCost);
+  fastify.get('/billing/wallet', auth, controller.getWallet);
+  fastify.get('/billing/wallet/transactions', auth, controller.listWalletTransactions);
+  fastify.patch('/billing/wallet', billingWrite, controller.updateWallet);
+  // AUTO_RECHARGE_DISABLED — re-enable later
+  // fastify.post('/billing/wallet/auto-recharge/setup', billingWrite, controller.createAutoRechargeSetup);
   fastify.post('/billing/order/create', billingWrite, controller.createOrder);
   fastify.post('/billing/order/verify', billingWrite, controller.verifyOrder);
   fastify.post('/billing/subscription/create', billingWrite, controller.createSubscription);

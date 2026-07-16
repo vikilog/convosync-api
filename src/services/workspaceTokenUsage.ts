@@ -50,7 +50,7 @@ export async function recordWorkspaceTokenUsage(params: {
     ? calculateTokenCost(inputTokens, outputTokens)
     : { costUsd: 0, costInr: 0 };
 
-  await prisma.tokenUsageLog.create({
+  const log = await prisma.tokenUsageLog.create({
     data: {
       workspaceId: params.workspaceId,
       agentId: params.agentId,
@@ -67,6 +67,20 @@ export async function recordWorkspaceTokenUsage(params: {
       kbChunksLoaded: params.kbChunksLoaded ?? 0,
     },
   });
+
+  if (convoSyncBilled && costInr > 0) {
+    const { chargeAiTokenUsage } = await import('./walletUsage.js');
+    try {
+      await chargeAiTokenUsage({
+        workspaceId: params.workspaceId,
+        costInr,
+        referenceId: log.id,
+        agentId: params.agentId,
+      });
+    } catch (err) {
+      console.error('[wallet] AI debit failed', err);
+    }
+  }
 
   if (params.conversationId) {
     const agentConversation = await prisma.agentChatConversation.findUnique({

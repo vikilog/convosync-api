@@ -59,6 +59,23 @@ export function isRazorpayUnauthorized(err: unknown): boolean {
   return o.statusCode === 401;
 }
 
+/** Razorpay returns misleading "URL not found" when a product/API is disabled on the account. */
+export function isRazorpayFeatureNotEnabledError(err: unknown): boolean {
+  const message = normalizeRazorpayError(err).message.toLowerCase();
+  return message.includes('url was not found') || message.includes('not found on the server');
+}
+
+export function razorpayRecurringNotEnabledMessage(): string {
+  return (
+    'Razorpay Recurring Payments API is not enabled on this merchant account. ' +
+    'Open Razorpay Dashboard → Account & Settings → Products and request Recurring Payments / ' +
+    'Tokenisation activation, or contact Razorpay support. One-time checkout can work while this API stays disabled.'
+  );
+}
+
 export function formatBillingError(err: unknown): string {
+  if (isRazorpayFeatureNotEnabledError(err)) {
+    return razorpayRecurringNotEnabledMessage();
+  }
   return normalizeRazorpayError(err).message;
 }

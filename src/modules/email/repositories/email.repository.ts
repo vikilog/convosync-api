@@ -90,6 +90,17 @@ export class EmailRepository {
     return this.db.emailAddress.create({ data });
   }
 
+  updateAddress(id: string, data: Prisma.EmailAddressUpdateInput) {
+    return this.db.emailAddress.update({ where: { id }, data });
+  }
+
+  getWorkspaceBrand(workspaceId: string) {
+    return this.db.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { name: true, slug: true },
+    });
+  }
+
   async clearDefaultSenders(workspaceId: string, exceptId?: string) {
     await this.db.emailAddress.updateMany({
       where: {
@@ -106,6 +117,7 @@ export class EmailRepository {
       where: { workspaceId },
       orderBy: { createdAt: 'desc' },
       take: limit,
+      include: { providerConfig: { select: { provider: true, encryptedConfig: true } } },
     });
   }
 

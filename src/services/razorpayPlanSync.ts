@@ -34,7 +34,7 @@ const LEGACY_PLACEHOLDER_PLAN_IDS = new Set([
   'plan_pro_annual',
 ]);
 
-function isValidRazorpayPlanId(id: string | null | undefined): id is string {
+export function isValidRazorpayPlanId(id: string | null | undefined): id is string {
   if (!id?.startsWith('plan_')) return false;
   if (LEGACY_PLACEHOLDER_PLAN_IDS.has(id)) return false;
   // Razorpay dashboard IDs look like plan_T1QBhPUbVM5Sql

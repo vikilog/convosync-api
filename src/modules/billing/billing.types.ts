@@ -28,7 +28,7 @@ export const ADDON_CATALOG: AddonCatalogEntry[] = [
     unitLabel: '1,000 emails',
     unitPaise: 8300,
     usdPerUnit: 1,
-    description: 'Platform email via Resend · $1 per 1,000 sends',
+    description: 'Platform email via AWS SES · $1 per 1,000 sends',
     minQuantity: 1,
     maxQuantity: 100,
   },
@@ -94,10 +94,19 @@ export const ADDON_CATALOG: AddonCatalogEntry[] = [
   },
 ];
 
-export type OrderPurpose = 'addon' | 'custom_plan' | 'plan_purchase' | 'one_time';
+export type OrderPurpose =
+  | 'addon'
+  | 'custom_plan'
+  | 'plan_purchase'
+  | 'one_time'
+  | 'wallet_topup'
+  | 'wallet_auto_recharge_setup'
+  | 'wallet_auto_recharge';
 
 export interface CreateOrderBody {
   amountPaise?: number;
+  /** ConvoCoins credited to wallet (base amount before GST/fees). */
+  creditAmountPaise?: number;
   purpose?: OrderPurpose;
   addonType?: AddOnType;
   quantity?: number;

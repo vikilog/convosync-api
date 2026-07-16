@@ -1,4 +1,5 @@
 import multipart from '@fastify/multipart';
+import { Prisma } from '@prisma/client';
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../index.js';
@@ -37,6 +38,21 @@ function validateCannedPayload(body: { title: string; content: string }, hasMedi
   if (!body.content.trim() && !hasMedia) {
     throw new Error('Content or media is required');
   }
+}
+
+function duplicateTitleResponse(reply: { code: (status: number) => { send: (body: unknown) => unknown } }) {
+  return reply.code(409).send({
+    error: 'A canned response with this title already exists. Choose a different title.',
+  });
+}
+
+function isDuplicateTitleError(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === 'P2002' &&
+    Array.isArray(err.meta?.target) &&
+    (err.meta.target as string[]).includes('title')
+  );
 }
 
 async function parseMultipartBody(request: {
@@ -141,14 +157,20 @@ export default async function cannedResponseRoutes(fastify: FastifyInstance) {
         return reply.code(400).send({ error: 'Unsupported media type' });
       }
 
-      const row = await prisma.cannedResponse.create({
-        data: {
-          workspaceId,
-          title: parsed.title.trim(),
-          content: parsed.content,
-          shortcut: parsed.shortcut,
-        },
-      });
+      let row;
+      try {
+        row = await prisma.cannedResponse.create({
+          data: {
+            workspaceId,
+            title: parsed.title.trim(),
+            content: parsed.content,
+            shortcut: parsed.shortcut,
+          },
+        });
+      } catch (err) {
+        if (isDuplicateTitleError(err)) return duplicateTitleResponse(reply);
+        throw err;
+      }
 
       if (hasNewMedia && parsed.fileBuffer) {
         const storageKey = await saveCannedMediaFile(
@@ -174,15 +196,20 @@ export default async function cannedResponseRoutes(fastify: FastifyInstance) {
 
     const body = createSchema.parse(request.body ?? {});
     validateCannedPayload(body, false);
-    const row = await prisma.cannedResponse.create({
-      data: {
-        workspaceId,
-        title: body.title.trim(),
-        content: body.content,
-        shortcut: body.shortcut?.trim() || null,
-      },
-    });
-    return reply.code(201).send(row);
+    try {
+      const row = await prisma.cannedResponse.create({
+        data: {
+          workspaceId,
+          title: body.title.trim(),
+          content: body.content,
+          shortcut: body.shortcut?.trim() || null,
+        },
+      });
+      return reply.code(201).send(row);
+    } catch (err) {
+      if (isDuplicateTitleError(err)) return duplicateTitleResponse(reply);
+      throw err;
+    }
   });
 
   fastify.put('/:id', auth, async (request, reply) => {
@@ -241,17 +268,22 @@ export default async function cannedResponseRoutes(fastify: FastifyInstance) {
         mediaFileName = parsed.fileName;
       }
 
-      return prisma.cannedResponse.update({
-        where: { id },
-        data: scopedUpdateData({
-          title: nextTitle,
-          content: nextContent,
-          shortcut: nextShortcut,
-          mediaStorageKey,
-          mediaMimeType,
-          mediaFileName,
-        }),
-      });
+      try {
+        return await prisma.cannedResponse.update({
+          where: { id },
+          data: scopedUpdateData({
+            title: nextTitle,
+            content: nextContent,
+            shortcut: nextShortcut,
+            mediaStorageKey,
+            mediaMimeType,
+            mediaFileName,
+          }),
+        });
+      } catch (err) {
+        if (isDuplicateTitleError(err)) return duplicateTitleResponse(reply);
+        throw err;
+      }
     }
 
     const body = updateSchema.parse(request.body ?? {});
@@ -272,7 +304,12 @@ export default async function cannedResponseRoutes(fastify: FastifyInstance) {
       ...(body.shortcut !== undefined ? { shortcut: body.shortcut?.trim() || null } : {}),
     });
 
-    return prisma.cannedResponse.update({ where: { id }, data });
+    try {
+      return await prisma.cannedResponse.update({ where: { id }, data });
+    } catch (err) {
+      if (isDuplicateTitleError(err)) return duplicateTitleResponse(reply);
+      throw err;
+    }
   });
 
   fastify.delete('/:id', auth, async (request, reply) => {

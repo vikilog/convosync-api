@@ -4,6 +4,11 @@ import type { JourneyEngine } from './journey-engine.service.js';
 import type { JourneyTriggerPayload, ExecutionWaitContext, TriggerNodeData } from '../types/journey.types.js';
 import { eventBus } from '../events/event-bus.js';
 import { prisma } from '../../../index.js';
+import {
+  assertJourneyTriggerAffordable,
+  chargeJourneyTriggerUsage,
+} from '../../../services/walletUsage.js';
+import { InsufficientWalletBalanceError } from '../../../services/wallet.service.js';
 
 export class JourneyTriggerService {
   private static listenersRegistered = false;
@@ -125,6 +130,19 @@ export class JourneyTriggerService {
     JourneyTriggerService.startingExecutions.add(startKey);
 
     try {
+      try {
+        await assertJourneyTriggerAffordable(input.workspaceId);
+      } catch (err) {
+        if (err instanceof InsufficientWalletBalanceError) {
+          console.warn('[wallet] Journey trigger blocked — insufficient balance', {
+            workspaceId: input.workspaceId,
+            journeyId: journey.id,
+          });
+          return;
+        }
+        throw err;
+      }
+
       const execution = await this.executionRepo.create({
         journeyId: journey.id,
         contactId: input.contactId,
@@ -134,6 +152,15 @@ export class JourneyTriggerService {
           triggerPayload: input.payload ?? {},
         },
       });
+
+      try {
+        await chargeJourneyTriggerUsage({
+          workspaceId: input.workspaceId,
+          referenceId: execution.id,
+        });
+      } catch (err) {
+        console.error('[wallet] Journey trigger debit failed', err);
+      }
 
       await this.engine.executeNode(execution.id, triggerNode.id);
     } finally {

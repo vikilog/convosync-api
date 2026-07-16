@@ -1,9 +1,11 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import axios from 'axios';
 import { config } from '../config.js';
+import {
+  getObject,
+  mimeTypeFromStorageKey,
+  putObject,
+} from './objectStorage.js';
 
-const UPLOADS_ROOT = path.join(process.cwd(), 'uploads');
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -35,23 +37,16 @@ export function isAllowedTemplateHeaderMime(mimeType: string): boolean {
   return headerFormatForMime(mimeType) !== null;
 }
 
-async function ensureTemplateMediaDir(workspaceId: string): Promise<string> {
-  const dir = path.join(UPLOADS_ROOT, workspaceId, 'template-headers');
-  await fs.mkdir(dir, { recursive: true });
-  return dir;
-}
-
 export async function saveTemplateHeaderMedia(
   workspaceId: string,
   buffer: Buffer,
   mimeType: string,
   fileName?: string
 ): Promise<string> {
-  await ensureTemplateMediaDir(workspaceId);
   const ext = extensionForMime(mimeType);
   const id = `th_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   const storageKey = `${workspaceId}/template-headers/${id}.${ext}`;
-  await fs.writeFile(path.join(UPLOADS_ROOT, storageKey), buffer);
+  await putObject(storageKey, buffer, mimeType);
   return storageKey;
 }
 
@@ -59,9 +54,9 @@ export async function readTemplateHeaderMedia(storageKey: string): Promise<{
   buffer: Buffer;
   mimeType: string;
 }> {
-  const buffer = await fs.readFile(path.join(UPLOADS_ROOT, storageKey));
-  const ext = path.extname(storageKey).slice(1).toLowerCase();
-  return { buffer, mimeType: MIME_BY_EXT[ext] || 'application/octet-stream' };
+  const buffer = await getObject(storageKey);
+  const ext = storageKey.split('.').pop()?.toLowerCase() || '';
+  return { buffer, mimeType: MIME_BY_EXT[ext] || mimeTypeFromStorageKey(storageKey) };
 }
 
 export async function uploadMetaResumableMedia(

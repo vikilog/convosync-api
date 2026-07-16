@@ -9,6 +9,10 @@ import {
   sendWhatsAppTemplateMessage,
 } from '../../../services/whatsapp.js';
 import {
+  assertWhatsAppTemplateAffordable,
+  chargeWhatsAppTemplateUsage,
+} from '../../../services/walletUsage.js';
+import {
   isTemplateMediaHeaderFormat,
   uploadTemplateHeaderMediaForSend,
 } from '../../../services/templateSendHeader.js';
@@ -38,6 +42,8 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
 
     let renderedBody = input.text?.trim() ?? '';
     let waMessageId: string | undefined;
+    let templateCategory: string | null | undefined;
+    let templateNameForCharge: string | undefined;
 
     if (input.templateName || input.templateId) {
       let templateName = input.templateName;
@@ -45,6 +51,8 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
       let bodyPattern = '';
       let variables: string[] = input.variables ?? [];
       let templateRecord: {
+        id: string;
+        category: string;
         headerFormat: string | null;
         headerMediaStorageKey: string | null;
         headerMediaMimeType: string | null;
@@ -63,6 +71,8 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
         language = template.language;
         bodyPattern = template.bodyPattern;
         templateRecord = template;
+        templateCategory = template.category;
+        templateNameForCharge = template.name;
         if (template.variables.length && variables.length < template.variables.length) {
           variables = [...variables, ...Array(template.variables.length - variables.length).fill('')];
         }
@@ -91,6 +101,11 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
           templateRecord
         );
       }
+
+      await assertWhatsAppTemplateAffordable({
+        workspaceId: input.workspaceId,
+        templateCategory,
+      });
 
       const result = await sendWhatsAppTemplateMessage(
         credentials.accessToken,
@@ -130,6 +145,19 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
         },
       },
     });
+
+    if (input.templateName || input.templateId) {
+      try {
+        await chargeWhatsAppTemplateUsage({
+          workspaceId: input.workspaceId,
+          templateCategory,
+          referenceId: message.id,
+          templateName: templateNameForCharge ?? input.templateName,
+        });
+      } catch (err) {
+        console.error('[wallet] Journey template debit failed', err);
+      }
+    }
 
     await prisma.conversation.update({
       where: { id: conversation.id },

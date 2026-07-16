@@ -7,6 +7,7 @@ import { AgentTestError, testAgentChat } from '../services/agent-test.service.js
 import { OpenAiProviderError } from '../modules/ai-chat/providers/openai.provider.js';
 import { ConversationService } from '../modules/ai-agent/conversation.service.js';
 import { UrlFetchError, fetchUrlKnowledge } from '../services/url-fetch.service.js';
+import { indexKnowledgeItemInBackground, knowledgeIndexService } from '../modules/ai-agent/knowledge/knowledge-index.service.js';
 import { DEFAULT_AGENT_ACTIONS } from '../constants/agent-actions.js';
 import { assertAiAgentCreateAllowed } from '../services/planUsageGuards.js';
 
@@ -508,6 +509,7 @@ export default async function agentRoutes(fastify: FastifyInstance) {
         status: 'ready',
       },
     });
+    void indexKnowledgeItemInBackground(workspaceId, item);
     return reply.code(201).send(item);
   });
 
@@ -520,7 +522,28 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       where: { id: kId, agentId: id },
     });
     if (!existing) return reply.code(404).send({ error: 'Knowledge item not found' });
+    await knowledgeIndexService.deleteItemVectors(workspaceId, kId);
     await prisma.aiAgentKnowledgeItem.delete({ where: { id: kId } });
     return { success: true };
+  });
+
+  fastify.post('/:id/knowledge/reindex', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const agent = await getAgentOr404(workspaceId, id);
+    if (!agent) return reply.code(404).send({ error: 'Not found' });
+
+    const items = await prisma.aiAgentKnowledgeItem.findMany({
+      where: { agentId: id, status: 'ready' },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    void (async () => {
+      for (const item of items) {
+        await indexKnowledgeItemInBackground(workspaceId, item);
+      }
+    })();
+
+    return { queued: items.length };
   });
 }

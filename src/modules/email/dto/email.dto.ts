@@ -28,6 +28,10 @@ export const createSenderSchema = z.object({
   useSharedDomain: z.boolean().optional().default(false),
 });
 
+export const setDefaultSenderSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+});
+
 export const sendEmailSchema = z.object({
   from: z.string().email().optional(),
   to: z.union([z.string().email(), z.array(z.string().email()).min(1)]),

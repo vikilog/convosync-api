@@ -5,9 +5,10 @@ import {
   verifyRazorpayPaymentSignature,
   verifyRazorpaySubscriptionSignature,
 } from '../../utils/crypto.utils.js';
-import { isRazorpayUnauthorized, normalizeRazorpayError } from '../../utils/razorpay-error.utils.js';
+import { normalizeRazorpayError } from '../../utils/razorpay-error.utils.js';
 import { readCustomPlanInput } from '../../services/customPlanPricing.js';
 import type { PlanFeatures } from '../../services/subscriptionPlans.js';
+import { isValidRazorpayPlanId, razorpayPlanIdsFromEnv, type PlanSlug } from '../../services/razorpayPlanSync.js';
 import {
   computeTokenBillingCosts,
   getWorkspaceMonthlyTokenUsage,
@@ -20,6 +21,15 @@ import type {
   OrderPurpose,
 } from './billing.types.js';
 import { ADDON_CATALOG } from './billing.types.js';
+import { MIN_WALLET_TOPUP_PAISE } from '../../services/wallet.constants.js';
+import { creditWallet, getWalletSummary, updateWalletSettings } from '../../services/wallet.service.js';
+import {
+  ensureRazorpayCustomer,
+  extractPaymentCredentials,
+  normalizeIndianPhone,
+  persistWalletPaymentMethod,
+  saveWalletPaymentCredentials,
+} from '../../services/razorpayCustomer.service.js';
 import type { RazorpayService } from './razorpay.service.js';
 
 const USD_INR_FALLBACK = 83;
@@ -39,13 +49,15 @@ function webhookEntity(
 
 const SETTLED_PAYMENT_STATUSES = ['paid', 'failed'] as const;
 
-function normalizeIndianPhone(phone?: string | null): string | undefined {
-  if (!phone?.trim()) return undefined;
-  const digits = phone.replace(/\D/g, '');
-  if (digits.length === 10) return digits;
-  if (digits.length === 12 && digits.startsWith('91')) return digits.slice(2);
-  if (digits.length > 10) return digits.slice(-10);
-  return digits.length >= 10 ? digits : undefined;
+function walletTopupCreditPaise(invoice: {
+  amountPaise: number;
+  metadata: Prisma.JsonValue | null;
+}): number {
+  const meta = invoice.metadata as { creditAmountPaise?: number } | null;
+  if (meta?.creditAmountPaise && meta.creditAmountPaise > 0) {
+    return meta.creditAmountPaise;
+  }
+  return invoice.amountPaise;
 }
 
 function parseFeatureLimit(value: string | number | undefined, fallback: number): number {
@@ -111,14 +123,16 @@ export class BillingService {
       }),
       ]);
 
-    const [usageSnapshot, connectedChannels] = await Promise.all([
+    const [usageSnapshot, connectedChannels, wallet] = await Promise.all([
       this.getUsageSnapshot(workspaceId, workspace.usageLimits),
       this.getConnectedChannels(workspaceId),
+      getWalletSummary(workspaceId),
     ]);
 
     return {
       workspaceId,
       subscriptionStatus: workspace.subscriptionStatus,
+      wallet,
       plan: workspace.plan
         ? {
             id: workspace.plan.id,
@@ -451,11 +465,12 @@ export class BillingService {
   }
 
   async createOrder(workspaceId: string, body: CreateOrderBody) {
-    const { amountPaise, purpose, addonType, quantity, description } = body;
+    const { amountPaise, purpose, addonType, quantity, description, creditAmountPaise } = body;
 
     let finalAmount = amountPaise ?? 0;
     let invoiceType: OrderPurpose = purpose ?? 'one_time';
     let addonRecord: { type: AddOnType; quantity: number } | null = null;
+    let walletTopupMeta: Prisma.InputJsonValue | undefined;
 
     if (purpose === 'custom_plan' || (!purpose && !addonType && !amountPaise)) {
       const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
@@ -475,6 +490,19 @@ export class BillingService {
       finalAmount = await this.addonAmountPaise(addonType, quantity ?? 1);
       invoiceType = 'addon';
       addonRecord = { type: addonType, quantity: quantity ?? 1 };
+    }
+
+    if (purpose === 'wallet_topup') {
+      if (!amountPaise || amountPaise < MIN_WALLET_TOPUP_PAISE) {
+        throw new Error('Minimum wallet top-up is ₹100.');
+      }
+      finalAmount = amountPaise;
+      invoiceType = 'wallet_topup';
+      const creditPaise = creditAmountPaise ?? amountPaise;
+      walletTopupMeta = {
+        purpose: 'wallet_topup',
+        creditAmountPaise: creditPaise,
+      };
     }
 
     if (!finalAmount || finalAmount < 100) {
@@ -501,7 +529,8 @@ export class BillingService {
         currency: 'INR',
         status: 'created',
         description: description ?? `${invoiceType} payment`,
-        metadata: { purpose: invoiceType, addonType, quantity } as Prisma.InputJsonValue,
+        metadata: (walletTopupMeta ??
+          ({ purpose: invoiceType, addonType, quantity } as Prisma.InputJsonValue)),
       },
     });
 
@@ -597,9 +626,124 @@ export class BillingService {
       if (invoice.type === 'plan_purchase') {
         await this.activatePlanPurchase(tx, workspaceId, invoice.metadata);
       }
+
+      if (invoice.type === 'wallet_topup') {
+        await creditWallet({
+          workspaceId,
+          amountPaise: walletTopupCreditPaise(invoice),
+          category: 'wallet_topup',
+          description: 'Wallet recharge',
+          referenceType: 'invoice',
+          referenceId: invoice.id,
+          idempotencyKey: `topup:${invoice.id}`,
+          tx,
+        });
+      }
+
+      /* AUTO_RECHARGE_DISABLED — re-enable later
+      if (invoice.type === 'wallet_auto_recharge_setup') {
+        await creditWallet({
+          workspaceId,
+          amountPaise: invoice.amountPaise,
+          category: 'wallet_topup',
+          description: 'Payment method setup',
+          referenceType: 'invoice',
+          referenceId: invoice.id,
+          idempotencyKey: `auto-setup:${invoice.id}`,
+          tx,
+        });
+      }
+      */
     });
 
-    return { ok: true, invoiceId: invoice.id };
+    if (invoice.type === 'wallet_topup' /* || invoice.type === 'wallet_auto_recharge_setup' */) {
+      await persistWalletPaymentMethod(workspaceId, payment, this.razorpay);
+    }
+
+    const wallet =
+      invoice.type === 'wallet_topup' /* || invoice.type === 'wallet_auto_recharge_setup' */
+        ? await getWalletSummary(workspaceId)
+        : undefined;
+
+    return { ok: true, invoiceId: invoice.id, wallet };
+  }
+
+  /* AUTO_RECHARGE_DISABLED — re-enable later
+  async createAutoRechargeSetup(workspaceId: string) {
+    await ensureWallet(workspaceId);
+    const customerId = await ensureRazorpayCustomer(workspaceId, this.razorpay);
+    const amountPaise = MIN_WALLET_TOPUP_PAISE;
+    const order = await this.razorpay.createOrder({
+      amountPaise,
+      receipt: `auto_setup_${workspaceId.slice(-8)}_${Date.now()}`,
+      notes: {
+        workspaceId,
+        purpose: 'wallet_auto_recharge_setup',
+      },
+    });
+
+    const invoice = await prisma.billingInvoice.create({
+      data: {
+        workspaceId,
+        razorpayOrderId: order.id,
+        type: 'wallet_auto_recharge_setup',
+        amountPaise,
+        currency: 'INR',
+        status: 'created',
+        description: 'Save payment method for auto-recharge',
+        metadata: { purpose: 'wallet_auto_recharge_setup' },
+      },
+    });
+
+    return {
+      checkoutMode: 'order' as const,
+      orderId: order.id,
+      amountPaise,
+      currency: 'INR' as const,
+      keyId: this.razorpay.keyId,
+      customerId,
+      savePaymentMethod: true as const,
+      invoiceId: invoice.id,
+    };
+  }
+  */
+
+  async updateWallet(
+    workspaceId: string,
+    params: {
+      lowBalanceThresholdPaise?: number;
+      autoRechargeEnabled?: boolean;
+      autoRechargeAmountPaise?: number;
+    }
+  ) {
+    /* AUTO_RECHARGE_DISABLED — re-enable later
+    if (params.autoRechargeEnabled === true) {
+      await syncRazorpayTokenForWorkspace(workspaceId, this.razorpay);
+    }
+    */
+    return updateWalletSettings(workspaceId, params);
+  }
+
+  async getWallet(workspaceId: string) {
+    return getWalletSummary(workspaceId);
+    /* AUTO_RECHARGE_DISABLED — re-enable later
+    let wallet = await getWalletSummary(workspaceId);
+    if (!wallet.hasPaymentMethod) {
+      await syncRazorpayTokenForWorkspace(workspaceId, this.razorpay);
+      wallet = await getWalletSummary(workspaceId);
+    }
+    if (!wallet.autoRechargeEnabled && wallet.hasPaymentMethod) {
+      const setupPaid = await prisma.billingInvoice.findFirst({
+        where: { workspaceId, type: 'wallet_auto_recharge_setup', status: 'paid' },
+        select: { id: true },
+      });
+      if (setupPaid) {
+        await enableWalletAutoRecharge(workspaceId);
+        wallet = await getWalletSummary(workspaceId);
+      }
+    }
+    return wallet;
+    */
   }
 
   async createSubscription(workspaceId: string, body: CreateSubscriptionBody) {
@@ -609,8 +753,11 @@ export class BillingService {
     });
     if (!plan) throw new Error('Plan not found');
 
+    const envPlanIds = razorpayPlanIdsFromEnv(plan.slug as PlanSlug);
     const razorpayPlanId =
-      billingCycle === 'annual' ? plan.razorpayPlanIdAnnual : plan.razorpayPlanIdMonthly;
+      billingCycle === 'annual'
+        ? plan.razorpayPlanIdAnnual ?? envPlanIds.annual
+        : plan.razorpayPlanIdMonthly ?? envPlanIds.monthly;
     const amountPaise =
       billingCycle === 'annual' ? plan.priceAnnualPaise : plan.priceMonthlyPaise;
 
@@ -618,9 +765,7 @@ export class BillingService {
       throw new Error('This plan is not available for online checkout');
     }
 
-    const hasValidRazorpayPlan = Boolean(
-      razorpayPlanId && /^plan_[A-Z][A-Za-z0-9]+$/.test(razorpayPlanId)
-    );
+    const hasValidRazorpayPlan = isValidRazorpayPlanId(razorpayPlanId);
 
     if (config.razorpay.recurringEnabled && hasValidRazorpayPlan) {
       try {
@@ -629,9 +774,11 @@ export class BillingService {
           select: { email: true, phone: true },
         });
 
+        const customerId = await ensureRazorpayCustomer(workspaceId, this.razorpay);
         const totalCount = billingCycle === 'annual' ? 10 : 120;
         const rzSub = await this.razorpay.createSubscription({
           planId: razorpayPlanId!,
+          customerId,
           totalCount,
           customerNotify: 1,
           notifyEmail: workspace?.email ?? undefined,
@@ -644,6 +791,7 @@ export class BillingService {
             workspaceId,
             planId: plan.id,
             razorpaySubscriptionId: rzSub.id,
+            razorpayCustomerId: customerId,
             razorpayPlanId: razorpayPlanId!,
             status: rzSub.status,
             billingCycle,
@@ -653,17 +801,23 @@ export class BillingService {
         return {
           checkoutMode: 'subscription' as const,
           subscriptionId: rzSub.id,
+          customerId,
           billingSubscriptionId: billingSub.id,
           keyId: this.razorpay.keyId,
           plan: { id: plan.id, name: plan.name, slug: plan.slug },
           billingCycle,
           amountPaise,
+          razorpayPlanId: razorpayPlanId!,
         };
       } catch (err) {
-        if (!isRazorpayUnauthorized(err)) {
-          throw normalizeRazorpayError(err);
-        }
+        throw normalizeRazorpayError(err);
       }
+    }
+
+    if (config.razorpay.recurringEnabled && !hasValidRazorpayPlan) {
+      throw new Error(
+        `Razorpay plan ID missing for ${plan.slug} (${billingCycle}). Set RAZORPAY_PLAN_${plan.slug.toUpperCase()}_${billingCycle === 'annual' ? 'ANNUAL' : 'MONTHLY'} in .env or run npm run razorpay:sync-plans.`
+      );
     }
 
     return this.createPlanPurchaseOrder(workspaceId, plan, billingCycle, amountPaise);
@@ -796,6 +950,7 @@ export class BillingService {
         where: { id: billingSub.id },
         data: {
           status: rzSub.status,
+          razorpayCustomerId: rzSub.customer_id ?? billingSub.razorpayCustomerId,
           currentPeriodStart: rzSub.current_start
             ? new Date(rzSub.current_start * 1000)
             : undefined,
@@ -828,6 +983,16 @@ export class BillingService {
 
       await this.syncPlanUsageLimits(tx, workspaceId, billingSub.plan.features as PlanFeatures);
     });
+
+    await persistWalletPaymentMethod(
+      workspaceId,
+      {
+        token_id: payment.token_id,
+        customer_id:
+          payment.customer_id ?? rzSub.customer_id ?? billingSub.razorpayCustomerId ?? undefined,
+      },
+      this.razorpay
+    );
 
     return { ok: true, subscriptionStatus: 'active', planId: billingSub.planId };
   }
@@ -932,6 +1097,13 @@ export class BillingService {
     if (!invoice || invoice.status === 'paid') return;
 
     const workspaceId = invoice.workspaceId;
+    const paymentId = payment.id as string;
+
+    let paymentCreds: ReturnType<typeof extractPaymentCredentials> | null = null;
+    if (invoice.type === 'wallet_topup' /* || invoice.type === 'wallet_auto_recharge_setup' */) {
+      const fetchedPayment = await this.razorpay.fetchPayment(paymentId);
+      paymentCreds = extractPaymentCredentials(fetchedPayment);
+    }
 
     await prisma.$transaction(async (tx) => {
       await tx.billingInvoice.update({
@@ -974,7 +1146,63 @@ export class BillingService {
       if (invoice.type === 'plan_purchase') {
         await this.activatePlanPurchase(tx, workspaceId, invoice.metadata);
       }
+
+      if (invoice.type === 'wallet_topup') {
+        await creditWallet({
+          workspaceId,
+          amountPaise: walletTopupCreditPaise(invoice),
+          category: 'wallet_topup',
+          description: 'Wallet recharge',
+          referenceType: 'invoice',
+          referenceId: invoice.id,
+          idempotencyKey: `topup:${invoice.id}`,
+          tx,
+        });
+      }
+
+      /* AUTO_RECHARGE_DISABLED — re-enable later
+      if (invoice.type === 'wallet_auto_recharge') {
+        await creditWallet({
+          workspaceId,
+          amountPaise: invoice.amountPaise,
+          category: 'wallet_topup',
+          description: 'Auto-recharge',
+          referenceType: 'invoice',
+          referenceId: invoice.id,
+          idempotencyKey: `auto-recharge:${invoice.id}`,
+          tx,
+        });
+        await tx.workspaceWallet.update({
+          where: { workspaceId },
+          data: {
+            autoRechargeStatus: 'idle',
+            autoRechargeFailCount: 0,
+            lastAutoRechargeAt: new Date(),
+            autoRechargeCooldownUntil: new Date(Date.now() + AUTO_RECHARGE_COOLDOWN_MS),
+          },
+        });
+      }
+      */
+
+      /* AUTO_RECHARGE_DISABLED — re-enable later
+      if (invoice.type === 'wallet_auto_recharge_setup') {
+        await creditWallet({
+          workspaceId,
+          amountPaise: invoice.amountPaise,
+          category: 'wallet_topup',
+          description: 'Payment method setup',
+          referenceType: 'invoice',
+          referenceId: invoice.id,
+          idempotencyKey: `auto-setup:${invoice.id}`,
+          tx,
+        });
+      }
+      */
     });
+
+    if (paymentCreds) {
+      await saveWalletPaymentCredentials(workspaceId, paymentCreds);
+    }
   }
 
   async handlePaymentFailed(payload: Record<string, unknown>) {

@@ -40,7 +40,16 @@ modules/ai-knowledge/
 | POST | `/api/ai-knowledge/sync` | Sync from external MongoDB |
 | GET | `/api/ai-knowledge/:venueId` | Latest normalized snapshot |
 
-## Future: embeddings
+## Agent knowledge base (Pinecone)
+
+AI agents store knowledge items (documents, Q&A, URLs) in Postgres. When Pinecone is configured,
+items are chunked, embedded with OpenAI, and upserted into a per-workspace namespace.
+
+Env: `PINECONE_API_KEY`, `PINECONE_INDEX`, optional `PINECONE_HOST`, `OPENAI_EMBEDDING_MODEL`.
+
+Reindex existing items: `POST /api/agents/:id/knowledge/reindex`
+
+## Future: salon Mongo sync embeddings
 
 1. Call `buildKnowledgeChunks()` after normalize (already invoked in sync).
 2. Implement `EmbeddingProvider.embed()`.

@@ -10,12 +10,35 @@ import type {
   SmtpProviderConfig,
 } from '../types/provider-config.types.js';
 import type { EmailProvider } from './email-provider.interface.js';
-import { ResendProvider } from './resend.provider.js';
-import { SesProvider } from './ses.provider.js';
+import { ResendProvider, isPlatformResendConfigured } from './resend.provider.js';
+import { SesProvider, getPlatformSesConfig, isPlatformSesConfigured } from './ses.provider.js';
 import { SendGridProvider } from './sendgrid.provider.js';
 import { SmtpProvider } from './smtp.provider.js';
 import { config } from '../../../config.js';
 import { decryptJson } from '../../../lib/field-encryption.js';
+
+/** Platform-managed transport — never expose the underlying vendor to tenants. */
+function buildPlatformManagedProvider(): EmailProvider {
+  const preferSes = config.email.defaultProvider === 'ses';
+  if (preferSes && isPlatformSesConfigured()) {
+    return new SesProvider(getPlatformSesConfig());
+  }
+  if (isPlatformResendConfigured()) {
+    return new ResendProvider();
+  }
+  if (isPlatformSesConfigured()) {
+    return new SesProvider(getPlatformSesConfig());
+  }
+  return new ResendProvider();
+}
+
+function platformManagedTransportName(): EmailProviderName {
+  const preferSes = config.email.defaultProvider === 'ses';
+  if (preferSes && isPlatformSesConfigured()) return 'ses';
+  if (isPlatformResendConfigured()) return 'resend';
+  if (isPlatformSesConfigured()) return 'ses';
+  return 'resend';
+}
 
 export type ResolvedEmailProvider = {
   provider: EmailProvider;
@@ -27,7 +50,7 @@ export type ResolvedEmailProvider = {
 export function configTypeToTransportName(type: EmailProviderConfigType): EmailProviderName {
   switch (type) {
     case 'CONVOSYNC_MANAGED':
-    case 'WABIZ_MANAGED':
+      return platformManagedTransportName();
     case 'RESEND':
       return 'resend';
     case 'AWS_SES':
@@ -42,7 +65,7 @@ export function configTypeToTransportName(type: EmailProviderConfigType): EmailP
 }
 
 export function supportsDomainManagement(type: EmailProviderConfigType): boolean {
-  return type === 'CONVOSYNC_MANAGED' || type === 'WABIZ_MANAGED' || type === 'RESEND';
+  return type === 'CONVOSYNC_MANAGED' || type === 'RESEND' || type === 'AWS_SES';
 }
 
 function parseConfig<T extends ProviderConfigPayload>(
@@ -59,8 +82,7 @@ export class EmailProviderFactory {
   ): EmailProvider {
     switch (type) {
       case 'CONVOSYNC_MANAGED':
-      case 'WABIZ_MANAGED':
-        return new ResendProvider(config.email.resendApiKey || undefined);
+        return buildPlatformManagedProvider();
       case 'RESEND': {
         const cfg = parseConfig<ResendProviderConfig>(encryptedConfig);
         return new ResendProvider(cfg.apiKey);
@@ -78,7 +100,7 @@ export class EmailProviderFactory {
         return new SmtpProvider(cfg);
       }
       default:
-        return new ResendProvider(config.email.resendApiKey || undefined);
+        return new ResendProvider();
     }
   }
 
@@ -104,7 +126,16 @@ export class EmailProviderFactory {
     encryptedConfig: string
   ): Promise<ProviderConnectionTestResult> {
     const provider = this.buildFromType(type, encryptedConfig);
-    return provider.testConnection();
+    const result = await provider.testConnection();
+    if (type === 'CONVOSYNC_MANAGED') {
+      return {
+        ok: result.ok,
+        message: result.ok
+          ? 'ConvoSync platform email is ready'
+          : 'ConvoSync platform email is not configured',
+      };
+    }
+    return result;
   }
 }
 
@@ -118,7 +149,7 @@ export function getEmailProvider(name: EmailProviderName = 'resend'): EmailProvi
   let provider: EmailProvider;
   switch (name) {
     case 'ses':
-      provider = new SesProvider();
+      provider = new SesProvider(getPlatformSesConfig());
       break;
     case 'sendgrid':
       provider = new SendGridProvider();
@@ -127,6 +158,8 @@ export function getEmailProvider(name: EmailProviderName = 'resend'): EmailProvi
       provider = new SmtpProvider();
       break;
     case 'resend':
+      provider = new ResendProvider();
+      break;
     default:
       provider = new ResendProvider();
       break;

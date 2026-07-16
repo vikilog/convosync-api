@@ -3,11 +3,16 @@ import { z } from 'zod';
 import { getJwtUser } from '../../middleware/auth.js';
 import { formatBillingError } from '../../utils/razorpay-error.utils.js';
 import { getWorkspaceUsageCost } from '../../services/usageCost.service.js';
+import {
+  getWalletSummary,
+  listWalletTransactions,
+} from '../../services/wallet.service.js';
+import { WALLET_TOPUP_PRESETS_INR, PLATFORM_MONTHLY_FEE_INR } from '../../services/wallet.constants.js';
 import type { BillingService } from './billing.service.js';
 
 const createOrderSchema = z.object({
   amountPaise: z.number().int().positive().optional(),
-  purpose: z.enum(['addon', 'custom_plan', 'plan_purchase', 'one_time']).optional(),
+  purpose: z.enum(['addon', 'custom_plan', 'plan_purchase', 'one_time', 'wallet_topup']).optional(),
   addonType: z
     .enum([
       'contacts',
@@ -21,6 +26,7 @@ const createOrderSchema = z.object({
     .optional(),
   quantity: z.number().int().positive().optional(),
   description: z.string().optional(),
+  creditAmountPaise: z.number().int().positive().optional(),
 });
 
 const verifyOrderSchema = z.object({
@@ -108,6 +114,73 @@ export class BillingController {
       return reply.code(500).send({ error: formatError(err) });
     }
   };
+
+  getWallet = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { workspaceId } = getJwtUser(request);
+    if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      const wallet = await this.billing.getWallet(workspaceId);
+      return reply.send({
+        ...wallet,
+        platformMonthlyFeeInr: PLATFORM_MONTHLY_FEE_INR,
+        topUpPresetsInr: [...WALLET_TOPUP_PRESETS_INR],
+      });
+    } catch (err) {
+      return reply.code(500).send({ error: formatError(err) });
+    }
+  };
+
+  listWalletTransactions = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { workspaceId } = getJwtUser(request);
+    if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const query = z
+      .object({ limit: z.coerce.number().int().min(1).max(100).optional() })
+      .parse(request.query ?? {});
+
+    try {
+      const transactions = await listWalletTransactions(workspaceId, query.limit ?? 50);
+      return reply.send({ transactions });
+    } catch (err) {
+      return reply.code(500).send({ error: formatError(err) });
+    }
+  };
+
+  updateWallet = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { workspaceId } = getJwtUser(request);
+    if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
+
+    const body = z
+      .object({
+        lowBalanceThresholdPaise: z.number().int().min(1000).max(1_000_000).optional(),
+        // AUTO_RECHARGE_DISABLED — re-enable later
+        // autoRechargeEnabled: z.boolean().optional(),
+        // autoRechargeAmountPaise: z.number().int().min(10_000).max(1_000_000).optional(),
+      })
+      .parse(request.body ?? {});
+
+    try {
+      const wallet = await this.billing.updateWallet(workspaceId, body);
+      return reply.send(wallet);
+    } catch (err) {
+      return reply.code(400).send({ error: formatError(err) });
+    }
+  };
+
+  /* AUTO_RECHARGE_DISABLED — re-enable later
+  createAutoRechargeSetup = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { workspaceId } = getJwtUser(request);
+    if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      const result = await this.billing.createAutoRechargeSetup(workspaceId);
+      return reply.send(result);
+    } catch (err) {
+      return reply.code(400).send({ error: formatError(err) });
+    }
+  };
+  */
 
   createOrder = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);

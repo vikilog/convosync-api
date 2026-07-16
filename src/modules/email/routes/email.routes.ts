@@ -20,6 +20,7 @@ export default async function emailRoutes(fastify: FastifyInstance) {
 
   fastify.get('/senders', auth, controller.listSenders);
   fastify.post('/senders', auth, controller.createSender);
+  fastify.post('/senders/default', auth, controller.setDefaultSender);
 
   fastify.post('/send', auth, controller.sendEmail);
 

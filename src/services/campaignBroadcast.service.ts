@@ -13,6 +13,10 @@ import { findOrReopenConversationForInbound } from './conversationThread.service
 import { getWorkspaceWhatsAppCredentials } from './whatsappCredentials.js';
 import { sendWhatsAppTemplateMessage, renderTemplateBody, formatMetaSendError } from './whatsapp.js';
 import {
+  assertWhatsAppTemplateAffordable,
+  chargeWhatsAppTemplateUsage,
+} from './walletUsage.js';
+import {
   isTemplateMediaHeaderFormat,
   uploadTemplateHeaderMediaForSend,
 } from './templateSendHeader.js';
@@ -89,6 +93,11 @@ async function executeWhatsAppCampaignBroadcast(
 
   for (const contact of contacts) {
     try {
+      await assertWhatsAppTemplateAffordable({
+        workspaceId,
+        templateCategory: template.category,
+      });
+
       let headerMedia:
         | {
             format: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
@@ -122,7 +131,7 @@ async function executeWhatsAppCampaignBroadcast(
         channelAccountId: credentials.phoneNumberId,
       });
 
-      await prisma.message.create({
+      const campaignMessage = await prisma.message.create({
         data: {
           conversationId: conversation.id,
           waMessageId: sent.waMessageId,
@@ -139,6 +148,13 @@ async function executeWhatsAppCampaignBroadcast(
             audienceTag: segmentIdToTag(segmentId),
           },
         },
+      });
+
+      await chargeWhatsAppTemplateUsage({
+        workspaceId,
+        templateCategory: template.category,
+        referenceId: campaignMessage.id,
+        templateName: template.name,
       });
 
       await prisma.conversation.update({

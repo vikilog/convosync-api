@@ -1,11 +1,10 @@
 import axios from 'axios';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { normalizeWhatsAppRecipient } from '../lib/phone.js';
 import type { SendWhatsAppResult } from './whatsapp.js';
+import { getObject, mimeTypeFromStorageKey, putObject } from './objectStorage.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
-const UPLOADS_ROOT = path.join(process.cwd(), 'uploads');
 
 export type WhatsAppMessageKind =
   | 'text'
@@ -195,12 +194,6 @@ function extensionForMime(mimeType: string, fileName?: string): string {
   return map[mimeType] || mimeType.split('/')[1]?.split('+')[0] || 'bin';
 }
 
-export async function ensureUploadsDir(workspaceId: string): Promise<string> {
-  const dir = path.join(UPLOADS_ROOT, workspaceId);
-  await fs.mkdir(dir, { recursive: true });
-  return dir;
-}
-
 export async function saveMessageMediaFile(
   workspaceId: string,
   messageId: string,
@@ -208,11 +201,9 @@ export async function saveMessageMediaFile(
   mimeType: string,
   fileName?: string
 ): Promise<string> {
-  await ensureUploadsDir(workspaceId);
   const ext = extensionForMime(mimeType, fileName);
   const storageKey = `${workspaceId}/${messageId}.${ext}`;
-  const fullPath = path.join(UPLOADS_ROOT, storageKey);
-  await fs.writeFile(fullPath, buffer);
+  await putObject(storageKey, buffer, mimeType);
   return storageKey;
 }
 
@@ -220,23 +211,8 @@ export async function readMessageMediaFile(storageKey: string): Promise<{
   buffer: Buffer;
   mimeType: string;
 }> {
-  const fullPath = path.join(UPLOADS_ROOT, storageKey);
-  const buffer = await fs.readFile(fullPath);
-  const ext = path.extname(storageKey).slice(1).toLowerCase();
-  const mimeByExt: Record<string, string> = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    webp: 'image/webp',
-    mp4: 'video/mp4',
-    '3gp': 'video/3gpp',
-    mp3: 'audio/mpeg',
-    ogg: 'audio/ogg',
-    aac: 'audio/aac',
-    amr: 'audio/amr',
-    pdf: 'application/pdf',
-  };
-  return { buffer, mimeType: mimeByExt[ext] || 'application/octet-stream' };
+  const buffer = await getObject(storageKey);
+  return { buffer, mimeType: mimeTypeFromStorageKey(storageKey) };
 }
 
 export async function downloadWhatsAppMedia(

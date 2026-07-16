@@ -1,15 +1,19 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
+import {
+  getObject,
+  getPresignedGetUrl,
+  isObjectStorageEnabled,
+  putObject,
+} from './objectStorage.js';
 
-const STAGING_ROOT = path.join(process.cwd(), 'uploads', '_staging');
 const STAGING_TTL_MS = 20 * 60 * 1000;
 
 type StagingMeta = {
   mimeType: string;
   fileName?: string;
-  filePath: string;
+  storageKey: string;
   expiresAt: number;
 };
 
@@ -55,9 +59,10 @@ export type StagedMedia = {
 };
 
 export function assertPublicHttpsBaseUrl(): void {
+  if (isObjectStorageEnabled()) return;
   if (!config.backendPublicUrl.startsWith('https://')) {
     throw new Error(
-      'Instagram media requires BACKEND_PUBLIC_URL to be a public HTTPS URL (e.g. your API domain).'
+      'Instagram media requires BACKEND_PUBLIC_URL to be a public HTTPS URL (e.g. your API domain), or configure AWS S3.'
     );
   }
 }
@@ -72,18 +77,20 @@ export async function stageMediaForMetaFetch(
   const stagingId = crypto.randomUUID();
   const ext = extensionForMime(mimeType, fileName);
   const expiresAt = Date.now() + STAGING_TTL_MS;
+  const storageKey = `_staging/${stagingId}.${ext}`;
+  const metaStorageKey = `_staging/${stagingId}.meta.json`;
 
-  await fs.mkdir(STAGING_ROOT, { recursive: true });
+  await putObject(storageKey, buffer, mimeType);
+  const meta: StagingMeta = { mimeType, fileName, storageKey, expiresAt };
+  await putObject(metaStorageKey, Buffer.from(JSON.stringify(meta)), 'application/json');
 
-  const filePath = path.join(STAGING_ROOT, `${stagingId}.${ext}`);
-  const metaPath = path.join(STAGING_ROOT, `${stagingId}.meta.json`);
-
-  await fs.writeFile(filePath, buffer);
-  const meta: StagingMeta = { mimeType, fileName, filePath, expiresAt };
-  await fs.writeFile(metaPath, JSON.stringify(meta));
-
-  const sig = signStaging(stagingId, expiresAt);
-  const publicUrl = `${config.backendPublicUrl}/api/media/meta-fetch/${stagingId}?exp=${expiresAt}&sig=${sig}`;
+  const expiresInSeconds = Math.ceil(STAGING_TTL_MS / 1000);
+  const publicUrl = isObjectStorageEnabled()
+    ? await getPresignedGetUrl(storageKey, expiresInSeconds)
+    : (() => {
+        const sig = signStaging(stagingId, expiresAt);
+        return `${config.backendPublicUrl}/api/media/meta-fetch/${stagingId}?exp=${expiresAt}&sig=${sig}`;
+      })();
 
   return { stagingId, publicUrl, expiresAt };
 }
@@ -97,14 +104,14 @@ export async function readStagedMedia(
     throw new Error('Invalid or expired media link');
   }
 
-  const metaPath = path.join(STAGING_ROOT, `${stagingId}.meta.json`);
-  const raw = await fs.readFile(metaPath, 'utf8');
-  const meta = JSON.parse(raw) as StagingMeta;
+  const metaStorageKey = `_staging/${stagingId}.meta.json`;
+  const metaRaw = await getObject(metaStorageKey);
+  const meta = JSON.parse(metaRaw.toString('utf8')) as StagingMeta;
 
   if (Date.now() > meta.expiresAt) {
     throw new Error('Staging media expired');
   }
 
-  const buffer = await fs.readFile(meta.filePath);
+  const buffer = await getObject(meta.storageKey);
   return { buffer, mimeType: meta.mimeType, fileName: meta.fileName };
 }

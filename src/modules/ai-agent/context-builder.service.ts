@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { Intent, INTENT_TO_KB_TAGS, INTENT_TO_SKILLS } from './intent.service.js';
+import { retrieveKnowledgeChunks } from './knowledge/knowledge-retrieval.js';
 
 const MAX_HISTORY = parseInt(process.env.AI_MAX_HISTORY_MESSAGES || '6', 10);
 
@@ -68,7 +69,12 @@ export class ContextBuilderService {
       });
     }
 
-    const kbChunks = relevantKB.slice(0, 3);
+    const { chunks: kbChunks } = await retrieveKnowledgeChunks({
+      workspaceId: params.workspaceId,
+      agentId: params.agentId,
+      query: params.currentMessage,
+      fallbackItems: relevantKB,
+    });
 
     const systemPrompt = this.buildSystemPrompt({
       agent,

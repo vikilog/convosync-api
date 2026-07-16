@@ -29,13 +29,15 @@ export class RazorpayService {
     amountPaise: number;
     receipt: string;
     notes?: Record<string, string>;
+    paymentCapture?: boolean;
   }) {
     return this.call(() =>
       this.client.orders.create({
-      amount: params.amountPaise,
-      currency: 'INR',
-      receipt: params.receipt,
-      notes: params.notes ?? {},
+        amount: params.amountPaise,
+        currency: 'INR',
+        receipt: params.receipt,
+        notes: params.notes ?? {},
+        ...(params.paymentCapture ? { payment_capture: true } : {}),
       })
     );
   }
@@ -50,6 +52,7 @@ export class RazorpayService {
 
   async createSubscription(params: {
     planId: string;
+    customerId?: string;
     totalCount: number;
     customerNotify: number;
     notifyEmail?: string;
@@ -61,6 +64,7 @@ export class RazorpayService {
         plan_id: params.planId,
         total_count: params.totalCount,
         customer_notify: params.customerNotify,
+        ...(params.customerId ? { customer_id: params.customerId } : {}),
         ...(params.notifyEmail || params.notifyPhone
           ? {
               notify_info: {
@@ -72,6 +76,71 @@ export class RazorpayService {
         notes: params.notes ?? {},
       })
     );
+  }
+
+  async createCustomer(params: {
+    name: string;
+    email?: string;
+    contact?: string;
+    notes?: Record<string, string>;
+  }) {
+    return this.call(() =>
+      this.client.customers.create({
+        name: params.name,
+        ...(params.email ? { email: params.email } : {}),
+        ...(params.contact ? { contact: params.contact } : {}),
+        fail_existing: '0',
+        notes: params.notes ?? {},
+      })
+    );
+  }
+
+  async fetchCustomerTokens(customerId: string) {
+    return this.call(() =>
+      this.client.customers.fetchTokens(customerId)
+    );
+  }
+
+  async fetchCustomer(customerId: string) {
+    return this.call(() => this.client.customers.fetch(customerId));
+  }
+
+  async chargeWithToken(params: {
+    amountPaise: number;
+    orderId: string;
+    customerId: string;
+    tokenId: string;
+    email?: string;
+    contact?: string;
+    description?: string;
+  }) {
+    if (!params.email?.trim()) {
+      throw new Error('Customer email is required for auto-recharge.');
+    }
+    if (!params.contact?.trim()) {
+      throw new Error('Customer phone is required for auto-recharge. Add it in Company profile.');
+    }
+
+    const response = await this.call(() =>
+      this.client.payments.createRecurringPayment({
+        amount: params.amountPaise,
+        currency: 'INR',
+        order_id: params.orderId,
+        customer_id: params.customerId,
+        token: params.tokenId,
+        recurring: true,
+        email: params.email.trim(),
+        contact: params.contact.replace(/\D/g, '').slice(-10),
+        ...(params.description ? { description: params.description } : {}),
+      })
+    );
+
+    const paymentId = response.razorpay_payment_id;
+    if (!paymentId) {
+      throw new Error('Razorpay did not return a payment id for recurring charge.');
+    }
+
+    return this.fetchPayment(paymentId);
   }
 
   async fetchSubscription(subscriptionId: string) {

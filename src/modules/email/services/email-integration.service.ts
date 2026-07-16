@@ -1,5 +1,4 @@
 import type { EmailRepository } from '../repositories/email.repository.js';
-import { getSharedSenderDefinitions } from '../constants/shared-domain.js';
 import type { EmailProviderConfigService } from './provider-config.service.js';
 import type { EmailSenderService } from './email.service.js';
 import { assertChannelCreateAllowed } from '../../../services/planUsageGuards.js';
@@ -19,25 +18,28 @@ export class EmailIntegrationService {
 
   async getStatus(workspaceId: string) {
     const enabled = await this.repo.isEmailIntegrationEnabled(workspaceId);
-    const sharedDefault = getSharedSenderDefinitions().find((s) => s.isDefault);
+    const sendersPreview = await this.senderService.listSenders(workspaceId);
+    const sharedDefault =
+      sendersPreview.shared?.find((s) => s.isDefault) ??
+      sendersPreview.shared?.[0] ??
+      null;
 
     if (!enabled) {
       return {
         enabled: false,
-        defaultSenderEmail: sharedDefault?.email ?? 'noreply@convosync.io',
-        defaultSenderName: sharedDefault?.displayName ?? 'ConvoSync',
+        defaultSenderEmail: sendersPreview.defaultSenderEmail ?? sharedDefault?.email ?? null,
+        defaultSenderName: sharedDefault?.displayName ?? sendersPreview.companyName ?? 'ConvoSync',
         verifiedDomainCount: 0,
         providerLabel: null as string | null,
       };
     }
 
-    const [senders, domains, providers] = await Promise.all([
-      this.senderService.listSenders(workspaceId),
+    const [domains, providers] = await Promise.all([
       this.repo.listDomains(workspaceId),
       this.providerConfigService.listProviders(workspaceId),
     ]);
 
-    const allSenders = [...(senders.custom ?? []), ...(senders.shared ?? [])];
+    const allSenders = [...(sendersPreview.custom ?? []), ...(sendersPreview.shared ?? [])];
     const defaultSender =
       allSenders.find((s) => s.isDefault) ?? allSenders[0] ?? null;
     const verifiedDomains = domains.filter((d) => d.status === 'verified');

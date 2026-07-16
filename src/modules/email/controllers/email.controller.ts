@@ -5,6 +5,7 @@ import {
   createDomainSchema,
   createProviderSchema,
   createSenderSchema,
+  setDefaultSenderSchema,
   listLogsSchema,
   sendEmailSchema,
   updateProviderSchema,
@@ -108,6 +109,26 @@ export class EmailController {
     } catch (err) {
       return reply.code(400).send({
         error: err instanceof Error ? err.message : 'Failed to create sender',
+      });
+    }
+  };
+
+  setDefaultSender = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { workspaceId } = getJwtUser(request);
+    const parsed = setDefaultSenderSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: parsed.error.issues[0]?.message ?? 'Invalid default sender request',
+      });
+    }
+    try {
+      return await this.container.senderService.setDefaultSender(
+        workspaceId,
+        parsed.data.email
+      );
+    } catch (err) {
+      return reply.code(400).send({
+        error: err instanceof Error ? err.message : 'Failed to set default sender',
       });
     }
   };

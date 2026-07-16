@@ -9,8 +9,26 @@ export function normalizeWhatsAppContactPhone(phone: string): string {
   return phone.replace(/\D/g, '');
 }
 
+/** Collapse +91XXXXXXXXXX vs local 10-digit forms for inbox dedupe. */
+export function whatsappCanonicalDigits(phone: string): string {
+  const digits = normalizeWhatsAppContactPhone(phone);
+  if (!digits) return '';
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
+/** One inbox row key per WhatsApp phone (wa:last10 or wa:short). */
+export function whatsappInboxPhoneKey(phone: string): string | null {
+  const canonical = whatsappCanonicalDigits(phone);
+  return canonical ? `wa:${canonical}` : null;
+}
+
 export function phonesMatch(a: string, b: string): boolean {
-  return normalizeWhatsAppContactPhone(a) === normalizeWhatsAppContactPhone(b);
+  const left = normalizeWhatsAppContactPhone(a);
+  const right = normalizeWhatsAppContactPhone(b);
+  if (left === right) return true;
+  const canonicalLeft = whatsappCanonicalDigits(a);
+  const canonicalRight = whatsappCanonicalDigits(b);
+  return Boolean(canonicalLeft && canonicalLeft === canonicalRight);
 }
 
 export function extractWhatsAppProfileName(
@@ -52,13 +70,37 @@ export async function findWhatsAppContacts(
   const digits = normalizeWhatsAppContactPhone(waFrom);
   if (!digits) return [];
 
-  return db.contact.findMany({
+  const canonical = whatsappCanonicalDigits(waFrom);
+  const or: Array<Record<string, unknown>> = [
+    { phone: waFrom },
+    { phone: digits },
+    { phone: `+${digits}` },
+  ];
+  if (canonical.length >= 10) {
+    or.push({ phone: { endsWith: canonical } });
+  }
+
+  const matches = await db.contact.findMany({
     where: {
       workspaceId,
-      OR: [{ phone: waFrom }, { phone: digits }, { phone: `+${digits}` }],
+      AND: [
+        { NOT: { phone: { startsWith: 'lid:' } } },
+        { NOT: { phone: { startsWith: 'group:' } } },
+        { OR: or },
+      ],
     },
     orderBy: { createdAt: 'asc' },
   });
+
+  if (matches.length <= 1) return matches;
+
+  const byCanonical = new Map<string, Contact>();
+  for (const contact of matches) {
+    const key = whatsappCanonicalDigits(contact.phone);
+    if (!key) continue;
+    if (!byCanonical.has(key)) byCanonical.set(key, contact);
+  }
+  return byCanonical.size ? Array.from(byCanonical.values()) : matches;
 }
 
 /** @deprecated Prefer findWhatsAppContacts — kept for callers that expect a single row. */
@@ -186,4 +228,13 @@ export async function upsertWhatsAppContact(params: {
   }
 
   return existing;
+}
+
+// ponytail: self-check — last-10 collapse for inbox dedupe
+if (process.env.NODE_ENV !== 'production') {
+  const a = whatsappInboxPhoneKey('919876543210');
+  const b = whatsappInboxPhoneKey('9876543210');
+  if (a !== b || a !== 'wa:9876543210') {
+    throw new Error(`whatsappInboxPhoneKey mismatch: ${a} vs ${b}`);
+  }
 }

@@ -30,6 +30,8 @@ import { getWorkspaceWhatsAppCredentials } from '../services/whatsappCredentials
 import { extractVariableIndexes } from '../services/metaMessageTemplates.js';
 import { deleteConversationThread } from '../services/conversation-delete.service.js';
 import {
+  consolidateWorkspaceWhatsAppDuplicates,
+  dedupeConversationsByContact,
   findOrReopenConversationForInbound,
   onConversationResolved,
 } from '../services/conversationThread.service.js';
@@ -57,6 +59,13 @@ import {
   uploadWhatsAppMedia,
   type MessageMediaMetadata,
 } from '../services/whatsappMedia.js';
+import {
+  assertWhatsAppTemplateAffordable,
+  assertInstagramMessageAffordable,
+  chargeInstagramMessageUsage,
+  chargeWhatsAppTemplateUsage,
+} from '../services/walletUsage.js';
+import { InsufficientWalletBalanceError } from '../services/wallet.service.js';
 import { resolveMembershipAccess } from '../services/workspaceMemberAdmin.js';
 import {
   buildConversationScopeWhere,
@@ -99,7 +108,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     };
     const access = await resolveMembershipAccess(userId, workspaceId);
     const scopeWhere = buildConversationScopeWhere(access.inboxScope);
-    return prisma.conversation.findMany({
+    const rows = await prisma.conversation.findMany({
       where: {
         workspaceId,
         ...(scopeWhere ?? {}),
@@ -110,6 +119,13 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
       include: { contact: true, agent: true },
       orderBy: { lastMessageAt: 'desc' },
     });
+    const deduped = dedupeConversationsByContact(rows);
+    if (deduped.length < rows.length) {
+      void consolidateWorkspaceWhatsAppDuplicates(workspaceId).catch((err) => {
+        request.log.warn({ err }, 'background WhatsApp duplicate consolidation failed');
+      });
+    }
+    return deduped;
   });
 
   fastify.get('/:id', auth, async (request, reply) => {
@@ -225,6 +241,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
   fastify.get('/:id/messages', auth, async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
     const { id } = request.params as { id: string };
+    const query = request.query as { limit?: string; before?: string };
     const access = await resolveMembershipAccess(userId, workspaceId);
     const conv = await prisma.conversation.findFirst({ where: { id, workspaceId } });
     if (!conv) return reply.code(404).send({ error: 'Not found' });
@@ -238,10 +255,50 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
       getIo().to(workspaceId).emit('conversation_updated', { conversationId: id });
     }
 
-    return prisma.message.findMany({
+    const limitRaw = Number(query.limit);
+    const before = typeof query.before === 'string' ? query.before.trim() : '';
+    const usePagination = Number.isFinite(limitRaw) && limitRaw > 0;
+
+    if (!usePagination && !before) {
+      return prisma.message.findMany({
+        where: { conversationId: id },
+        orderBy: { createdAt: 'asc' },
+      });
+    }
+
+    const limit = Math.min(100, Math.max(1, usePagination ? limitRaw : 20));
+
+    if (before) {
+      const cursor = await prisma.message.findFirst({
+        where: { id: before, conversationId: id },
+        select: { createdAt: true },
+      });
+      if (!cursor) return reply.code(400).send({ error: 'Invalid before cursor' });
+
+      const older = await prisma.message.findMany({
+        where: { conversationId: id, createdAt: { lt: cursor.createdAt } },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+      });
+      const total = await prisma.message.count({ where: { conversationId: id } });
+      return {
+        messages: older.reverse(),
+        hasMore: older.length === limit,
+        total,
+      };
+    }
+
+    const latest = await prisma.message.findMany({
       where: { conversationId: id },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
     });
+    const total = await prisma.message.count({ where: { conversationId: id } });
+    return {
+      messages: latest.reverse(),
+      hasMore: total > limit,
+      total,
+    };
   });
 
   fastify.post('/:id/messages', auth, async (request, reply) => {
@@ -284,6 +341,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
 
       let messageId: string | undefined;
       try {
+        await assertInstagramMessageAffordable(workspaceId);
         const sent = await sendInstagramMessage(
           credentials.pageId,
           credentials.pageAccessToken,
@@ -292,6 +350,9 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         );
         messageId = sent.messageId;
       } catch (err) {
+        if (err instanceof InsufficientWalletBalanceError) {
+          return reply.code(402).send({ error: err.message, code: err.code });
+        }
         request.log.error({ err }, 'Instagram send failed');
         return reply.code(502).send({
           error: formatInstagramSendError(err),
@@ -308,6 +369,15 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
           status: 'sent',
         },
       });
+
+      try {
+        await chargeInstagramMessageUsage({
+          workspaceId,
+          referenceId: message.id,
+        });
+      } catch (err) {
+        request.log.error({ err }, 'Instagram wallet debit failed');
+      }
 
       await prisma.conversation.updateMany({
         where: { id, workspaceId },
@@ -564,6 +634,10 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
 
     let waMessageId: string | undefined;
     try {
+      await assertWhatsAppTemplateAffordable({
+        workspaceId,
+        templateCategory: template.category,
+      });
       const sent = await sendWhatsAppTemplateMessage(
         credentials.accessToken,
         credentials.phoneNumberId,
@@ -575,6 +649,9 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
       );
       waMessageId = sent.waMessageId;
     } catch (err) {
+      if (err instanceof InsufficientWalletBalanceError) {
+        return reply.code(402).send({ error: err.message, code: err.code });
+      }
       request.log.error({ err }, 'WhatsApp template send failed');
       return reply.code(502).send({ error: formatMetaSendError(err) });
     }
@@ -601,6 +678,17 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         },
       },
     });
+
+    try {
+      await chargeWhatsAppTemplateUsage({
+        workspaceId,
+        templateCategory: template.category,
+        referenceId: message.id,
+        templateName: template.name,
+      });
+    } catch (err) {
+      request.log.error({ err, messageId: message.id }, 'Wallet debit after template send failed');
+    }
 
     await prisma.conversation.updateMany({
       where: { id, workspaceId },
@@ -698,6 +786,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     let content: string;
     let initialMetadata: MessageMediaMetadata;
     let channelAccountId: string | undefined;
+    let captionSent = false;
 
     if (conv.channel === 'instagram') {
       const instagramUserId = parseInstagramScopedUserId(conv.contact.phone);
@@ -720,6 +809,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
       channelAccountId = credentials.pageId;
 
       try {
+        await assertInstagramMessageAffordable(workspaceId);
         const staged = await stageMediaForMetaFetch(fileBuffer, mimeType, fileName);
         const sent = await sendInstagramMediaMessage(
           credentials.pageId,
@@ -737,17 +827,22 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
 
         if (caption.trim()) {
           try {
+            await assertInstagramMessageAffordable(workspaceId);
             await sendInstagramMessage(
               credentials.pageId,
               credentials.pageAccessToken,
               instagramUserId,
               caption
             );
+            captionSent = true;
           } catch (captionErr) {
             request.log.warn({ err: captionErr }, 'Instagram caption text send failed');
           }
         }
       } catch (err) {
+        if (err instanceof InsufficientWalletBalanceError) {
+          return reply.code(402).send({ error: err.message, code: err.code });
+        }
         request.log.error({ err }, 'Instagram media send failed');
         const message =
           err instanceof Error ? err.message : formatInstagramSendError(err);
@@ -816,6 +911,23 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         metadata: initialMetadata as object,
       },
     });
+
+    if (conv.channel === 'instagram') {
+      try {
+        await chargeInstagramMessageUsage({
+          workspaceId,
+          referenceId: message.id,
+        });
+        if (captionSent) {
+          await chargeInstagramMessageUsage({
+            workspaceId,
+            referenceId: `${message.id}:caption`,
+          });
+        }
+      } catch (err) {
+        request.log.error({ err }, 'Instagram wallet debit failed');
+      }
+    }
 
     try {
       const storageKey = await saveMessageMediaFile(

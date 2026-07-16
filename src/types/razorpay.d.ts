@@ -24,6 +24,8 @@ declare module 'razorpay' {
     method?: string;
     email?: string;
     contact?: string;
+    token_id?: string;
+    customer_id?: string;
     notes?: Record<string, string>;
   }
 
@@ -60,6 +62,15 @@ declare module 'razorpay' {
     };
   }
 
+  export interface RazorpayToken {
+    id: string;
+    entity?: string;
+    method?: string;
+    recurring?: boolean;
+    status?: string;
+    customer_id?: string;
+  }
+
   export default class Razorpay {
     constructor(options: { key_id: string; key_secret: string });
     orders: {
@@ -69,6 +80,21 @@ declare module 'razorpay' {
     payments: {
       fetch(paymentId: string): Promise<RazorpayPayment>;
       refund(paymentId: string, params?: Record<string, unknown>): Promise<RazorpayRefund>;
+      createRecurring(params: Record<string, unknown>): Promise<{
+        razorpay_payment_id?: string;
+        razorpay_order_id?: string;
+        razorpay_signature?: string;
+      }>;
+      createRecurringPayment(params: Record<string, unknown>): Promise<{
+        razorpay_payment_id?: string;
+        razorpay_order_id?: string;
+        razorpay_signature?: string;
+      }>;
+    };
+    customers: {
+      create(params: Record<string, unknown>): Promise<{ id: string; email?: string; contact?: string }>;
+      fetch(customerId: string): Promise<{ id: string; email?: string; contact?: string }>;
+      fetchTokens(customerId: string): Promise<{ items: RazorpayToken[] }>;
     };
     subscriptions: {
       create(params: Record<string, unknown>): Promise<RazorpaySubscription>;

@@ -1,6 +1,11 @@
 import type { Conversation } from '@prisma/client';
 import { prisma } from '../index.js';
 import { getIo } from '../socket.js';
+import {
+  normalizeWhatsAppContactPhone,
+  whatsappCanonicalDigits,
+  whatsappInboxPhoneKey,
+} from '../lib/whatsappContact.js';
 
 type FindOrReopenParams = {
   workspaceId: string;
@@ -23,7 +28,9 @@ export async function onConversationResolved(conversationId: string): Promise<vo
 }
 
 function accountScope(channelAccountId?: string | null) {
-  return channelAccountId ? { channelAccountId } : {};
+  return {
+    ...(channelAccountId ? { channelAccountId } : {}),
+  };
 }
 
 /**
@@ -50,7 +57,9 @@ export async function findOrReopenConversationForInbound(
     if (params.channelAccountId && !open.channelAccountId) {
       const conversation = await prisma.conversation.update({
         where: { id: open.id },
-        data: { channelAccountId: params.channelAccountId },
+        data: {
+          channelAccountId: params.channelAccountId,
+        },
       });
       return { conversation, reopened: false, created: false };
     }
@@ -165,19 +174,169 @@ export function dedupeConversationsByContact<
     status?: string;
     lastMessageAt?: Date | string | null;
     channelAccountId?: string | null;
-    contact?: { id?: string } | null;
+    channel?: string;
+    contact?: { id?: string; phone?: string } | null;
   },
 >(convs: T[]): T[] {
   const byKey = new Map<string, T>();
 
   for (const conv of convs) {
-    const key = conversationInboxKey(conv);
+    const key = whatsappInboxDedupeKey(conv);
     if (!key) continue;
     const existing = byKey.get(key);
     byKey.set(key, existing ? (pickPreferredConversation(existing, conv) as T) : conv);
   }
 
   return Array.from(byKey.values());
+}
+
+/** One inbox row per WhatsApp phone (collapses +91… vs local forms). */
+export function whatsappInboxDedupeKey(conv: {
+  id?: string;
+  channel?: string;
+  channelAccountId?: string | null;
+  contact?: { id?: string; phone?: string } | null;
+}): string {
+  if (conv.channel !== 'whatsapp') {
+    return conversationInboxKey(conv);
+  }
+
+  const contactPhone = conv.contact?.phone ?? '';
+  if (contactPhone && !contactPhone.startsWith('lid:') && !contactPhone.startsWith('group:')) {
+    const key = whatsappInboxPhoneKey(contactPhone);
+    if (key) return key;
+  }
+
+  return conversationInboxKey(conv);
+}
+
+export async function mergeConversationInto(keepId: string, dropId: string): Promise<void> {
+  if (keepId === dropId) return;
+  await prisma.agentFlowSession.deleteMany({ where: { conversationId: dropId } });
+  await prisma.message.updateMany({
+    where: { conversationId: dropId },
+    data: { conversationId: keepId },
+  });
+  await prisma.conversation.delete({ where: { id: dropId } });
+}
+
+/**
+ * Permanent dedup: merge duplicate WhatsApp contacts + conversations for the same phone.
+ */
+export async function consolidateWorkspaceWhatsAppDuplicates(
+  workspaceId: string,
+  options?: { channelAccountId?: string }
+): Promise<{ mergedContacts: number; mergedConversations: number; removedGroups: number }> {
+  let mergedContacts = 0;
+  let mergedConversations = 0;
+  let removedGroups = 0;
+
+  const contacts = await prisma.contact.findMany({ where: { workspaceId } });
+  const phoneBuckets = new Map<string, typeof contacts>();
+  for (const contact of contacts) {
+    if (contact.phone.startsWith('lid:') || contact.phone.startsWith('group:')) continue;
+    const bucket = whatsappCanonicalDigits(contact.phone);
+    if (!bucket) continue;
+    const list = phoneBuckets.get(bucket) ?? [];
+    list.push(contact);
+    phoneBuckets.set(bucket, list);
+  }
+
+  for (const [, group] of phoneBuckets) {
+    if (group.length <= 1) continue;
+    const scored = await Promise.all(
+      group.map(async (contact) => ({
+        contact,
+        conversationCount: await prisma.conversation.count({
+          where: { contactId: contact.id },
+        }),
+      }))
+    );
+    scored.sort((a, b) => {
+      if (b.conversationCount !== a.conversationCount) {
+        return b.conversationCount - a.conversationCount;
+      }
+      return a.contact.createdAt.getTime() - b.contact.createdAt.getTime();
+    });
+    const primary = scored[0]!.contact;
+    for (let i = 1; i < scored.length; i++) {
+      const dup = scored[i]!.contact;
+      await prisma.conversation.updateMany({
+        where: { contactId: dup.id },
+        data: { contactId: primary.id },
+      });
+      await prisma.journeyExecution.updateMany({
+        where: { contactId: dup.id },
+        data: { contactId: primary.id },
+      });
+      await prisma.agentFlowSession.updateMany({
+        where: { contactId: dup.id },
+        data: { contactId: primary.id },
+      });
+      await prisma.contact.delete({ where: { id: dup.id } });
+      mergedContacts++;
+    }
+    const normalized = normalizeWhatsAppContactPhone(primary.phone);
+    if (primary.phone !== normalized) {
+      await prisma.contact.update({
+        where: { id: primary.id },
+        data: { phone: normalized },
+      });
+    }
+  }
+
+  const convWhere = {
+    workspaceId,
+    channel: 'whatsapp',
+    ...(options?.channelAccountId ? { channelAccountId: options.channelAccountId } : {}),
+  };
+
+  const groupConvs = await prisma.conversation.findMany({
+    where: {
+      ...convWhere,
+      contact: { phone: { startsWith: 'group:' } },
+    },
+    select: { id: true },
+  });
+  for (const g of groupConvs) {
+    await prisma.agentFlowSession.deleteMany({ where: { conversationId: g.id } });
+    await prisma.message.deleteMany({ where: { conversationId: g.id } });
+    await prisma.conversation.delete({ where: { id: g.id } });
+    removedGroups++;
+  }
+
+  const convs = await prisma.conversation.findMany({
+    where: {
+      ...convWhere,
+      contact: { phone: { not: { startsWith: 'group:' } } },
+    },
+    include: { contact: true },
+    orderBy: { lastMessageAt: 'desc' },
+  });
+
+  const convBuckets = new Map<string, typeof convs>();
+  for (const conv of convs) {
+    const key = whatsappInboxDedupeKey(conv);
+    if (!key.startsWith('wa:')) continue;
+    const list = convBuckets.get(key) ?? [];
+    list.push(conv);
+    convBuckets.set(key, list);
+  }
+
+  for (const [, group] of convBuckets) {
+    if (group.length <= 1) continue;
+    let keeper = group[0]!;
+    for (let i = 1; i < group.length; i++) {
+      keeper = pickPreferredConversation(keeper, group[i]!) as (typeof convs)[0];
+    }
+    for (const dup of group) {
+      if (dup.id === keeper.id) continue;
+      await mergeConversationInto(keeper.id, dup.id);
+      mergedConversations++;
+    }
+  }
+
+  return { mergedContacts, mergedConversations, removedGroups };
 }
 
 export { conversationRecency };
