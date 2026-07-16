@@ -48,6 +48,15 @@ function webhookEntity(
 }
 
 const SETTLED_PAYMENT_STATUSES = ['paid', 'failed'] as const;
+/** Subscriptions the product treats as an active paid plan (excludes abandoned `created` rows). */
+const LIVE_BILLING_SUB_STATUSES = ['active', 'authenticated', 'paused'] as const;
+
+function isLiveBillingSubscription(sub: {
+  status: string;
+  razorpaySubscriptionId?: string | null;
+}): boolean {
+  return (LIVE_BILLING_SUB_STATUSES as readonly string[]).includes(sub.status);
+}
 
 function walletTopupCreditPaise(invoice: {
   amountPaise: number;
@@ -106,7 +115,11 @@ export class BillingService {
 
     if (!workspace) throw new Error('Workspace not found');
 
-    const activeSub = workspace.billingSubscriptions[0] ?? null;
+    const activeSub =
+      workspace.billingSubscriptions.find((sub) => isLiveBillingSubscription(sub)) ?? null;
+    const paidPlan =
+      activeSub?.plan ??
+      (['active', 'authenticated'].includes(workspace.subscriptionStatus) ? workspace.plan : null);
     const settledStatusFilter = { in: [...SETTLED_PAYMENT_STATUSES] };
     const [{ rate: usdInrRate, fetchedAtMs: fxFetchedAtMs, source: fxSource }, recentInvoices, recentAddons] =
       await Promise.all([
@@ -133,11 +146,11 @@ export class BillingService {
       workspaceId,
       subscriptionStatus: workspace.subscriptionStatus,
       wallet,
-      plan: workspace.plan
+      plan: paidPlan
         ? {
-            id: workspace.plan.id,
-            slug: workspace.plan.slug,
-            name: workspace.plan.name,
+            id: paidPlan.id,
+            slug: paidPlan.slug,
+            name: paidPlan.name,
           }
         : null,
       billingSubscription: activeSub
@@ -999,7 +1012,22 @@ export class BillingService {
 
   async cancelSubscription(workspaceId: string, cancelAtPeriodEnd = true) {
     const billingSub = await this.getActiveBillingSubscription(workspaceId);
-    if (!billingSub.razorpaySubscriptionId) throw new Error('No Razorpay subscription linked');
+
+    if (!billingSub.razorpaySubscriptionId) {
+      await prisma.billingSubscription.update({
+        where: { id: billingSub.id },
+        data: {
+          status: 'cancelled',
+          cancelAtPeriodEnd: false,
+          cancelledAt: new Date(),
+        },
+      });
+      await prisma.workspace.update({
+        where: { id: workspaceId },
+        data: { subscriptionStatus: 'cancelled', planId: null },
+      });
+      return { ok: true, status: 'cancelled', cancelAtPeriodEnd: false };
+    }
 
     const rzSub = await this.razorpay.cancelSubscription(
       billingSub.razorpaySubscriptionId,
@@ -1018,7 +1046,7 @@ export class BillingService {
     if (!cancelAtPeriodEnd) {
       await prisma.workspace.update({
         where: { id: workspaceId },
-        data: { subscriptionStatus: 'cancelled' },
+        data: { subscriptionStatus: 'cancelled', planId: null },
       });
     }
 
@@ -1356,7 +1384,7 @@ export class BillingService {
     const billingSub = await prisma.billingSubscription.findFirst({
       where: {
         workspaceId,
-        status: { in: ['active', 'authenticated', 'created', 'paused'] },
+        status: { in: [...LIVE_BILLING_SUB_STATUSES] },
       },
       orderBy: { createdAt: 'desc' },
     });
