@@ -5,6 +5,7 @@ import { resolveInstagramContactName } from '../lib/instagramProfile.js';
 import { refreshInstagramContactProfile } from './instagramContactProfile.js';
 import { emitInstagramSyncProgress } from './instagramSyncNotify.js';
 import { findOrReopenConversationForInbound } from './conversationThread.service.js';
+import { subscribeInstagramPageWebhooks } from './instagramWebhookSubscribe.js';
 import {
   downloadInstagramMediaUrl,
   parseGraphInstagramMessage,
@@ -13,7 +14,7 @@ import {
 } from './instagramMedia.js';
 
 const GRAPH = 'https://graph.facebook.com/v25.0';
-const DEFAULT_CONVERSATIONS_PAGE_LIMIT = 1;
+const DEFAULT_CONVERSATIONS_PAGE_LIMIT = 25;
 const CONVERSATION_LIST_FIELDS = 'participants,updated_time,id,message,from,created_time';
 const DEFAULT_MAX_CONVERSATION_PAGES = 25;
 const GRAPH_HTTP_TIMEOUT_MS = 20_000;
@@ -239,13 +240,45 @@ function messagesFromConversation(thread: GraphConversation): GraphMessage[] {
   return [];
 }
 
+async function fetchGraphConversation(
+  conversationId: string,
+  pageAccessToken: string
+): Promise<GraphConversation | null> {
+  try {
+    const res = await axios.get<GraphConversation>(`${GRAPH}/${conversationId}`, {
+      params: {
+        fields: `${CONVERSATION_LIST_FIELDS},messages.limit(1){id,message,from,created_time,attachments}`,
+        access_token: pageAccessToken,
+      },
+      timeout: GRAPH_HTTP_TIMEOUT_MS,
+    });
+    return res.data;
+  } catch {
+    return null;
+  }
+}
+
 async function upsertSyncedThread(
   account: InstagramAccountRow,
   thread: GraphConversation,
   messageItems: GraphMessage[]
 ): Promise<{ imported: number; conversationId: string } | null> {
-  const participants = parseParticipants(thread.participants);
-  const customer = pickCustomerParticipant(participants, account);
+  let resolvedThread = thread;
+  let participants = parseParticipants(thread.participants);
+  let customer = pickCustomerParticipant(participants, account);
+
+  if (!customer?.id && thread.id) {
+    const detailed = await fetchGraphConversation(thread.id, account.pageAccessToken);
+    if (detailed) {
+      resolvedThread = { ...thread, ...detailed };
+      participants = parseParticipants(detailed.participants);
+      customer = pickCustomerParticipant(participants, account);
+      if (!messageItems.length) {
+        messageItems = messagesFromConversation(detailed);
+      }
+    }
+  }
+
   if (!customer?.id) return null;
 
   const senderId = customer.id;
@@ -373,7 +406,7 @@ async function upsertSyncedThread(
     lastAt = createdAt;
   }
 
-  const threadUpdated = thread.updated_time ? new Date(thread.updated_time) : null;
+  const threadUpdated = resolvedThread.updated_time ? new Date(resolvedThread.updated_time) : null;
   if (threadUpdated && (!lastAt || threadUpdated > lastAt)) {
     lastAt = threadUpdated;
   }
@@ -500,6 +533,10 @@ export async function syncInstagramConversationsForWorkspace(
 
   try {
     for (const account of accounts) {
+      void subscribeInstagramPageWebhooks(account.pageId, account.pageAccessToken).catch(() => {
+        // ponytail: sync still imports history if webhook subscribe fails
+      });
+
       const stats = await syncPageConversations(
         {
           workspaceId: account.workspaceId,

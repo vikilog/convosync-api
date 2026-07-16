@@ -35,6 +35,7 @@ export function mapInstagramAttachmentType(
   switch (type) {
     case 'image':
     case 'animated_image':
+    case 'sticker':
       return 'image';
     case 'video':
     case 'ig_reel':
@@ -48,6 +49,13 @@ export function mapInstagramAttachmentType(
     default:
       return null;
   }
+}
+
+function inferKindFromWebhookAttachment(
+  attachment: WebhookAttachment
+): ParsedInboundInstagram['kind'] {
+  if (attachment.payload?.sticker_id) return 'image';
+  return 'document';
 }
 
 export function resolveOutboundInstagramKind(mimeType: string): InstagramAttachmentKind {
@@ -71,14 +79,13 @@ export function parseInboundInstagramMessage(
     return { kind: 'text', content: '[media]' };
   }
 
-  const mapped = mapInstagramAttachmentType(attachment.type);
-  if (!mapped) {
-    return { kind: 'text', content: attachment.payload.title?.trim() || '[media]' };
-  }
+  const mapped =
+    mapInstagramAttachmentType(attachment.type) ?? inferKindFromWebhookAttachment(attachment);
+  const title = attachment.payload.title?.trim() || '[media]';
 
   return {
     kind: mapped,
-    content: previewForMessage(mapped, attachment.payload.title?.trim() || '[media]'),
+    content: previewForMessage(mapped, title),
     media: {
       url: attachment.payload.url,
       fileName: attachment.payload.title,
@@ -173,8 +180,9 @@ export function parseGraphInstagramMessage(
     attachment.file_url ||
     attachment.image_data?.url ||
     attachment.video_data?.url;
+  const title = attachment.name?.trim() || '[media]';
   if (!url) {
-    return { kind: 'text', content: attachment.name?.trim() || '[media]' };
+    return { kind: 'text', content: title };
   }
 
   const mime = attachment.mime_type || '';
@@ -182,10 +190,12 @@ export function parseGraphInstagramMessage(
   if (mime.startsWith('image/')) kind = 'image';
   else if (mime.startsWith('video/')) kind = 'video';
   else if (mime.startsWith('audio/')) kind = 'audio';
+  else if (attachment.image_data?.url) kind = 'image';
+  else if (attachment.video_data?.url) kind = 'video';
 
   return {
     kind,
-    content: previewForMessage(kind, attachment.name?.trim() || '[media]'),
+    content: previewForMessage(kind, title),
     media: {
       url,
       mimeType: mime || undefined,

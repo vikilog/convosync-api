@@ -51,13 +51,6 @@ const SETTLED_PAYMENT_STATUSES = ['paid', 'failed'] as const;
 /** Subscriptions the product treats as an active paid plan (excludes abandoned `created` rows). */
 const LIVE_BILLING_SUB_STATUSES = ['active', 'authenticated', 'paused'] as const;
 
-function isLiveBillingSubscription(sub: {
-  status: string;
-  razorpaySubscriptionId?: string | null;
-}): boolean {
-  return (LIVE_BILLING_SUB_STATUSES as readonly string[]).includes(sub.status);
-}
-
 function walletTopupCreditPaise(invoice: {
   amountPaise: number;
   metadata: Prisma.JsonValue | null;
@@ -105,21 +98,20 @@ export class BillingService {
       include: {
         plan: true,
         usageLimits: true,
-        billingSubscriptions: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          include: { plan: true },
-        },
       },
     });
 
     if (!workspace) throw new Error('Workspace not found');
 
-    const activeSub =
-      workspace.billingSubscriptions.find((sub) => isLiveBillingSubscription(sub)) ?? null;
-    const paidPlan =
-      activeSub?.plan ??
-      (['active', 'authenticated'].includes(workspace.subscriptionStatus) ? workspace.plan : null);
+    const activeSub = await prisma.billingSubscription.findFirst({
+      where: {
+        workspaceId,
+        status: { in: [...LIVE_BILLING_SUB_STATUSES] },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: { plan: true },
+    });
+    const paidPlan = activeSub?.plan ?? null;
     const settledStatusFilter = { in: [...SETTLED_PAYMENT_STATUSES] };
     const [{ rate: usdInrRate, fetchedAtMs: fxFetchedAtMs, source: fxSource }, recentInvoices, recentAddons] =
       await Promise.all([
@@ -1011,7 +1003,31 @@ export class BillingService {
   }
 
   async cancelSubscription(workspaceId: string, cancelAtPeriodEnd = true) {
-    const billingSub = await this.getActiveBillingSubscription(workspaceId);
+    const billingSub = await prisma.billingSubscription.findFirst({
+      where: {
+        workspaceId,
+        status: { in: [...LIVE_BILLING_SUB_STATUSES] },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!billingSub) {
+      const workspace = await prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { subscriptionStatus: true },
+      });
+      if (
+        workspace &&
+        ['active', 'authenticated'].includes(workspace.subscriptionStatus)
+      ) {
+        await prisma.workspace.update({
+          where: { id: workspaceId },
+          data: { subscriptionStatus: 'cancelled', planId: null },
+        });
+        return { ok: true, status: 'cancelled', cancelAtPeriodEnd: false };
+      }
+      throw new Error('No active billing subscription found');
+    }
 
     if (!billingSub.razorpaySubscriptionId) {
       await prisma.billingSubscription.update({

@@ -7,6 +7,13 @@ import {
   resolveMessengerContactName,
 } from './messenger.js';
 import { findMessengerAccountByPageId } from './workspaceResolve.js';
+import {
+  downloadInstagramMediaUrl,
+  parseInboundInstagramMessage,
+  saveMessageMediaFile,
+  type MessageMediaMetadata,
+  type ParsedInboundInstagram,
+} from './instagramMedia.js';
 
 type PageMessagingEvent = {
   sender?: { id?: string };
@@ -17,6 +24,10 @@ type PageMessagingEvent = {
     text?: string;
     is_echo?: boolean;
     messaging_product?: 'instagram' | 'facebook';
+    attachments?: Array<{
+      type?: string;
+      payload?: { url?: string; title?: string; sticker_id?: number };
+    }>;
   };
 };
 
@@ -29,7 +40,7 @@ export async function upsertMessengerInboundMessage(params: {
   pageId: string;
   senderId: string;
   messageId: string;
-  text: string;
+  parsed: ParsedInboundInstagram;
   pageAccessToken: string;
 }) {
   const account = await findMessengerAccountByPageId(params.pageId);
@@ -82,20 +93,62 @@ export async function upsertMessengerInboundMessage(params: {
     channelAccountId: params.pageId,
   });
 
+  let metadata: MessageMediaMetadata | undefined;
+  if (params.parsed.media) {
+    metadata = {
+      mimeType: params.parsed.media.mimeType,
+      fileName: params.parsed.media.fileName,
+    };
+  }
+
   const message = await prisma.message.create({
     data: {
       waMessageId: params.messageId,
       conversationId: conv.id,
       sender: 'contact',
       senderName: contactName,
-      content: params.text,
+      content: params.parsed.content,
+      type: params.parsed.kind,
+      metadata: metadata ? (metadata as object) : undefined,
     },
   });
+
+  if (params.parsed.media?.url) {
+    try {
+      const downloaded = await downloadInstagramMediaUrl(
+        params.parsed.media.url,
+        params.pageAccessToken
+      );
+      const storageKey = await saveMessageMediaFile(
+        workspace.id,
+        message.id,
+        downloaded.buffer,
+        downloaded.mimeType || params.parsed.media.mimeType || 'application/octet-stream',
+        params.parsed.media.fileName
+      );
+      metadata = {
+        ...(metadata ?? {}),
+        mimeType: downloaded.mimeType || params.parsed.media.mimeType,
+        fileName: params.parsed.media.fileName,
+        storageKey,
+      };
+      await prisma.message.update({
+        where: { id: message.id },
+        data: { metadata: metadata as object },
+      });
+      message.metadata = metadata as object;
+    } catch (mediaErr) {
+      logMessengerWebhook(
+        'media download failed',
+        mediaErr instanceof Error ? mediaErr.message : mediaErr
+      );
+    }
+  }
 
   await prisma.conversation.updateMany({
     where: { id: conv.id, workspaceId: workspace.id },
     data: {
-      lastMessage: params.text,
+      lastMessage: params.parsed.content,
       lastMessageAt: new Date(),
       unreadCount: { increment: 1 },
       channelAccountId: params.pageId,
@@ -152,12 +205,12 @@ export async function handleMessengerWebhookBody(body: PageMessagingWebhookBody)
       if (message.is_echo) continue;
       if (senderId === account.pageId) continue;
 
-      const text = message.text?.trim() || '[media]';
+      const parsed = parseInboundInstagramMessage(message.text, message.attachments);
       await upsertMessengerInboundMessage({
         pageId: account.pageId,
         senderId,
         messageId: message.mid,
-        text,
+        parsed,
         pageAccessToken: account.pageAccessToken,
       });
     }

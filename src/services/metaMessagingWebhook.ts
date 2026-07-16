@@ -6,6 +6,24 @@ import { handleMessengerWebhookBody } from './messengerWebhookHandler.js';
 import { findInstagramAccountByEntryId } from './workspaceResolve.js';
 import { findMessengerAccountByPageId } from './workspaceResolve.js';
 
+type MessagingEvent = {
+  message?: { messaging_product?: 'instagram' | 'facebook' };
+};
+
+function isInstagramMessagingEvent(event: MessagingEvent, hasInstagram: boolean): boolean {
+  const product = event.message?.messaging_product;
+  if (product === 'instagram') return true;
+  if (product === 'facebook') return false;
+  return hasInstagram;
+}
+
+function isMessengerMessagingEvent(event: MessagingEvent, hasMessenger: boolean): boolean {
+  const product = event.message?.messaging_product;
+  if (product === 'facebook') return true;
+  if (product === 'instagram') return false;
+  return hasMessenger;
+}
+
 export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody) {
   if (body.object === 'instagram') {
     await handleInstagramWebhookBody(body);
@@ -42,14 +60,14 @@ export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody)
 
     const instagramEntry = {
       ...entry,
-      messaging: (entry.messaging || []).filter(
-        (event) => event.message?.messaging_product === 'instagram'
+      messaging: (entry.messaging || []).filter((event) =>
+        isInstagramMessagingEvent(event, hasInstagram)
       ),
     };
     const messengerEntry = {
       ...entry,
-      messaging: (entry.messaging || []).filter(
-        (event) => event.message?.messaging_product !== 'instagram'
+      messaging: (entry.messaging || []).filter((event) =>
+        isMessengerMessagingEvent(event, hasMessenger)
       ),
     };
 

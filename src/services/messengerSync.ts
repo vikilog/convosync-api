@@ -7,6 +7,12 @@ import {
 } from './messenger.js';
 import { emitMessengerSyncProgress } from './messengerSyncNotify.js';
 import { findOrReopenConversationForInbound } from './conversationThread.service.js';
+import {
+  downloadInstagramMediaUrl,
+  parseGraphInstagramMessage,
+  saveMessageMediaFile,
+  type MessageMediaMetadata,
+} from './instagramMedia.js';
 
 const GRAPH = 'https://graph.facebook.com/v25.0';
 const DEFAULT_CONVERSATIONS_PAGE_LIMIT = 1;
@@ -39,6 +45,15 @@ type GraphMessage = {
   message?: string;
   from?: GraphParticipant;
   created_time?: string;
+  attachments?: { data?: GraphMessageAttachment[] };
+};
+
+type GraphMessageAttachment = {
+  mime_type?: string;
+  name?: string;
+  file_url?: string;
+  image_data?: { url?: string };
+  video_data?: { url?: string };
 };
 
 type GraphConversation = {
@@ -154,7 +169,7 @@ async function fetchConversationMessages(
 ): Promise<GraphMessage[]> {
   const messages: GraphMessage[] = [];
   const baseParams = {
-    fields: 'id,message,from,created_time',
+    fields: 'id,message,from,created_time,attachments',
     limit: '50',
     access_token: pageAccessToken,
   };
@@ -282,40 +297,69 @@ async function upsertSyncedThread(
   let imported = 0;
   let lastText = conv.lastMessage || '';
   let lastAt = conv.lastMessageAt;
-  const toCreate: {
-    waMessageId: string;
-    conversationId: string;
-    sender: string;
-    senderName: string;
-    content: string;
-    createdAt: Date;
-  }[] = [];
 
   for (const graphMessage of rawMessages) {
     if (!graphMessage.id || existingIds.has(graphMessage.id)) continue;
 
     const fromPage = isPageSender(graphMessage.from?.id, account);
-    const content = graphMessage.message?.trim() || '[media]';
+    const parsed = parseGraphInstagramMessage(graphMessage.message, graphMessage.attachments);
     const createdAt = graphMessage.created_time
       ? new Date(graphMessage.created_time)
       : new Date();
 
-    toCreate.push({
-      waMessageId: graphMessage.id,
-      conversationId: conv.id,
-      sender: fromPage ? 'agent' : 'contact',
-      senderName: graphMessage.from?.name || (fromPage ? 'Agent' : contactName),
-      content,
-      createdAt,
+    let metadata: MessageMediaMetadata | undefined;
+    if (parsed.media) {
+      metadata = {
+        mimeType: parsed.media.mimeType,
+        fileName: parsed.media.fileName,
+      };
+    }
+
+    const created = await prisma.message.create({
+      data: {
+        waMessageId: graphMessage.id,
+        conversationId: conv.id,
+        sender: fromPage ? 'agent' : 'contact',
+        senderName: graphMessage.from?.name || (fromPage ? 'Agent' : contactName),
+        content: parsed.content,
+        type: parsed.kind,
+        metadata: metadata ? (metadata as object) : undefined,
+        createdAt,
+      },
     });
 
-    imported += 1;
-    lastText = content;
-    lastAt = createdAt;
-  }
+    if (parsed.media?.url) {
+      try {
+        const downloaded = await downloadInstagramMediaUrl(
+          parsed.media.url,
+          account.pageAccessToken
+        );
+        const storageKey = await saveMessageMediaFile(
+          account.workspaceId,
+          created.id,
+          downloaded.buffer,
+          downloaded.mimeType || parsed.media.mimeType || 'application/octet-stream',
+          parsed.media.fileName
+        );
+        await prisma.message.update({
+          where: { id: created.id },
+          data: {
+            metadata: {
+              ...(metadata ?? {}),
+              mimeType: downloaded.mimeType || parsed.media.mimeType,
+              fileName: parsed.media.fileName,
+              storageKey,
+            } as object,
+          },
+        });
+      } catch {
+        // Graph attachment URLs may expire; keep preview text only
+      }
+    }
 
-  if (toCreate.length > 0) {
-    await prisma.message.createMany({ data: toCreate, skipDuplicates: true });
+    imported += 1;
+    lastText = parsed.content;
+    lastAt = createdAt;
   }
 
   const threadUpdated = thread.updated_time ? new Date(thread.updated_time) : null;
