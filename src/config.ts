@@ -69,10 +69,19 @@ export const config = {
     timeoutMs: parseInt(process.env.OPENAI_TIMEOUT_MS || '30000', 10),
   },
   ai: {
-    cacheTtlSeconds: parseInt(process.env.AI_CACHE_TTL_SECONDS || '3600', 10),
+    cacheTtlSeconds: parseInt(
+      process.env.CACHE_TTL_SECONDS || process.env.AI_CACHE_TTL_SECONDS || '86400',
+      10
+    ),
     maxOutputTokens: parseInt(process.env.AI_MAX_OUTPUT_TOKENS || '500', 10),
     maxHistoryMessages: parseInt(process.env.AI_MAX_HISTORY_MESSAGES || '6', 10),
     idleTimeoutMinutes: parseInt(process.env.AI_IDLE_TIMEOUT_MINUTES || '15', 10),
+    /** Pinecone score >= this → return KB answer with no LLM. */
+    similarityHighThreshold: parseFloat(process.env.SIMILARITY_HIGH_THRESHOLD || '0.85'),
+    /** Pinecone score >= this (and < high) → RAG LLM; below → full LLM or escalate. */
+    similarityLowThreshold: parseFloat(process.env.SIMILARITY_LOW_THRESHOLD || '0.60'),
+    hybridTopK: parseInt(process.env.HYBRID_TOP_K || '3', 10),
+    escalateOnLowScore: process.env.AI_ESCALATE_ON_LOW_SCORE === 'true',
   },
   pinecone: {
     apiKey: process.env.PINECONE_API_KEY || '',
@@ -88,6 +97,8 @@ export const config = {
       (process.env.PINECONE_EMBEDDING_PROVIDER === 'openai'
         ? 'text-embedding-3-small'
         : 'llama-text-embed-v2'),
+    /** Must match Pinecone index dimension. llama-text-embed-v2 defaults to 1024 unless set. */
+    embeddingDimension: parseInt(process.env.PINECONE_EMBEDDING_DIMENSION || '2048', 10),
     topK: parseInt(process.env.PINECONE_TOP_K || '5', 10),
     enabled: Boolean(process.env.PINECONE_API_KEY?.trim()),
   },

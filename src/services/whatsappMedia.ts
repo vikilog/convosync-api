@@ -21,10 +21,20 @@ export type MessageMediaMetadata = {
   caption?: string;
   storageKey?: string;
   waMediaId?: string;
+  /** Direct media URL when Meta sends link instead of / without id. */
+  mediaUrl?: string;
   latitude?: number;
   longitude?: number;
   locationName?: string;
   locationAddress?: string;
+};
+
+type InboundMediaPart = {
+  id?: string;
+  link?: string;
+  mime_type?: string;
+  caption?: string;
+  filename?: string;
 };
 
 type InboundWebhookMessage = {
@@ -32,11 +42,11 @@ type InboundWebhookMessage = {
   from: string;
   type?: string;
   text?: { body?: string };
-  image?: { id?: string; mime_type?: string; caption?: string };
-  video?: { id?: string; mime_type?: string; caption?: string };
-  audio?: { id?: string; mime_type?: string };
-  document?: { id?: string; mime_type?: string; filename?: string; caption?: string };
-  sticker?: { id?: string; mime_type?: string };
+  image?: InboundMediaPart;
+  video?: InboundMediaPart;
+  audio?: InboundMediaPart;
+  document?: InboundMediaPart;
+  sticker?: InboundMediaPart;
   location?: {
     latitude?: number;
     longitude?: number;
@@ -54,7 +64,8 @@ export type ParsedInboundWhatsApp = {
   content: string;
   buttonPayload?: string;
   media?: {
-    waMediaId: string;
+    waMediaId?: string;
+    mediaUrl?: string;
     mimeType?: string;
     fileName?: string;
     caption?: string;
@@ -83,6 +94,34 @@ export function previewForMessage(kind: WhatsAppMessageKind, content: string, ca
   }
 }
 
+function mediaFromPart(
+  kind: Exclude<WhatsAppMessageKind, 'text' | 'location'>,
+  part: InboundMediaPart | undefined,
+  fallbackLabel: string
+): ParsedInboundWhatsApp | null {
+  if (!part) return null;
+  const waMediaId = part.id?.trim() || undefined;
+  const mediaUrl = part.link?.trim() || undefined;
+  if (!waMediaId && !mediaUrl) return null;
+  const caption = part.caption?.trim();
+  return {
+    kind,
+    content: caption || fallbackLabel,
+    media: {
+      waMediaId,
+      mediaUrl,
+      mimeType: part.mime_type,
+      fileName: part.filename,
+      caption: part.caption,
+    },
+  };
+}
+
+/**
+ * Parse WhatsApp Cloud API / coexistence inbound message.
+ * Prefers payload shape (image/video/…) over `type` string — some echoes set type
+ * without a usable id, or send `link` instead of `id`.
+ */
 export function parseInboundWhatsAppMessage(msg: InboundWebhookMessage): ParsedInboundWhatsApp {
   const isButtonReply = msg.type === 'interactive' && msg.interactive?.button_reply;
   const buttonPayload =
@@ -96,83 +135,64 @@ export function parseInboundWhatsAppMessage(msg: InboundWebhookMessage): ParsedI
     };
   }
 
-  if (msg.type === 'image' && msg.image?.id) {
+  const image = mediaFromPart('image', msg.image, '📷 Photo');
+  if (image) return image;
+
+  const video = mediaFromPart('video', msg.video, '🎥 Video');
+  if (video) return video;
+
+  const audio = mediaFromPart('audio', msg.audio, '🎤 Audio');
+  if (audio) return audio;
+
+  const document = mediaFromPart(
+    'document',
+    msg.document,
+    msg.document?.filename?.trim() || '📎 Document'
+  );
+  if (document) return document;
+
+  const sticker = mediaFromPart('sticker', msg.sticker, '🎭 Sticker');
+  if (sticker) {
     return {
-      kind: 'image',
-      content: msg.image.caption?.trim() || '📷 Photo',
+      ...sticker,
       media: {
-        waMediaId: msg.image.id,
-        mimeType: msg.image.mime_type,
-        caption: msg.image.caption,
+        ...sticker.media,
+        mimeType: sticker.media?.mimeType || 'image/webp',
       },
     };
   }
 
-  if (msg.type === 'video' && msg.video?.id) {
-    return {
-      kind: 'video',
-      content: msg.video.caption?.trim() || '🎥 Video',
-      media: {
-        waMediaId: msg.video.id,
-        mimeType: msg.video.mime_type,
-        caption: msg.video.caption,
-      },
-    };
-  }
-
-  if (msg.type === 'audio' && msg.audio?.id) {
-    return {
-      kind: 'audio',
-      content: '🎤 Audio',
-      media: {
-        waMediaId: msg.audio.id,
-        mimeType: msg.audio.mime_type,
-      },
-    };
-  }
-
-  if (msg.type === 'document' && msg.document?.id) {
-    return {
-      kind: 'document',
-      content: msg.document.caption?.trim() || msg.document.filename || '📎 Document',
-      media: {
-        waMediaId: msg.document.id,
-        mimeType: msg.document.mime_type,
-        fileName: msg.document.filename,
-        caption: msg.document.caption,
-      },
-    };
-  }
-
-  if (msg.type === 'sticker' && msg.sticker?.id) {
-    return {
-      kind: 'sticker',
-      content: '🎭 Sticker',
-      media: {
-        waMediaId: msg.sticker.id,
-        mimeType: msg.sticker.mime_type || 'image/webp',
-      },
-    };
-  }
-
-  if (msg.type === 'location' && msg.location) {
-    const name = msg.location.name?.trim();
-    const address = msg.location.address?.trim();
+  if (msg.type === 'location' || msg.location) {
+    const name = msg.location?.name?.trim();
+    const address = msg.location?.address?.trim();
     const label = name || address || '📍 Location';
     return {
       kind: 'location',
       content: label,
       location: {
-        latitude: msg.location.latitude,
-        longitude: msg.location.longitude,
+        latitude: msg.location?.latitude,
+        longitude: msg.location?.longitude,
         locationName: name,
         locationAddress: address,
       },
     };
   }
 
-  const text = msg.text?.body?.trim() || '[media]';
-  return { kind: 'text', content: text };
+  // Typed media without id/link (common on some coexistence stubs) — keep kind for UI.
+  if (msg.type === 'image') return { kind: 'image', content: '📷 Photo' };
+  if (msg.type === 'video') return { kind: 'video', content: '🎥 Video' };
+  if (msg.type === 'audio') return { kind: 'audio', content: '🎤 Audio' };
+  if (msg.type === 'document') return { kind: 'document', content: '📎 Document' };
+  if (msg.type === 'sticker') return { kind: 'sticker', content: '🎭 Sticker' };
+
+  const text = msg.text?.body?.trim();
+  if (text) return { kind: 'text', content: text };
+
+  // Never persist bare "[media]" — inbox shows that as a broken placeholder.
+  if (msg.type && msg.type !== 'text') {
+    return { kind: 'text', content: `Unsupported message (${msg.type})` };
+  }
+  return { kind: 'text', content: 'Message' };
 }
 
 function extensionForMime(mimeType: string, fileName?: string): string {
@@ -235,6 +255,57 @@ export async function downloadWhatsAppMedia(
   return {
     buffer: Buffer.from(fileRes.data),
     mimeType: meta.mime_type || 'application/octet-stream',
+  };
+}
+
+/** Download media from a direct HTTPS link (no Graph media id). */
+export async function downloadWhatsAppMediaUrl(
+  mediaUrl: string,
+  waToken?: string
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  const fileRes = await axios.get(mediaUrl, {
+    headers: waToken ? { Authorization: `Bearer ${waToken}` } : undefined,
+    responseType: 'arraybuffer',
+  });
+  const mimeType =
+    (typeof fileRes.headers['content-type'] === 'string'
+      ? fileRes.headers['content-type'].split(';')[0]
+      : null) || 'application/octet-stream';
+  return { buffer: Buffer.from(fileRes.data), mimeType };
+}
+
+export async function fetchAndStoreInboundMedia(params: {
+  workspaceId: string;
+  messageId: string;
+  waToken: string;
+  media: NonNullable<ParsedInboundWhatsApp['media']>;
+}): Promise<MessageMediaMetadata> {
+  const { workspaceId, messageId, waToken, media } = params;
+  let downloaded: { buffer: Buffer; mimeType: string };
+  if (media.waMediaId) {
+    downloaded = await downloadWhatsAppMedia(waToken, media.waMediaId);
+  } else if (media.mediaUrl) {
+    downloaded = await downloadWhatsAppMediaUrl(media.mediaUrl, waToken);
+  } else {
+    throw new Error('No WhatsApp media id or url to download');
+  }
+
+  const mimeType = downloaded.mimeType || media.mimeType || 'application/octet-stream';
+  const storageKey = await saveMessageMediaFile(
+    workspaceId,
+    messageId,
+    downloaded.buffer,
+    mimeType,
+    media.fileName
+  );
+
+  return {
+    mimeType,
+    fileName: media.fileName,
+    caption: media.caption,
+    waMediaId: media.waMediaId,
+    mediaUrl: media.mediaUrl,
+    storageKey,
   };
 }
 

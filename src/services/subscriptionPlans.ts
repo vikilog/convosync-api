@@ -310,7 +310,7 @@ export async function backfillWorkspaceUsageLimitsFromPlans() {
       create: {
         workspaceId: workspace.id,
         contactsLimit: parseFeatureLimitForBackfill(features.contacts, 1000),
-        teamMembersLimit: parseFeatureLimitForBackfill(features.teamMembers, 2),
+        teamMembersLimit: parseFeatureLimitForBackfill(features.teamMembers, 3),
         aiAgentsLimit: parseFeatureLimitForBackfill(features.aiAgents, 1),
         channelsLimit: parseFeatureLimitForBackfill(features.channels, 2),
         aiTokensIncluded: typeof features.aiReplies === 'number' ? features.aiReplies : 0,

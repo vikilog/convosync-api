@@ -58,17 +58,12 @@ export async function resolveMembershipAccess(userId: string, workspaceId: strin
 async function assertTeamSeatAvailable(workspaceId: string) {
   if (await isSuperAdminWorkspace(workspaceId)) return;
 
-  const [limits, memberCount] = await Promise.all([
-    prisma.workspaceUsageLimits.findUnique({
-      where: { workspaceId },
-      select: { teamMembersLimit: true },
-    }),
-    prisma.workspaceMembership.count({ where: { workspaceId } }),
-  ]);
-  const cap = limits?.teamMembersLimit ?? 2;
-  if (memberCount >= cap) {
+  // ponytail: hard product cap — max 3 users including owner
+  const MAX_TEAM_MEMBERS = 3;
+  const memberCount = await prisma.workspaceMembership.count({ where: { workspaceId } });
+  if (memberCount >= MAX_TEAM_MEMBERS) {
     throw new Error(
-      `Team member limit reached (${cap}). Upgrade your plan or remove a member to add more users.`
+      `Team member limit reached (${MAX_TEAM_MEMBERS}). Remove a member to add someone else — max ${MAX_TEAM_MEMBERS} users including the owner.`
     );
   }
 }

@@ -32,7 +32,13 @@ export class KnowledgeIndexService {
   }
 
   async indexItem(workspaceId: string, item: AiAgentKnowledgeItem): Promise<void> {
-    if (!this.isEnabled()) return;
+    if (!this.isEnabled()) {
+      console.warn(
+        '[KnowledgeIndex] Skipped (Pinecone/embeddings not configured)',
+        item.id
+      );
+      return;
+    }
 
     const sourceText = buildKnowledgeItemText(item);
     if (!sourceText) return;
@@ -40,10 +46,12 @@ export class KnowledgeIndexService {
     const chunks = chunkText(sourceText);
     if (chunks.length === 0) return;
 
+    // Re-index: clear prior vectors first. 404 = empty/missing ns — upsert still proceeds.
     await this.deleteItemVectors(workspaceId, item.id);
 
     const embeddings = await embedTexts(chunks);
     const index = getPineconeIndex();
+    const ns = namespaceForWorkspace(workspaceId);
     const records = chunks.map((chunk, chunkIndex) => ({
       id: vectorId(item.id, chunkIndex),
       values: embeddings[chunkIndex],
@@ -58,16 +66,35 @@ export class KnowledgeIndexService {
       },
     }));
 
-    await index.namespace(namespaceForWorkspace(workspaceId)).upsert({ records });
+    await index.namespace(ns).upsert({ records });
+    console.info(
+      '[KnowledgeIndex] Upserted',
+      records.length,
+      'vector(s) for',
+      item.id,
+      'ns=',
+      ns,
+      'index=',
+      config.pinecone.indexName
+    );
   }
 
   async deleteItemVectors(workspaceId: string, knowledgeItemId: string): Promise<void> {
     if (!isPineconeConfigured()) return;
 
-    const index = getPineconeIndex();
-    await index.namespace(namespaceForWorkspace(workspaceId)).deleteMany({
-      filter: { knowledgeItemId: { $eq: knowledgeItemId } },
-    });
+    try {
+      const index = getPineconeIndex();
+      await index.namespace(namespaceForWorkspace(workspaceId)).deleteMany({
+        filter: { knowledgeItemId: { $eq: knowledgeItemId } },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // First index / missing namespace / stale host often 404 — ignore so upsert can run.
+      if (/404|not.?found/i.test(msg) || (err as { name?: string })?.name === 'PineconeNotFoundError') {
+        return;
+      }
+      throw err;
+    }
   }
 
   async search(params: {

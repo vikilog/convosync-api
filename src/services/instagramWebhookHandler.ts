@@ -5,6 +5,7 @@ import { formatInstagramContactPhone } from '../lib/channelContact.js';
 import { resolveInstagramContactName } from '../lib/instagramProfile.js';
 import { refreshInstagramContactProfile } from './instagramContactProfile.js';
 import { findInstagramAccountByEntryId } from './workspaceResolve.js';
+import { takeInstagramThreadControl } from './instagramWebhookSubscribe.js';
 import {
   downloadInstagramMediaUrl,
   parseInboundInstagramMessage,
@@ -40,6 +41,7 @@ async function upsertInstagramInboundMessage(params: {
   messageId: string;
   parsed: ParsedInboundInstagram;
   pageAccessToken: string;
+  fromStandby?: boolean;
 }) {
   const account = await findInstagramAccountByEntryId(params.pageId);
   if (!account?.workspace) {
@@ -159,10 +161,30 @@ async function upsertInstagramInboundMessage(params: {
   getIo().to(workspace.id).emit('new_message', { conversationId: conv.id, message });
   getIo().to(workspace.id).emit('conversation_updated', { conversationId: conv.id });
 
+  if (params.fromStandby) {
+    try {
+      await takeInstagramThreadControl(
+        account.pageId,
+        account.pageAccessToken,
+        params.senderId
+      );
+      logInstagramWebhook('took thread control after standby', {
+        pageId: account.pageId,
+        senderId: params.senderId,
+      });
+    } catch (err) {
+      logInstagramWebhook(
+        'take_thread_control failed',
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
   logInstagramWebhook('saved message', {
     messageId: message.id,
     conversationId: conv.id,
     contactId: contact.id,
+    fromStandby: Boolean(params.fromStandby),
   });
 }
 
@@ -171,8 +193,23 @@ export type PageMessagingWebhookBody = {
   entry?: Array<{
     id?: string;
     messaging?: PageMessagingEvent[];
+    standby?: PageMessagingEvent[];
   }>;
 };
+
+function collectMessagingEvents(entry: {
+  messaging?: PageMessagingEvent[];
+  standby?: PageMessagingEvent[];
+}): Array<{ event: PageMessagingEvent; fromStandby: boolean }> {
+  const out: Array<{ event: PageMessagingEvent; fromStandby: boolean }> = [];
+  for (const event of entry.messaging || []) {
+    out.push({ event, fromStandby: false });
+  }
+  for (const event of entry.standby || []) {
+    out.push({ event, fromStandby: true });
+  }
+  return out;
+}
 
 export async function handleInstagramWebhookBody(body: PageMessagingWebhookBody) {
   if (body.object !== 'page' && body.object !== 'instagram') {
@@ -191,13 +228,27 @@ export async function handleInstagramWebhookBody(body: PageMessagingWebhookBody)
     }
 
     const ours = new Set([account.pageId, account.instagramUserId].filter(Boolean));
+    const events = collectMessagingEvents(entry);
 
-    for (const event of entry.messaging || []) {
+    if (events.length === 0) {
+      logInstagramWebhook('entry with no messaging/standby events', { entryId });
+      continue;
+    }
+
+    for (const { event, fromStandby } of events) {
       if (event.message?.messaging_product === 'facebook') continue;
 
       const senderId = event.sender?.id;
       const message = event.message;
-      if (!senderId || !message?.mid) continue;
+      if (!senderId || !message?.mid) {
+        logInstagramWebhook('skip event missing sender/mid', {
+          entryId,
+          hasSender: Boolean(senderId),
+          hasMid: Boolean(message?.mid),
+          fromStandby,
+        });
+        continue;
+      }
       if (message.is_echo) continue;
       if (ours.has(senderId)) continue;
 
@@ -208,6 +259,7 @@ export async function handleInstagramWebhookBody(body: PageMessagingWebhookBody)
         messageId: message.mid,
         parsed,
         pageAccessToken: account.pageAccessToken,
+        fromStandby,
       });
     }
   }

@@ -6,14 +6,23 @@ export type InstagramWebhookSubscribeResult = {
   details?: string;
 };
 
+/** Page fields needed for Instagram + Messenger DMs (incl. handover standby). */
+const PAGE_MESSAGING_WEBHOOK_FIELDS = [
+  'messages',
+  'messaging_postbacks',
+  'message_echoes',
+  'messaging_referrals',
+  'standby',
+].join(',');
+
 export async function subscribeInstagramPageWebhooks(
   pageId: string,
   pageAccessToken: string
 ): Promise<InstagramWebhookSubscribeResult> {
   try {
-    await axios.post(`https://graph.facebook.com/v19.0/${pageId}/subscribed_apps`, null, {
+    await axios.post(`https://graph.facebook.com/v25.0/${pageId}/subscribed_apps`, null, {
       params: {
-        subscribed_fields: 'messages,messaging_postbacks,message_echoes',
+        subscribed_fields: PAGE_MESSAGING_WEBHOOK_FIELDS,
         access_token: pageAccessToken,
       },
     });
@@ -28,4 +37,20 @@ export async function subscribeInstagramPageWebhooks(
       details: message,
     };
   }
+}
+
+/** Take thread control so future DMs arrive on `messaging` instead of `standby`. */
+export async function takeInstagramThreadControl(
+  pageId: string,
+  pageAccessToken: string,
+  recipientId: string
+): Promise<void> {
+  await axios.post(
+    `https://graph.facebook.com/v25.0/${pageId}/take_thread_control`,
+    {
+      recipient: { id: recipientId },
+      metadata: 'ConvoSync inbox claimed thread',
+    },
+    { params: { access_token: pageAccessToken } }
+  );
 }

@@ -8,6 +8,8 @@ import { OpenAiProviderError } from '../modules/ai-chat/providers/openai.provide
 import { ConversationService } from '../modules/ai-agent/conversation.service.js';
 import { UrlFetchError, fetchUrlKnowledge } from '../services/url-fetch.service.js';
 import { indexKnowledgeItemInBackground, knowledgeIndexService } from '../modules/ai-agent/knowledge/knowledge-index.service.js';
+import { invalidateWorkspaceCache } from '../modules/ai-agent/hybrid/redis-cache.js';
+import { getRetrievalStats } from '../modules/ai-agent/hybrid/analytics.js';
 import { DEFAULT_AGENT_ACTIONS } from '../constants/agent-actions.js';
 import { assertAiAgentCreateAllowed } from '../services/planUsageGuards.js';
 
@@ -296,6 +298,19 @@ export default async function agentRoutes(fastify: FastifyInstance) {
     return reply.send({ success: true, data: conversation });
   });
 
+  fastify.get('/:id/retrieval-stats', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    if (!workspaceId) {
+      return reply.code(401).send({ success: false, message: 'Workspace required' });
+    }
+    const { id: agentId } = request.params as { id: string };
+    const agent = await getAgentOr404(workspaceId, agentId);
+    if (!agent) return reply.code(404).send({ success: false, message: 'Agent not found' });
+
+    const stats = await getRetrievalStats(fastify, workspaceId, agentId);
+    return reply.send({ success: true, data: stats });
+  });
+
   fastify.get('/:id/token-stats', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     if (!workspaceId) {
@@ -477,12 +492,14 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       .parse(request.body ?? {});
 
     try {
-      return await fetchUrlKnowledge({
+      const result = await fetchUrlKnowledge({
         agentId: id,
         workspaceId,
         url: body.url,
         refreshInterval: body.refreshInterval,
       });
+      void invalidateWorkspaceCache(fastify, workspaceId);
+      return result;
     } catch (err) {
       if (err instanceof UrlFetchError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
@@ -510,6 +527,7 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       },
     });
     void indexKnowledgeItemInBackground(workspaceId, item);
+    void invalidateWorkspaceCache(fastify, workspaceId);
     return reply.code(201).send(item);
   });
 
@@ -524,6 +542,7 @@ export default async function agentRoutes(fastify: FastifyInstance) {
     if (!existing) return reply.code(404).send({ error: 'Knowledge item not found' });
     await knowledgeIndexService.deleteItemVectors(workspaceId, kId);
     await prisma.aiAgentKnowledgeItem.delete({ where: { id: kId } });
+    void invalidateWorkspaceCache(fastify, workspaceId);
     return { success: true };
   });
 
@@ -538,6 +557,7 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       orderBy: { createdAt: 'asc' },
     });
 
+    void invalidateWorkspaceCache(fastify, workspaceId);
     void (async () => {
       for (const item of items) {
         await indexKnowledgeItemInBackground(workspaceId, item);

@@ -25,10 +25,9 @@ import {
   handleSmbMessageEchoes,
 } from '../services/whatsappCoexistenceWebhook.js';
 import {
-  downloadWhatsAppMedia,
+  fetchAndStoreInboundMedia,
   parseInboundWhatsAppMessage,
   previewForMessage,
-  saveMessageMediaFile,
   type MessageMediaMetadata,
 } from '../services/whatsappMedia.js';
 import { getWorkspaceWhatsAppCredentials } from '../services/whatsappCredentials.js';
@@ -61,8 +60,24 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
   fastify.post('/whatsapp', async (request, reply) => {
     console.log('[WhatsApp Webhook] POST hit — incoming event', new Date().toISOString());
     const body = request.body as {
+      object?: string;
       entry?: Array<{ changes?: Array<{ field?: string; value?: Record<string, unknown> }> }>;
     };
+
+    // Meta Page / Instagram webhooks sometimes hit the WhatsApp callback URL by misconfig.
+    if (body?.object === 'page' || body?.object === 'instagram') {
+      logWebhook('POST → forwarding Page/Instagram payload to Meta messaging handler', {
+        object: body.object,
+      });
+      try {
+        await handleMetaMessagingWebhook(body as PageMessagingWebhookBody);
+      } catch (err) {
+        logWebhook('POST → Meta messaging forward error', err instanceof Error ? err.message : err);
+        fastify.log.error(err);
+      }
+      logWebhook('POST → response', 'ok');
+      return reply.send('ok');
+    }
 
     logWebhook('POST payload', body);
 
@@ -155,6 +170,7 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
               fileName: parsed.media.fileName,
               caption: parsed.media.caption,
               waMediaId: parsed.media.waMediaId,
+              mediaUrl: parsed.media.mediaUrl,
             };
           }
 
@@ -170,28 +186,15 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
             },
           });
 
-          if (parsed.media?.waMediaId) {
+          if (parsed.media?.waMediaId || parsed.media?.mediaUrl) {
             try {
               const credentials = await getWorkspaceWhatsAppCredentials(workspace.id, waNumberId);
-              const downloaded = await downloadWhatsAppMedia(
-                credentials.accessToken,
-                parsed.media.waMediaId
-              );
-              const storageKey = await saveMessageMediaFile(
-                workspace.id,
-                message.id,
-                downloaded.buffer,
-                downloaded.mimeType || parsed.media.mimeType || 'application/octet-stream',
-                parsed.media.fileName
-              );
-              metadata = {
-                ...(metadata ?? {}),
-                mimeType: downloaded.mimeType || parsed.media.mimeType,
-                fileName: parsed.media.fileName,
-                caption: parsed.media.caption,
-                waMediaId: parsed.media.waMediaId,
-                storageKey,
-              };
+              metadata = await fetchAndStoreInboundMedia({
+                workspaceId: workspace.id,
+                messageId: message.id,
+                waToken: credentials.accessToken,
+                media: parsed.media,
+              });
               await prisma.message.update({
                 where: { id: message.id },
                 data: { metadata: metadata as object },

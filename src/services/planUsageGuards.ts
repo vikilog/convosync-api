@@ -64,20 +64,8 @@ export async function assertAiAgentCreateAllowed(workspaceId: string, increment 
   }
 }
 
-export async function assertChannelCreateAllowed(workspaceId: string, increment = 1) {
-  if (await isSuperAdminWorkspace(workspaceId)) return;
-
-  const [{ channelsLimit }, connectedChannels] = await Promise.all([
-    getLimitSnapshot(workspaceId),
-    countConnectedChannels(workspaceId),
-  ]);
-
-  if (isUnlimited(channelsLimit)) return;
-  if (connectedChannels + increment > channelsLimit) {
-    throw new Error(
-      `Channel limit reached (${channelsLimit}). Upgrade your plan to connect more channels.`
-    );
-  }
+export async function assertChannelCreateAllowed(_workspaceId: string, _increment = 1) {
+  // ponytail: channel connect caps disabled (was plan channelsLimit, default 2). Re-enable by restoring the usage check.
 }
 
 export async function assertEmailSendAllowed(workspaceId: string, sendCount = 1) {

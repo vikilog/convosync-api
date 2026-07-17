@@ -10,18 +10,16 @@ type MessagingEvent = {
   message?: { messaging_product?: 'instagram' | 'facebook' };
 };
 
-function isInstagramMessagingEvent(event: MessagingEvent, hasInstagram: boolean): boolean {
-  const product = event.message?.messaging_product;
-  if (product === 'instagram') return true;
-  if (product === 'facebook') return false;
-  return hasInstagram;
+/**
+ * Instagram Page webhooks include messaging_product:"instagram".
+ * Missing product → treat as Messenger when both channels are connected.
+ */
+function isInstagramMessagingEvent(event: MessagingEvent): boolean {
+  return event.message?.messaging_product === 'instagram';
 }
 
-function isMessengerMessagingEvent(event: MessagingEvent, hasMessenger: boolean): boolean {
-  const product = event.message?.messaging_product;
-  if (product === 'facebook') return true;
-  if (product === 'instagram') return false;
-  return hasMessenger;
+function isMessengerMessagingEvent(event: MessagingEvent): boolean {
+  return event.message?.messaging_product !== 'instagram';
 }
 
 export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody) {
@@ -58,23 +56,33 @@ export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody)
       continue;
     }
 
+    // Both connected — split by messaging_product; also keep standby on Instagram path
+    const messaging = entry.messaging || [];
+    const standby = entry.standby || [];
+
     const instagramEntry = {
       ...entry,
-      messaging: (entry.messaging || []).filter((event) =>
-        isInstagramMessagingEvent(event, hasInstagram)
+      messaging: messaging.filter((event) => isInstagramMessagingEvent(event)),
+      standby: standby.filter(
+        (event) =>
+          isInstagramMessagingEvent(event) ||
+          // standby often omits messaging_product for IG; prefer IG when both apps exist
+          !event.message?.messaging_product
       ),
     };
     const messengerEntry = {
       ...entry,
-      messaging: (entry.messaging || []).filter((event) =>
-        isMessengerMessagingEvent(event, hasMessenger)
-      ),
+      messaging: messaging.filter((event) => isMessengerMessagingEvent(event)),
+      standby: [] as typeof standby,
     };
 
-    if (instagramEntry.messaging.length > 0) {
+    if (
+      (instagramEntry.messaging?.length ?? 0) > 0 ||
+      (instagramEntry.standby?.length ?? 0) > 0
+    ) {
       await handleInstagramWebhookBody({ object: 'page', entry: [instagramEntry] });
     }
-    if (messengerEntry.messaging.length > 0) {
+    if ((messengerEntry.messaging?.length ?? 0) > 0) {
       await handleMessengerWebhookBody({ object: 'page', entry: [messengerEntry] });
     }
   }

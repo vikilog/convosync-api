@@ -1195,7 +1195,7 @@ model WorkspaceUsageLimits {
   workspaceId       String   @id
   workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   contactsLimit     Int      @default(1000)
-  teamMembersLimit  Int      @default(2)
+  teamMembersLimit  Int      @default(3)
   aiAgentsLimit     Int      @default(1)
   channelsLimit     Int      @default(2)
   aiTokensIncluded  Int      @default(0)

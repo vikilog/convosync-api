@@ -20,10 +20,12 @@ async function embedWithPinecone(
   const response = await pc.inference.embed({
     model: config.pinecone.embeddingModel,
     inputs: texts,
+    // ponytail: SDK types say Record<string,string> but API accepts numeric dimension
     parameters: {
       inputType,
       truncate: 'END',
-    },
+      dimension: config.pinecone.embeddingDimension,
+    } as never,
   });
 
   return (response.data ?? []).map((row) => {

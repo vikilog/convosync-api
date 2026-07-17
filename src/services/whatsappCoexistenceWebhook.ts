@@ -1,12 +1,14 @@
 import { prisma } from '../index.js';
 import { getIo } from '../socket.js';
-import { resolveWorkspaceByPhoneNumberId } from '../services/workspaceResolve.js';
-import { findOrReopenConversationForInbound } from '../services/conversationThread.service.js';
+import { resolveWorkspaceByPhoneNumberId } from './workspaceResolve.js';
+import { findOrReopenConversationForInbound } from './conversationThread.service.js';
 import {
+  fetchAndStoreInboundMedia,
   parseInboundWhatsAppMessage,
   previewForMessage,
-} from '../services/whatsappMedia.js';
+} from './whatsappMedia.js';
 import { upsertWhatsAppContact } from '../lib/whatsappContact.js';
+import { getWorkspaceWhatsAppCredentials } from './whatsappCredentials.js';
 
 type SmbMessageEcho = Record<string, unknown> & {
   id: string;
@@ -50,13 +52,13 @@ export async function handleSmbMessageEchoes(value: CoexistenceWebhookValue): Pr
     from: echo.from || customerPhone,
     type: echo.type as string | undefined,
     text: echo.text as { body?: string } | undefined,
-    image: echo.image as { id?: string; mime_type?: string; caption?: string } | undefined,
-    video: echo.video as { id?: string; mime_type?: string; caption?: string } | undefined,
-    audio: echo.audio as { id?: string; mime_type?: string } | undefined,
+    image: echo.image as { id?: string; link?: string; mime_type?: string; caption?: string } | undefined,
+    video: echo.video as { id?: string; link?: string; mime_type?: string; caption?: string } | undefined,
+    audio: echo.audio as { id?: string; link?: string; mime_type?: string } | undefined,
     document: echo.document as
-      | { id?: string; mime_type?: string; filename?: string; caption?: string }
+      | { id?: string; link?: string; mime_type?: string; filename?: string; caption?: string }
       | undefined,
-    sticker: echo.sticker as { id?: string; mime_type?: string } | undefined,
+    sticker: echo.sticker as { id?: string; link?: string; mime_type?: string } | undefined,
     location: echo.location as
       | { latitude?: number; longitude?: number; name?: string; address?: string }
       | undefined,
@@ -87,6 +89,20 @@ export async function handleSmbMessageEchoes(value: CoexistenceWebhookValue): Pr
     return;
   }
 
+  let metadata: Record<string, unknown> | undefined = { source: 'smb_message_echo' };
+  if (parsed.location) {
+    metadata = { ...parsed.location, source: 'smb_message_echo' };
+  } else if (parsed.media) {
+    metadata = {
+      mimeType: parsed.media.mimeType,
+      fileName: parsed.media.fileName,
+      caption: parsed.media.caption,
+      waMediaId: parsed.media.waMediaId,
+      mediaUrl: parsed.media.mediaUrl,
+      source: 'smb_message_echo',
+    };
+  }
+
   const message = await prisma.message.create({
     data: {
       waMessageId: echo.id,
@@ -95,9 +111,32 @@ export async function handleSmbMessageEchoes(value: CoexistenceWebhookValue): Pr
       senderName: 'WhatsApp Business App',
       content: text,
       type: parsed.kind,
-      metadata: { source: 'smb_message_echo' },
+      metadata: metadata as object,
     },
   });
+
+  if (parsed.media?.waMediaId || parsed.media?.mediaUrl) {
+    try {
+      const credentials = await getWorkspaceWhatsAppCredentials(workspace.id, waNumberId);
+      const stored = await fetchAndStoreInboundMedia({
+        workspaceId: workspace.id,
+        messageId: message.id,
+        waToken: credentials.accessToken,
+        media: parsed.media,
+      });
+      metadata = { ...stored, source: 'smb_message_echo' };
+      await prisma.message.update({
+        where: { id: message.id },
+        data: { metadata: metadata as object },
+      });
+      message.metadata = metadata as object;
+    } catch (mediaErr) {
+      logCoexistence(
+        'smb_message_echoes → media download failed',
+        mediaErr instanceof Error ? mediaErr.message : mediaErr
+      );
+    }
+  }
 
   const lastPreview = previewForMessage(parsed.kind, text, parsed.media?.caption);
 
@@ -116,6 +155,7 @@ export async function handleSmbMessageEchoes(value: CoexistenceWebhookValue): Pr
     messageId: message.id,
     conversationId: conv.id,
     customerPhone,
+    kind: parsed.kind,
   });
 }
 

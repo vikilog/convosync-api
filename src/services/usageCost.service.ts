@@ -1,5 +1,6 @@
 import { prisma } from '../index.js';
 import {
+  AI_USAGE_MARKUP_MULTIPLIER,
   applyAiUsageMarkup,
   EMAIL_RATE_INR_PER_1K,
   WA_CONVERSATION_RATES_INR,
@@ -12,6 +13,7 @@ import {
   computeTokenBillingCosts,
   getTokenRateInrPer1k,
   getWorkspaceTokenUsageBreakdown,
+  resolveWorkspaceBillingMode,
 } from './workspaceTokenUsage.js';
 
 export type UsageMonthRange = {
@@ -97,7 +99,8 @@ export async function getWorkspaceUsageCost(
   const aiTokensIncluded = workspace?.usageLimits?.aiTokensIncluded ?? 0;
   const emailsIncluded = workspace?.usageLimits?.emailsLimit ?? 1000;
 
-  const [whatsappMessages, emailCount, templates, aiAgents, tokenBreakdown] = await Promise.all([
+  const [whatsappMessages, emailCount, templates, aiAgents, tokenBreakdown, billingMode] =
+    await Promise.all([
     prisma.message.findMany({
       where: {
         sender: 'agent',
@@ -135,6 +138,7 @@ export async function getWorkspaceUsageCost(
       select: { id: true, name: true },
     }),
     getWorkspaceTokenUsageBreakdown(workspaceId, range.start, range.end),
+    resolveWorkspaceBillingMode(workspaceId),
   ]);
 
   const templateCategoryById = new Map(templates.map((t) => [t.id, normalizeTemplateCategory(t.category)]));
@@ -214,7 +218,8 @@ export async function getWorkspaceUsageCost(
 
   const aiTotalTokens = aiInputTokens + aiOutputTokens;
   const tokenRates = getTokenRateInrPer1k();
-  const aiGrossCostInr = round2(applyAiUsageMarkup(tokenBreakdown.costInr));
+  const aiRawCostInr = round2(tokenBreakdown.costInr);
+  const aiGrossCostInr = round2(applyAiUsageMarkup(aiRawCostInr));
   const tokenBilling = computeTokenBillingCosts({
     used: aiTotalTokens,
     costInr: aiGrossCostInr,
@@ -280,11 +285,15 @@ export async function getWorkspaceUsageCost(
       totalConversations: [...conversationKeys].length,
     },
     ai: {
+      billingMode,
       inputTokens: aiInputTokens,
       outputTokens: aiOutputTokens,
       totalTokens: aiTotalTokens,
       inputRateInrPer1k: tokenRates.input,
       outputRateInrPer1k: tokenRates.output,
+      rawCostInr: aiRawCostInr,
+      markupMultiplier: AI_USAGE_MARKUP_MULTIPLIER,
+      markupInr: round2(Math.max(0, aiGrossCostInr - aiRawCostInr)),
       grossCostInr: aiGrossCostInr,
       includedTokens: aiTokensIncluded,
       includedCreditInr: includedTokenCostCredit,

@@ -120,8 +120,9 @@ export function computeTokenBillingCosts(params: {
   includedTokens: number;
 }) {
   const { used, costInr, includedTokens } = params;
+  // Wallet / pay-as-you-go: no included allotment → full cost is billed
   if (includedTokens <= 0) {
-    return { costInr, includedCreditInr: costInr, billedCostInr: 0 };
+    return { costInr, includedCreditInr: 0, billedCostInr: round2(costInr) };
   }
   const includedCreditInr = round2(
     (Math.min(includedTokens, used) * avgTokenCostInrPer1k()) / 1000

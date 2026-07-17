@@ -7,12 +7,13 @@ import {
 } from '../../utils/crypto.utils.js';
 import { normalizeRazorpayError } from '../../utils/razorpay-error.utils.js';
 import { readCustomPlanInput } from '../../services/customPlanPricing.js';
-import type { PlanFeatures } from '../../services/subscriptionPlans.js';
+import { seedSubscriptionPlans, type PlanFeatures } from '../../services/subscriptionPlans.js';
 import { isValidRazorpayPlanId, razorpayPlanIdsFromEnv, type PlanSlug } from '../../services/razorpayPlanSync.js';
 import {
   computeTokenBillingCosts,
   getWorkspaceMonthlyTokenUsage,
 } from '../../services/workspaceTokenUsage.js';
+import { applyAiUsageMarkup } from '../../services/usageCost.constants.js';
 import type {
   AddOnType,
   BillingCycle,
@@ -248,9 +249,10 @@ export class BillingService {
     };
 
     const aiTokenLimit = limitValue(limits?.aiTokensIncluded, 0);
+    const markedUpTokenCostInr = applyAiUsageMarkup(aiTokenUsage.costInr);
     const tokenCosts = computeTokenBillingCosts({
       used: aiTokenUsage.used,
-      costInr: aiTokenUsage.costInr,
+      costInr: markedUpTokenCostInr,
       includedTokens: aiTokenLimit,
     });
     const aiTokensSnapshot =
@@ -261,7 +263,7 @@ export class BillingService {
             pending: Number.MAX_SAFE_INTEGER,
             inputTokens: aiTokenUsage.inputTokens,
             outputTokens: aiTokenUsage.outputTokens,
-            costInr: tokenCosts.costInr,
+            costInr: markedUpTokenCostInr,
             includedCreditInr: tokenCosts.includedCreditInr,
             billedCostInr: tokenCosts.billedCostInr,
           }
@@ -269,16 +271,17 @@ export class BillingService {
             ...toSnapshotItem(aiTokenUsage.used, aiTokenLimit),
             inputTokens: aiTokenUsage.inputTokens,
             outputTokens: aiTokenUsage.outputTokens,
-            costInr: tokenCosts.costInr,
+            costInr: markedUpTokenCostInr,
             includedCreditInr: tokenCosts.includedCreditInr,
             billedCostInr: tokenCosts.billedCostInr,
           };
 
     return {
       contacts: toSnapshotItem(contactsUsed, limitValue(limits?.contactsLimit, 1000)),
-      teamMembers: toSnapshotItem(teamMembersUsed, limitValue(limits?.teamMembersLimit, 2)),
+      teamMembers: toSnapshotItem(teamMembersUsed, limitValue(limits?.teamMembersLimit, 3)),
       aiAgents: toSnapshotItem(aiAgentsUsed, limitValue(limits?.aiAgentsLimit, 1)),
-      channels: toSnapshotItem(channelsUsed, limitValue(limits?.channelsLimit, 2)),
+      // ponytail: channel caps off — always report unlimited so Integrations UI does not block connect
+      channels: toSnapshotItem(channelsUsed, Number.MAX_SAFE_INTEGER),
       campaigns: toSnapshotItem(campaignsUsed, limitValue(limits?.campaignsLimit, 3)),
       emails: toSnapshotItem(emailsUsed, limitValue(limits?.emailsLimit, 1000)),
       aiTokens: aiTokensSnapshot,
@@ -753,9 +756,21 @@ export class BillingService {
 
   async createSubscription(workspaceId: string, body: CreateSubscriptionBody) {
     const billingCycle: BillingCycle = body.billingCycle ?? 'monthly';
-    const plan = await prisma.subscriptionPlan.findFirst({
-      where: { OR: [{ id: body.planId }, { slug: body.planId }] },
+    let plan = await prisma.subscriptionPlan.findFirst({
+      where: {
+        OR: [{ id: body.planId }, { slug: body.planId }],
+        isActive: true,
+      },
     });
+    if (!plan) {
+      await seedSubscriptionPlans();
+      plan = await prisma.subscriptionPlan.findFirst({
+        where: {
+          OR: [{ id: body.planId }, { slug: body.planId }],
+          isActive: true,
+        },
+      });
+    }
     if (!plan) throw new Error('Plan not found');
 
     const envPlanIds = razorpayPlanIdsFromEnv(plan.slug as PlanSlug);
@@ -1473,7 +1488,7 @@ export class BillingService {
     if (!existing) {
       const defaults = {
         contactsLimit: 1000,
-        teamMembersLimit: 2,
+        teamMembersLimit: 3,
         aiAgentsLimit: 1,
         channelsLimit: 2,
         aiTokensIncluded: 0,
@@ -1556,7 +1571,7 @@ export class BillingService {
       create: {
         workspaceId,
         contactsLimit: parseFeatureLimit(features.contacts, 1000),
-        teamMembersLimit: parseFeatureLimit(features.teamMembers, 2),
+        teamMembersLimit: parseFeatureLimit(features.teamMembers, 3),
         aiAgentsLimit: parseFeatureLimit(features.aiAgents, 1),
         channelsLimit: parseFeatureLimit(features.channels, 2),
         aiTokensIncluded: typeof features.aiReplies === 'number' ? features.aiReplies : 0,
@@ -1570,7 +1585,7 @@ export class BillingService {
       },
       update: {
         contactsLimit: parseFeatureLimit(features.contacts, 1000),
-        teamMembersLimit: parseFeatureLimit(features.teamMembers, 2),
+        teamMembersLimit: parseFeatureLimit(features.teamMembers, 3),
         aiAgentsLimit: parseFeatureLimit(features.aiAgents, 1),
         channelsLimit: parseFeatureLimit(features.channels, 2),
         aiTokensIncluded: typeof features.aiReplies === 'number' ? features.aiReplies : 0,

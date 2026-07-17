@@ -24,9 +24,16 @@ export function getPineconeIndex(): Index {
   const client = getPineconeClient();
 
   if (!pineconeIndex) {
+    // Prefer name resolution so a stale PINECONE_HOST cannot point at a deleted index.
+    // Pass host only when set — must belong to PINECONE_INDEX in the Pinecone console.
     pineconeIndex = config.pinecone.host
       ? client.index(config.pinecone.indexName, config.pinecone.host)
       : client.index(config.pinecone.indexName);
+    console.info(
+      '[Pinecone] Using index',
+      config.pinecone.indexName,
+      config.pinecone.host ? `(host override)` : '(resolve by name)'
+    );
   }
 
   return pineconeIndex;

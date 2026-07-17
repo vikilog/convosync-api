@@ -342,11 +342,20 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
       let messageId: string | undefined;
       try {
         await assertInstagramMessageAffordable(workspaceId);
+        const lastContactMsg = await prisma.message.findFirst({
+          where: { conversationId: id, sender: 'contact', waMessageId: { not: null } },
+          orderBy: { createdAt: 'desc' },
+          select: { waMessageId: true, createdAt: true },
+        });
         const sent = await sendInstagramMessage(
           credentials.pageId,
           credentials.pageAccessToken,
           instagramUserId,
-          text
+          text,
+          {
+            replyToMid: lastContactMsg?.waMessageId || undefined,
+            instagramUserId: credentials.instagramUserId,
+          }
         );
         messageId = sent.messageId;
       } catch (err) {

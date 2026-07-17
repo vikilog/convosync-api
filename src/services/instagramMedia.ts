@@ -1,5 +1,8 @@
 import axios from 'axios';
-import type { SendInstagramResult } from './instagram.js';
+import {
+  isInstagramOutsideMessagingWindow,
+  type SendInstagramResult,
+} from './instagram.js';
 import {
   type MessageMediaMetadata,
   previewForMessage,
@@ -128,27 +131,40 @@ export async function sendInstagramMediaMessage(
   kind: InstagramAttachmentKind,
   mediaUrl: string
 ): Promise<SendInstagramResult> {
-  const res = await axios.post(
-    `${GRAPH}/${pageId}/messages`,
-    {
-      recipient: { id: recipientInstagramScopedId },
-      messaging_type: 'RESPONSE',
-      message: {
-        attachment: {
-          type: kind,
-          payload: { url: mediaUrl },
-        },
-      },
+  const recipient = { id: recipientInstagramScopedId };
+  const message = {
+    attachment: {
+      type: kind,
+      payload: { url: mediaUrl },
     },
-    { params: { access_token: pageAccessToken } }
-  );
+  };
 
-  const messageId = (res.data as { message_id?: string }).message_id;
-  if (!messageId) {
-    throw new Error('Meta API did not return a message id');
+  const post = async (payload: Record<string, unknown>) => {
+    const res = await axios.post(`${GRAPH}/${pageId}/messages`, payload, {
+      params: { access_token: pageAccessToken },
+    });
+    const messageId = (res.data as { message_id?: string }).message_id;
+    if (!messageId) {
+      throw new Error('Meta API did not return a message id');
+    }
+    return { messageId };
+  };
+
+  try {
+    return await post({
+      recipient,
+      messaging_type: 'RESPONSE',
+      message,
+    });
+  } catch (err) {
+    if (!isInstagramOutsideMessagingWindow(err)) throw err;
+    return await post({
+      recipient,
+      messaging_type: 'MESSAGE_TAG',
+      tag: 'HUMAN_AGENT',
+      message,
+    });
   }
-
-  return { messageId };
 }
 
 type GraphMessageAttachment = {

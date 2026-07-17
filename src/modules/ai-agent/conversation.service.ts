@@ -1,23 +1,18 @@
 import { FastifyInstance } from 'fastify';
-import { config } from '../../config.js';
 import { classifyIntent, INTENTS } from './intent.service.js';
-import { ContextBuilderService } from './context-builder.service.js';
-import { CacheService } from './cache.service.js';
 import { TokenTrackerService } from './token-tracker.service.js';
 import { IdleTimeoutService } from './idle-timeout.service.js';
 import { AiProviderConfigService } from './services/ai-provider-config.service.js';
 import { LlmClient, LlmClientError } from './services/llm-client.service.js';
+import { handleAIAgentQuery } from './hybrid/handle-ai-agent-query.js';
+import type { RetrievalPath } from './hybrid/types.js';
 
 export class ConversationService {
-  private contextBuilder: ContextBuilderService;
-  private cacheService: CacheService;
   private tokenTracker: TokenTrackerService;
   private idleTimeout: IdleTimeoutService;
   private providerConfig: AiProviderConfigService;
 
   constructor(private fastify: FastifyInstance) {
-    this.contextBuilder = new ContextBuilderService(fastify);
-    this.cacheService = new CacheService(fastify);
     this.tokenTracker = new TokenTrackerService(fastify);
     this.idleTimeout = new IdleTimeoutService(fastify);
     this.providerConfig = new AiProviderConfigService(fastify.prisma);
@@ -42,6 +37,8 @@ export class ConversationService {
     intent: string;
     stage: string;
     billingMode?: 'convosync' | 'byok';
+    retrievalPath?: RetrievalPath;
+    topScore?: number | null;
   }> {
     let llm: LlmClient;
     let billingMode: 'convosync' | 'byok' = 'convosync';
@@ -159,74 +156,43 @@ export class ConversationService {
         intent,
         stage: 'resolution',
         billingMode,
+        retrievalPath: 'escalate',
+        topScore: null,
       };
     }
 
-    const shouldCheckCache = this.cacheService.shouldCache(intent, params.message);
-    if (shouldCheckCache) {
-      const cached = await this.cacheService.getCachedResponse({
-        workspaceId: params.workspaceId,
-        agentId: params.agentId,
-        question: params.message,
-      });
-
-      if (cached) {
-        await this.saveMessage(conversation.id, 'user', params.message, 0, intent);
-        await this.saveMessage(conversation.id, 'assistant', cached, 0, intent, true);
-        return {
-          reply: cached,
-          conversationId: conversation.id,
-          fromCache: true,
-          tokensUsed: intentTokens,
-          costInr: 0,
-          intent,
-          stage: conversation.stage,
-          billingMode,
-        };
-      }
-    }
-
     const stage = this.determineStage(conversation, intent);
-
     const conversationHistory = conversation.messages.map((m) => ({
       role: m.role as 'user' | 'assistant',
       content: m.content,
     }));
 
-    const context = await this.contextBuilder.buildContext({
-      agentId: params.agentId,
-      workspaceId: params.workspaceId,
-      intent,
-      conversationHistory,
-      currentMessage: params.message,
-      stage,
+    const hybrid = await handleAIAgentQuery({
+      fastify: this.fastify,
+      llm,
+      input: {
+        workspaceId: params.workspaceId,
+        agentId: params.agentId,
+        message: params.message,
+        intent,
+        stage,
+        conversationHistory,
+      },
     });
 
-    const maxTokens = config.ai.maxOutputTokens;
-
-    const aiResponse = await llm.complete(
-      [
-        { role: 'system', content: context.systemPrompt },
-        ...context.messages,
-        { role: 'user', content: params.message },
-      ],
-      { maxTokens, temperature: 0.7 }
-    );
-
     const reply =
-      aiResponse.content || 'Sorry, kuch galat hua. Please dobara try karein.';
-    const usage = aiResponse.usage;
+      hybrid.reply || 'Sorry, kuch galat hua. Please dobara try karein.';
 
     const { costInr } = await this.tokenTracker.logUsage({
       workspaceId: params.workspaceId,
       agentId: params.agentId,
       conversationId: conversation.id,
-      inputTokens: usage.promptTokens,
-      outputTokens: usage.completionTokens,
-      fromCache: false,
-      intentDetected: intent,
-      skillsLoaded: context.skillsLoaded,
-      kbChunksLoaded: context.kbChunksLoaded,
+      inputTokens: hybrid.promptTokens,
+      outputTokens: hybrid.completionTokens,
+      fromCache: hybrid.fromCache,
+      intentDetected: `hybrid:${hybrid.path}`,
+      skillsLoaded: hybrid.skillsLoaded,
+      kbChunksLoaded: hybrid.kbChunksLoaded,
       billingMode,
     });
 
@@ -235,8 +201,9 @@ export class ConversationService {
       conversation.id,
       'assistant',
       reply,
-      usage.totalTokens,
-      intent
+      hybrid.promptTokens + hybrid.completionTokens,
+      intent,
+      hybrid.fromCache
     );
 
     await this.prisma.agentChatConversation.update({
@@ -244,25 +211,17 @@ export class ConversationService {
       data: { stage, detectedIntent: intent },
     });
 
-    if (shouldCheckCache) {
-      await this.cacheService.setCachedResponse({
-        workspaceId: params.workspaceId,
-        agentId: params.agentId,
-        question: params.message,
-        answer: reply,
-        intent,
-      });
-    }
-
     return {
       reply,
       conversationId: conversation.id,
-      fromCache: false,
-      tokensUsed: usage.totalTokens + intentTokens,
-      costInr,
+      fromCache: hybrid.fromCache,
+      tokensUsed: hybrid.promptTokens + hybrid.completionTokens + intentTokens,
+      costInr: hybrid.fromCache ? 0 : costInr,
       intent,
       stage,
       billingMode,
+      retrievalPath: hybrid.path,
+      topScore: hybrid.topScore,
     };
   }
 
