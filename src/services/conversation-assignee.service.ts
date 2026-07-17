@@ -45,6 +45,22 @@ export async function applyConversationAssignee(
     if (!agent) throw new ConversationAssigneeError('Rule-based bot not found');
   }
 
+  if (assigneeType === 'ai_agent') {
+    if (!assigneeId) throw new ConversationAssigneeError('Select an AI agent');
+    const agent = await prisma.aiAgent.findFirst({
+      where: {
+        id: assigneeId,
+        workspaceId,
+        category: { in: ['ai_agent', 'responsive'] },
+        isEnabled: true,
+        isPublished: true,
+      },
+    });
+    if (!agent) {
+      throw new ConversationAssigneeError('Publish the AI agent before assigning it in Inbox');
+    }
+  }
+
   if (assigneeType === 'journey' && assigneeId) {
     const journey = await prisma.journey.findFirst({
       where: { id: assigneeId, workspaceId, status: 'published' },
@@ -92,8 +108,10 @@ export function formatAssigneeLabel(
       return agentName ?? 'Team member';
     case 'ai':
       return 'AI Copilot';
+    case 'ai_agent':
+      return agentName ?? 'AI Agent';
     case 'rule_based':
-      return 'Rule-based bot';
+      return agentName ?? 'Rule-based bot';
     case 'journey':
       return 'Journey';
     default:

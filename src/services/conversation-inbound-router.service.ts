@@ -1,4 +1,5 @@
 import { processAiInbound } from './ai-inbound.service.js';
+import { processAiAgentInbound } from './ai-agent-inbound.service.js';
 import {
   processRuleBasedFlowInbound,
   type InboundWhatsAppContext,
@@ -42,6 +43,11 @@ export async function routeInboundWhatsApp(ctx: InboundWhatsAppContext): Promise
     case 'ai':
       logRoute('route → AI Copilot');
       await processAiInbound(ctx);
+      return;
+
+    case 'ai_agent':
+      logRoute('route → AI Agent', { agentId: conversation.assigneeId });
+      await processAiAgentInbound(ctx);
       return;
 
     case 'rule_based':

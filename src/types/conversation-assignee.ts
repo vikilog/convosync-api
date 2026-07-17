@@ -2,6 +2,7 @@
 export const CONVERSATION_ASSIGNEE_TYPES = [
   'user',
   'ai',
+  'ai_agent',
   'rule_based',
   'journey',
 ] as const;
