@@ -166,6 +166,59 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     return audits;
   });
 
+  fastify.get('/:id/insights/latest', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const contact = await prisma.contact.findFirst({
+      where: { id, workspaceId },
+      select: { id: true, excludeFromInsights: true },
+    });
+    if (!contact) return reply.code(404).send({ error: 'Not found' });
+    const { getLatestContactInsight } = await import(
+      '../modules/contact-insight/contact-insight.service.js'
+    );
+    const insight = await getLatestContactInsight(workspaceId, id);
+    return {
+      insight,
+      excludeFromInsights: contact.excludeFromInsights,
+    };
+  });
+
+  /** Manual prepare — force recompute past the 6h gap (existing calls/chats). */
+  fastify.post('/:id/insights/compute', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const contact = await prisma.contact.findFirst({
+      where: { id, workspaceId },
+      select: { id: true, excludeFromInsights: true },
+    });
+    if (!contact) return reply.code(404).send({ error: 'Not found' });
+    if (contact.excludeFromInsights) {
+      return reply.code(409).send({
+        error: 'Contact is excluded from insights',
+        code: 'excluded',
+      });
+    }
+
+    const { enqueueContactInsight } = await import('../queue/contact-insight.queue.js');
+    const result = await enqueueContactInsight({
+      workspaceId,
+      contactId: id,
+      reason: 'manual',
+      force: true,
+    });
+
+    if (!result.queued && result.reason === 'disabled') {
+      return reply.code(503).send({ error: 'Contact insight is disabled', code: result.reason });
+    }
+
+    return {
+      queued: result.queued,
+      reason: result.reason ?? null,
+      jobId: result.jobId ?? null,
+    };
+  });
+
   fastify.put('/:id', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };

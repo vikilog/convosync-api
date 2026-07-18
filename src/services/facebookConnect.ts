@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { prisma } from '../index.js';
 import { config } from '../config.js';
+import { decryptSecret, encryptSecret } from '../lib/field-encryption.js';
 
 const GRAPH = 'https://graph.facebook.com/v19.0';
 const PAGE_FIELDS = 'id,name,category,access_token,picture.type(large)';
@@ -260,7 +261,7 @@ export async function connectWorkspaceFacebook(
     where: { id: input.workspaceId },
     data: {
       fbPageId: enriched.id,
-      fbPageToken: pageAccessToken,
+      fbPageToken: encryptSecret(pageAccessToken),
       fbPageName: enriched.name || enriched.id,
     },
   });
@@ -282,19 +283,20 @@ export async function getConnectedFacebookPage(workspaceId: string) {
     select: { fbPageId: true, fbPageToken: true, fbPageName: true },
   });
 
-  if (!workspace?.fbPageId || !workspace.fbPageToken) {
+  const fbPageToken = decryptSecret(workspace?.fbPageToken);
+  if (!workspace?.fbPageId || !fbPageToken) {
     return { connected: false as const };
   }
 
   let tokenInfo: PageTokenInfo | undefined;
   try {
-    tokenInfo = await inspectPageAccessToken(workspace.fbPageToken);
+    tokenInfo = await inspectPageAccessToken(fbPageToken);
   } catch {
     tokenInfo = undefined;
   }
 
   try {
-    const detail = await graphGet<RawPage>(workspace.fbPageId, workspace.fbPageToken, {
+    const detail = await graphGet<RawPage>(workspace.fbPageId, fbPageToken, {
       fields: 'id,name,category,fan_count,followers_count,picture.type(large)',
     });
 

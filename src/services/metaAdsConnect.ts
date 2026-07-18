@@ -1,6 +1,10 @@
 import axios from 'axios';
 import { prisma } from '../index.js';
 import { config } from '../config.js';
+import {
+  decryptSecret,
+  encryptSecret,
+} from '../lib/field-encryption.js';
 
 const GRAPH = 'https://graph.facebook.com/v19.0';
 
@@ -348,7 +352,7 @@ export async function connectWorkspaceMetaAds(
   await prisma.workspace.update({
     where: { id: input.workspaceId },
     data: {
-      metaUserToken: userToken,
+      metaUserToken: encryptSecret(userToken),
       metaAdAccountId: selected.id,
     },
   });
@@ -369,20 +373,21 @@ export async function listWorkspaceMetaAdAccounts(workspaceId: string): Promise<
     select: { metaUserToken: true, metaAdAccountId: true, fbPageId: true },
   });
 
-  if (!workspace?.metaUserToken) {
+  const metaUserToken = decryptSecret(workspace?.metaUserToken);
+  if (!metaUserToken) {
     throw new Error('Meta Ads not connected');
   }
 
   const { pageBusiness, personal, all } = await resolveAllAdAccounts(
-    workspace.metaUserToken,
-    workspace.fbPageId
+    metaUserToken,
+    workspace!.fbPageId
   );
   const pageBusinessIds = new Set(pageBusiness.map((account) => account.id));
 
   const withCounts = await Promise.all(
     all.map(async (account) => ({
       account,
-      campaignCount: await fetchCampaignCount(account.id, workspace.metaUserToken!),
+      campaignCount: await fetchCampaignCount(account.id, metaUserToken),
     }))
   );
 
@@ -409,9 +414,10 @@ export async function selectWorkspaceMetaAdAccount(workspaceId: string, adAccoun
     where: { id: workspaceId },
     select: { metaUserToken: true, fbPageId: true },
   });
-  if (!workspace?.metaUserToken) throw new Error('Meta Ads not connected');
+  const metaUserToken = decryptSecret(workspace?.metaUserToken);
+  if (!metaUserToken) throw new Error('Meta Ads not connected');
 
-  const { all } = await resolveAllAdAccounts(workspace.metaUserToken, workspace.fbPageId);
+  const { all } = await resolveAllAdAccounts(metaUserToken, workspace!.fbPageId);
   const selected = all.find((account) => matchesAdAccountId(account, adAccountId));
   if (!selected) {
     throw new Error('Ad account not found or you do not have access to it.');
@@ -435,7 +441,8 @@ export async function getConnectedMetaAdsAccount(workspaceId: string) {
     select: { metaAdAccountId: true, metaUserToken: true },
   });
 
-  if (!workspace?.metaAdAccountId || !workspace.metaUserToken) {
+  const metaUserToken = decryptSecret(workspace?.metaUserToken);
+  if (!workspace?.metaAdAccountId || !metaUserToken) {
     return { connected: false as const };
   }
 
@@ -443,7 +450,7 @@ export async function getConnectedMetaAdsAccount(workspaceId: string) {
     const res = await axios.get(`${GRAPH}/${workspace.metaAdAccountId}`, {
       params: {
         fields: 'id,name,currency,account_status,balance,spend_cap,timezone_name',
-        access_token: workspace.metaUserToken,
+        access_token: metaUserToken,
       },
     });
     const data = res.data as RawAdAccount;
@@ -479,7 +486,8 @@ export async function fetchMetaAdCampaigns(workspaceId: string) {
     where: { id: workspaceId },
     select: { metaAdAccountId: true, metaUserToken: true },
   });
-  if (!workspace?.metaAdAccountId || !workspace.metaUserToken) {
+  const metaUserToken = decryptSecret(workspace?.metaUserToken);
+  if (!workspace?.metaAdAccountId || !metaUserToken) {
     throw new Error('Meta Ads account not connected');
   }
 
@@ -487,7 +495,7 @@ export async function fetchMetaAdCampaigns(workspaceId: string) {
     params: {
       fields:
         'id,name,status,effective_status,objective,daily_budget,lifetime_budget,start_time,stop_time,insights.date_preset(last_30d){spend,impressions,clicks,cpm,cpc,ctr,reach,frequency,actions,date_start,date_stop}',
-      access_token: workspace.metaUserToken,
+      access_token: metaUserToken,
       limit: '100',
       filtering: JSON.stringify([
         { field: 'effective_status', operator: 'IN', value: ['ACTIVE', 'PAUSED', 'IN_PROCESS', 'WITH_ISSUES'] },
@@ -508,12 +516,13 @@ export async function setCampaignStatus(
     where: { id: workspaceId },
     select: { metaUserToken: true },
   });
-  if (!workspace?.metaUserToken) throw new Error('Meta Ads not connected');
+  const metaUserToken = decryptSecret(workspace?.metaUserToken);
+  if (!metaUserToken) throw new Error('Meta Ads not connected');
 
   await axios.post(
     `${GRAPH}/${campaignId}`,
     { status },
-    { params: { access_token: workspace.metaUserToken } }
+    { params: { access_token: metaUserToken } }
   );
 }
 
@@ -536,14 +545,13 @@ export async function createCTWACampaign(workspaceId: string, body: CreateCTWAIn
     where: { id: workspaceId },
     select: { metaAdAccountId: true, metaUserToken: true, waNumberId: true },
   });
-  if (!workspace?.metaAdAccountId || !workspace.metaUserToken) {
+  const token = decryptSecret(workspace?.metaUserToken);
+  if (!workspace?.metaAdAccountId || !token) {
     throw new Error('Meta Ads account not connected');
   }
   if (!workspace.waNumberId) {
     throw new Error('WhatsApp phone number not connected. Connect WhatsApp first for CTWA ads.');
   }
-
-  const token = workspace.metaUserToken;
   const actId = workspace.metaAdAccountId;
 
   const campaignRes = await axios.post(

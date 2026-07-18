@@ -12,6 +12,8 @@ const PAGE_MESSAGING_WEBHOOK_FIELDS = [
   'messaging_postbacks',
   'message_echoes',
   'messaging_referrals',
+  'messaging_seen',
+  'message_reads',
   'standby',
 ].join(',');
 

@@ -1,4 +1,5 @@
 import { prisma } from '../index.js';
+import { decryptSecret } from '../lib/field-encryption.js';
 
 export type WorkspaceInstagramCredentials = {
   pageId: string;
@@ -19,13 +20,14 @@ export async function getWorkspaceInstagramCredentials(
         orderBy: { createdAt: 'desc' },
       });
 
-  if (!account?.pageAccessToken) {
+  const pageAccessToken = decryptSecret(account?.pageAccessToken);
+  if (!account || !pageAccessToken) {
     throw new Error('Instagram not connected for this workspace');
   }
 
   return {
     pageId: account.pageId,
-    pageAccessToken: account.pageAccessToken,
+    pageAccessToken,
     instagramUserId: account.instagramUserId,
     username: account.username,
     displayName: account.displayName,

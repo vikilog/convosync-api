@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { prisma } from '../index.js';
 import { config } from '../config.js';
+import { encryptSecret } from '../lib/field-encryption.js';
 import {
   subscribeWhatsAppWebhooks,
   type WebhookSubscribeResult,
@@ -233,7 +234,7 @@ export async function connectWorkspaceWhatsApp(
     where: { id: input.workspaceId },
     data: {
       waNumberId: phoneNumberId,
-      waToken: accessToken,
+      waToken: encryptSecret(accessToken),
       wabaId,
       waPhoneNumber: phoneNumber,
     },

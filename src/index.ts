@@ -53,6 +53,11 @@ import { initGoogleModule } from './modules/google/container.js';
 import { initSocket } from './socket.js';
 import { IdleTimeoutService } from './modules/ai-agent/idle-timeout.service.js';
 import aiProviderRoutes from './modules/ai-agent/routes/ai-provider.routes.js';
+import callingRoutes from './modules/calling/calling.routes.js';
+import { startCallingSweeper } from './modules/calling/calling.sweeper.js';
+import { startCallTranscriptWorker } from './workers/call-transcript.worker.js';
+import { startContactInsightWorker } from './workers/contact-insight.worker.js';
+import { startContactInsightScheduler } from './workers/contact-insight.scheduler.js';
 
 export { prisma } from './lib/prisma.js';
 import { prisma } from './lib/prisma.js';
@@ -104,6 +109,7 @@ async function start() {
   await fastify.register(googleRoutes, { prefix: '/api/google' });
   await fastify.register(mediaRoutes, { prefix: '/api/media' });
   await fastify.register(import('./modules/billing/billing.routes.js'), { prefix: '/api' });
+  await fastify.register(callingRoutes, { prefix: '/api' });
 
   fastify.get('/health', async () => ({
     status: 'ok',
@@ -113,6 +119,10 @@ async function start() {
   await fastify.listen({ port: config.port, host: '0.0.0.0' });
 
   initSocket(fastify.server);
+  startCallingSweeper();
+  startCallTranscriptWorker();
+  startContactInsightWorker();
+  startContactInsightScheduler();
 
   initJourneyModule(prisma);
   initEmailModule(prisma);

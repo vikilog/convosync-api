@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../index.js';
+import { decryptSecret } from '../lib/field-encryption.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import {
@@ -32,9 +33,13 @@ export default async function messengerRoutes(fastify: FastifyInstance) {
           if (!account) {
             return { pageId: result.pageId, subscribed: false, error: 'Account not found after connect' };
           }
+          const pageAccessToken = decryptSecret(account.pageAccessToken);
+          if (!pageAccessToken) {
+            return { pageId: result.pageId, subscribed: false, error: 'Missing page token' };
+          }
           const webhookSubscribe = await subscribeInstagramPageWebhooks(
             account.pageId,
-            account.pageAccessToken
+            pageAccessToken
           );
           return { pageId: result.pageId, ...webhookSubscribe };
         })

@@ -156,4 +156,65 @@ export const config = {
         process.env.AWS_SECRET_ACCESS_KEY
     ),
   },
+  livekit: {
+    url: (process.env.LIVEKIT_URL || '').replace(/\/$/, ''),
+    apiKey: process.env.LIVEKIT_API_KEY || '',
+    apiSecret: process.env.LIVEKIT_API_SECRET || '',
+    /** Ring timeout before status → missed */
+    ringTimeoutSeconds: parseInt(process.env.LIVEKIT_RING_TIMEOUT_SECONDS || '45', 10),
+    /** After accept, max wait for LiveKit join before miss/fail */
+    acceptJoinGraceSeconds: parseInt(process.env.LIVEKIT_ACCEPT_JOIN_GRACE_SECONDS || '45', 10),
+    /** Access token TTL (seconds) */
+    tokenTtlSeconds: parseInt(process.env.LIVEKIT_TOKEN_TTL_SECONDS || '600', 10),
+    /** Customer guest link TTL (seconds) — default 2h */
+    guestTokenTtlSeconds: parseInt(process.env.CALL_GUEST_TOKEN_TTL_SECONDS || '7200', 10),
+    enabled: Boolean(
+      process.env.LIVEKIT_URL && process.env.LIVEKIT_API_KEY && process.env.LIVEKIT_API_SECRET
+    ),
+  },
+  /** Post-call Faster-Whisper STT (optional — skipped if python/deps missing) */
+  callStt: {
+    enabled: process.env.CALL_STT_ENABLED !== 'false',
+    pythonBin: process.env.CALL_STT_PYTHON || 'python3',
+    /** medium is a good India default; large-v3 better but slower/heavier */
+    model: process.env.CALL_STT_MODEL || 'medium',
+    /** auto | hi | en | bn | ta | te | mr | gu | kn | ml | pa | ur | … */
+    language: process.env.CALL_STT_LANGUAGE || 'auto',
+    /**
+     * When language=auto and detection is weak / English-biased (Hinglish),
+     * retry with this code. Default hi for India.
+     */
+    preferLanguage: process.env.CALL_STT_PREFER_LANGUAGE || 'hi',
+    /** Optional Whisper initial prompt; empty = built-in Hinglish prompt when prefer=hi */
+    initialPrompt: process.env.CALL_STT_INITIAL_PROMPT || '',
+    device: process.env.CALL_STT_DEVICE || 'auto', // auto | cpu | cuda
+    computeType: process.env.CALL_STT_COMPUTE_TYPE || 'default',
+  },
+  /**
+   * Customer Insight pipeline (Claude) — Phase 1 infra; LLM prompt is Phase 2.
+   * CONTACT_INSIGHT_LLM_ENABLED stays false until prompt lands.
+   */
+  contactInsight: {
+    enabled: process.env.CONTACT_INSIGHT_ENABLED !== 'false',
+    /** Phase 2 gate — when false, worker builds context then skips Claude */
+    llmEnabled: process.env.CONTACT_INSIGHT_LLM_ENABLED === 'true',
+    modelVersion: process.env.CONTACT_INSIGHT_MODEL_VERSION || 'insight-v2',
+    minInteractions: parseInt(process.env.CONTACT_INSIGHT_MIN_INTERACTIONS || '3', 10),
+    /** Below this, user message adds an explicit low-confidence note for the model */
+    lowSignalThreshold: parseInt(process.env.CONTACT_INSIGHT_LOW_SIGNAL_THRESHOLD || '5', 10),
+    /** Don't recompute the same contact more often than this */
+    minGapHours: parseInt(process.env.CONTACT_INSIGHT_MIN_GAP_HOURS || '6', 10),
+    maxConversations: parseInt(process.env.CONTACT_INSIGHT_MAX_CONVERSATIONS || '10', 10),
+    lookbackDays: parseInt(process.env.CONTACT_INSIGHT_LOOKBACK_DAYS || '90', 10),
+    maxCallTranscripts: parseInt(process.env.CONTACT_INSIGHT_MAX_CALLS || '10', 10),
+    churnRiskTagThreshold: parseInt(process.env.CONTACT_INSIGHT_CHURN_TAG_THRESHOLD || '70', 10),
+    purchaseIntentTagThreshold: parseInt(
+      process.env.CONTACT_INSIGHT_PURCHASE_TAG_THRESHOLD || '70',
+      10
+    ),
+    churnRiskTag: process.env.CONTACT_INSIGHT_CHURN_TAG || 'high_churn_risk',
+    purchaseIntentTag: process.env.CONTACT_INSIGHT_PURCHASE_TAG || 'hot_lead',
+    /** Nightly scan hour in local process TZ (default 2am) */
+    nightlyHour: parseInt(process.env.CONTACT_INSIGHT_NIGHTLY_HOUR || '2', 10),
+  },
 };

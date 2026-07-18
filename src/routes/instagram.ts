@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../index.js';
 import { config } from '../config.js';
+import { decryptSecret } from '../lib/field-encryption.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import {
@@ -158,9 +159,11 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
       const account = await prisma.instagramAccount.findFirst({
         where: { workspaceId, pageId: result.pageId },
       });
-      const webhookSubscribe = account
-        ? await subscribeInstagramPageWebhooks(account.pageId, account.pageAccessToken)
-        : { subscribed: false, error: 'Account not found after connect' };
+      const pageAccessToken = decryptSecret(account?.pageAccessToken);
+      const webhookSubscribe =
+        account && pageAccessToken
+          ? await subscribeInstagramPageWebhooks(account.pageId, pageAccessToken)
+          : { subscribed: false, error: 'Account not found after connect' };
 
       fastify.log.info(
         `Instagram connected for workspace ${workspaceId}: @${result.username || result.instagramUserId}`

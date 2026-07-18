@@ -18,19 +18,13 @@ import {
 } from '../services/userProfile.js';
 import { onboardingPayloadFromUser } from '../services/onboarding.js';
 import { buildTrialWindow, DEFAULT_TRIAL_DAYS } from '../services/trial.js';
-
-async function signAuthToken(
-  fastify: FastifyInstance,
-  userId: string,
-  workspaceId: string
-) {
-  const access = await resolveMembershipAccess(userId, workspaceId);
-  return fastify.jwt.sign({
-    userId,
-    workspaceId,
-    role: access.role,
-  });
-}
+import {
+  blacklistJti,
+  bumpTokenVersion,
+  ensureUserSecurityState,
+  JtiBlacklistUnavailableError,
+  signSessionToken,
+} from '../services/userSecurity.js';
 
 export default async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/register', async (request, reply) => {
@@ -74,11 +68,17 @@ export default async function authRoutes(fastify: FastifyInstance) {
         memberships: {
           create: { workspaceId: workspace.id, role: 'admin' },
         },
+        securityState: {
+          create: { tokenVersion: 0, updatedReason: 'signup' },
+        },
       },
     });
 
     const workspaces = await listUserWorkspaces(user.id);
-    const token = await signAuthToken(fastify, user.id, workspace.id);
+    const token = await signSessionToken(fastify, {
+      userId: user.id,
+      workspaceId: workspace.id,
+    });
     const access = await resolveMembershipAccess(user.id, workspace.id);
 
     return {
@@ -115,6 +115,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
       return reply.code(401).send({ error: 'Invalid credentials' });
     }
 
+    await ensureUserSecurityState(user.id);
+
     const workspaces = await listUserWorkspaces(user.id);
     let activeWorkspaceId = user.workspaceId;
 
@@ -128,7 +130,10 @@ export default async function authRoutes(fastify: FastifyInstance) {
       workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0];
     if (activeWorkspace) activeWorkspaceId = activeWorkspace.id;
 
-    const token = await signAuthToken(fastify, user.id, activeWorkspaceId);
+    const token = await signSessionToken(fastify, {
+      userId: user.id,
+      workspaceId: activeWorkspaceId,
+    });
     const access = await resolveMembershipAccess(user.id, activeWorkspaceId);
 
     return {
@@ -149,9 +154,46 @@ export default async function authRoutes(fastify: FastifyInstance) {
     };
   });
 
+  /** Logout this device — blacklist jti until JWT exp (Redis). */
+  fastify.post('/logout', { onRequest: [authenticate] }, async (request, reply) => {
+    const user = getJwtUser(request);
+    if (!user.jti || !user.exp) {
+      return reply.code(400).send({
+        error: 'Token missing jti/exp; re-login then logout again',
+        code: 'token_missing_jti',
+      });
+    }
+
+    try {
+      await blacklistJti(user.jti, user.exp);
+    } catch (err) {
+      if (err instanceof JtiBlacklistUnavailableError) {
+        return reply.code(503).send({
+          error: err.message,
+          code: 'logout_retry',
+        });
+      }
+      throw err;
+    }
+
+    return { success: true };
+  });
+
+  /** Logout everywhere — bump tokenVersion (Postgres). */
+  fastify.post(
+    '/logout-all',
+    { onRequest: [authenticate, requireWorkspaceAccess] },
+    async (request) => {
+      const { userId } = getJwtUser(request);
+      if (!userId) return { success: false };
+      const tokenVersion = await bumpTokenVersion(userId, 'logout_all');
+      return { success: true, tokenVersion };
+    }
+  );
+
   fastify.get('/workspaces', { onRequest: [authenticate, requireWorkspaceAccess] }, async (request) => {
     const { userId, workspaceId } = getJwtUser(request);
-    const workspaces = await listUserWorkspaces(userId);
+    const workspaces = await listUserWorkspaces(userId!);
     const active = workspaces.find((w) => w.id === workspaceId) ?? workspaces[0];
     return { workspaces, activeWorkspaceId: active?.id ?? workspaceId };
   });
@@ -160,18 +202,21 @@ export default async function authRoutes(fastify: FastifyInstance) {
     const { userId } = getJwtUser(request);
     const body = z.object({ workspaceId: z.string().min(1) }).parse(request.body);
 
-    const allowed = await userHasWorkspaceAccess(userId, body.workspaceId);
+    const allowed = await userHasWorkspaceAccess(userId!, body.workspaceId);
     if (!allowed) return reply.code(403).send({ error: 'No access to this company' });
 
-    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const user = await prisma.user.findUnique({ where: { id: userId! } });
     if (!user) return reply.code(404).send({ error: 'User not found' });
 
     const workspace = await prisma.workspace.findUnique({ where: { id: body.workspaceId } });
     if (!workspace) return reply.code(404).send({ error: 'Company not found' });
 
-    const token = await signAuthToken(fastify, userId, workspace.id);
-    const workspaces = await listUserWorkspaces(userId);
-    const access = await resolveMembershipAccess(userId, workspace.id);
+    const token = await signSessionToken(fastify, {
+      userId: userId!,
+      workspaceId: workspace.id,
+    });
+    const workspaces = await listUserWorkspaces(userId!);
+    const access = await resolveMembershipAccess(userId!, workspace.id);
 
     return {
       token,
@@ -202,15 +247,18 @@ export default async function authRoutes(fastify: FastifyInstance) {
     });
 
     await prisma.workspaceMembership.create({
-      data: { userId, workspaceId: workspace.id, role: 'admin' },
+      data: { userId: userId!, workspaceId: workspace.id, role: 'admin' },
     });
 
-    const workspaces = await listUserWorkspaces(userId);
-    const user = await prisma.user.findUnique({ where: { id: userId } });
+    const workspaces = await listUserWorkspaces(userId!);
+    const user = await prisma.user.findUnique({ where: { id: userId! } });
     if (!user) return reply.code(404).send({ error: 'User not found' });
 
-    const token = await signAuthToken(fastify, userId, workspace.id);
-    const access = await resolveMembershipAccess(userId, workspace.id);
+    const token = await signSessionToken(fastify, {
+      userId: userId!,
+      workspaceId: workspace.id,
+    });
+    const access = await resolveMembershipAccess(userId!, workspace.id);
 
     return {
       token,
@@ -232,8 +280,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
   fastify.patch('/profile', { onRequest: [authenticate, requireWorkspaceAccess] }, async (request) => {
     const { userId, workspaceId } = getJwtUser(request);
     const body = z.object({ name: z.string().min(2).max(120) }).parse(request.body);
-    const user = await updateUserProfile(userId, { name: body.name });
-    const access = await resolveMembershipAccess(userId, workspaceId);
+    const user = await updateUserProfile(userId!, { name: body.name });
+    const access = await resolveMembershipAccess(userId!, workspaceId!);
     return {
       user: {
         ...user,
@@ -249,8 +297,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
     const body = z
       .object({ avatar: z.string().nullable().optional() })
       .parse(request.body ?? {});
-    const user = await updateUserAvatar(userId, body.avatar);
-    const access = await resolveMembershipAccess(userId, workspaceId);
+    const user = await updateUserAvatar(userId!, body.avatar);
+    const access = await resolveMembershipAccess(userId!, workspaceId!);
     return {
       user: {
         ...user,
@@ -269,23 +317,23 @@ export default async function authRoutes(fastify: FastifyInstance) {
         newPassword: z.string().min(8),
       })
       .parse(request.body);
-    return changeUserPassword(userId, body);
+    return changeUserPassword(userId!, body);
   });
 
   fastify.get('/me', { onRequest: [authenticate, requireWorkspaceAccess] }, async (request, reply) => {
     const { userId, workspaceId } = getJwtUser(request);
-    await ensureUserMemberships(userId);
+    await ensureUserMemberships(userId!);
     const user = await prisma.user.findUnique({
-      where: { id: userId },
+      where: { id: userId! },
       include: {
         workspace: true,
         memberships: { include: { workspace: true } },
       },
     });
-    const workspaces = await listUserWorkspaces(userId);
+    const workspaces = await listUserWorkspaces(userId!);
     const activeWorkspace =
       workspaces.find((w) => w.id === workspaceId) ?? workspaces[0] ?? user?.workspace;
-    const access = await resolveMembershipAccess(userId, activeWorkspace?.id ?? workspaceId);
+    const access = await resolveMembershipAccess(userId!, activeWorkspace?.id ?? workspaceId!);
 
     if (!user) {
       return reply.code(404).send({ error: 'User not found' });

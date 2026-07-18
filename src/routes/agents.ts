@@ -247,7 +247,6 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       .object({
         message: z.string().min(1).max(4000),
         conversationId: z.string().optional(),
-        tenantId: z.string().optional(),
         channel: z.string().optional(),
       })
       .parse(request.body ?? {});
@@ -259,7 +258,7 @@ export default async function agentRoutes(fastify: FastifyInstance) {
 
     try {
       const result = await conversationService.chat({
-        workspaceId: body.tenantId ?? workspaceId,
+        workspaceId,
         agentId,
         conversationId: body.conversationId,
         message: body.message,
@@ -317,8 +316,6 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       return reply.code(401).send({ success: false, message: 'Workspace required' });
     }
     const { id: agentId } = request.params as { id: string };
-    const query = request.query as { tenantId?: string };
-    const scopedWorkspaceId = query.tenantId || workspaceId;
 
     const month = new Date().toISOString().substring(0, 7);
     const monthStart = new Date(`${month}-01`);
@@ -329,7 +326,7 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       fastify.prisma.tokenUsageLog.aggregate({
         where: {
           agentId,
-          workspaceId: scopedWorkspaceId,
+          workspaceId,
           createdAt: { gte: monthStart, lt: monthEnd },
         },
         _sum: { totalTokens: true, costInr: true },
@@ -338,7 +335,7 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       fastify.prisma.tokenUsageLog.count({
         where: {
           agentId,
-          workspaceId: scopedWorkspaceId,
+          workspaceId,
           fromCache: true,
           createdAt: { gte: monthStart },
         },
@@ -346,7 +343,7 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       fastify.prisma.agentChatConversation.count({
         where: {
           agentId,
-          workspaceId: scopedWorkspaceId,
+          workspaceId,
           createdAt: { gte: monthStart },
         },
       }),

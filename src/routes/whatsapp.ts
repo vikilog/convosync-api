@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../index.js';
 import { config } from '../config.js';
+import { decryptSecret } from '../lib/field-encryption.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import { connectWorkspaceWhatsApp } from '../services/whatsappConnect.js';
@@ -213,11 +214,12 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
 
     let webhookSubscription: Awaited<ReturnType<typeof getWebhookSubscriptionStatus>> | null =
       null;
-    if (workspace?.wabaId && workspace.waToken) {
+    const waToken = decryptSecret(workspace?.waToken);
+    if (workspace?.wabaId && waToken) {
       try {
         webhookSubscription = await getWebhookSubscriptionStatus(
           workspace.wabaId,
-          workspace.waToken
+          waToken
         );
       } catch (err) {
         request.log.warn({ err }, 'Could not load WABA webhook subscription status');

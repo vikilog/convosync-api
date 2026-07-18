@@ -1,11 +1,13 @@
 import { prisma } from '../index.js';
 import { getIo } from '../socket.js';
+import { decryptSecret } from '../lib/field-encryption.js';
 import { findOrReopenConversationForInbound } from './conversationThread.service.js';
 import { formatInstagramContactPhone } from '../lib/channelContact.js';
 import { resolveInstagramContactName } from '../lib/instagramProfile.js';
 import { refreshInstagramContactProfile } from './instagramContactProfile.js';
 import { findInstagramAccountByEntryId } from './workspaceResolve.js';
 import { takeInstagramThreadControl } from './instagramWebhookSubscribe.js';
+import { applyMessagingReadReceipt } from './messagingReadReceipt.service.js';
 import {
   downloadInstagramMediaUrl,
   parseInboundInstagramMessage,
@@ -27,6 +29,11 @@ type PageMessagingEvent = {
       type?: string;
       payload?: { url?: string; title?: string; sticker_id?: number };
     }>;
+  };
+  /** Instagram messaging_seen / Messenger message_reads */
+  read?: {
+    mid?: string;
+    watermark?: number;
   };
 };
 
@@ -165,7 +172,7 @@ async function upsertInstagramInboundMessage(params: {
     try {
       await takeInstagramThreadControl(
         account.pageId,
-        account.pageAccessToken,
+        params.pageAccessToken,
         params.senderId
       );
       logInstagramWebhook('took thread control after standby', {
@@ -227,6 +234,12 @@ export async function handleInstagramWebhookBody(body: PageMessagingWebhookBody)
       continue;
     }
 
+    const pageAccessToken = decryptSecret(account.pageAccessToken);
+    if (!pageAccessToken) {
+      logInstagramWebhook('skip account missing page token', { entryId });
+      continue;
+    }
+
     const ours = new Set([account.pageId, account.instagramUserId].filter(Boolean));
     const events = collectMessagingEvents(entry);
 
@@ -239,13 +252,34 @@ export async function handleInstagramWebhookBody(body: PageMessagingWebhookBody)
       if (event.message?.messaging_product === 'facebook') continue;
 
       const senderId = event.sender?.id;
+      if (!senderId) {
+        logInstagramWebhook('skip event missing sender', { entryId, fromStandby });
+        continue;
+      }
+
+      // messaging_seen — customer read our outbound message(s)
+      if (event.read) {
+        const mid = event.read.mid;
+        if (!mid) {
+          logInstagramWebhook('skip read without mid', { entryId, read: event.read });
+          continue;
+        }
+        await applyMessagingReadReceipt({
+          channel: 'instagram',
+          workspaceId: account.workspaceId,
+          mid,
+          log: logInstagramWebhook,
+        });
+        continue;
+      }
+
       const message = event.message;
-      if (!senderId || !message?.mid) {
-        logInstagramWebhook('skip event missing sender/mid', {
+      if (!message?.mid) {
+        logInstagramWebhook('skip event missing message mid', {
           entryId,
           hasSender: Boolean(senderId),
-          hasMid: Boolean(message?.mid),
           fromStandby,
+          keys: Object.keys(event),
         });
         continue;
       }
@@ -258,7 +292,7 @@ export async function handleInstagramWebhookBody(body: PageMessagingWebhookBody)
         senderId,
         messageId: message.mid,
         parsed,
-        pageAccessToken: account.pageAccessToken,
+        pageAccessToken,
         fromStandby,
       });
     }

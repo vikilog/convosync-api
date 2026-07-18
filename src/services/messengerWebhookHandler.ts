@@ -1,5 +1,6 @@
 import { prisma } from '../index.js';
 import { getIo } from '../socket.js';
+import { decryptSecret } from '../lib/field-encryption.js';
 import { findOrReopenConversationForInbound } from './conversationThread.service.js';
 import { formatMessengerContactPhone } from '../lib/channelContact.js';
 import {
@@ -7,6 +8,7 @@ import {
   resolveMessengerContactName,
 } from './messenger.js';
 import { findMessengerAccountByPageId } from './workspaceResolve.js';
+import { applyMessagingReadReceipt } from './messagingReadReceipt.service.js';
 import {
   downloadInstagramMediaUrl,
   parseInboundInstagramMessage,
@@ -28,6 +30,10 @@ type PageMessagingEvent = {
       type?: string;
       payload?: { url?: string; title?: string; sticker_id?: number };
     }>;
+  };
+  read?: {
+    mid?: string;
+    watermark?: number;
   };
 };
 
@@ -174,6 +180,8 @@ export type PageMessagingWebhookBody = {
 };
 
 export function isMessengerMessagingEvent(event: PageMessagingEvent): boolean {
+  if (event.read?.watermark != null && !event.read?.mid) return true;
+  if (event.read?.mid) return false;
   const product = event.message?.messaging_product;
   if (product === 'instagram') return false;
   if (product === 'facebook') return true;
@@ -196,12 +204,58 @@ export async function handleMessengerWebhookBody(body: PageMessagingWebhookBody)
       continue;
     }
 
+    const pageAccessToken = decryptSecret(account.pageAccessToken);
+    if (!pageAccessToken) {
+      logMessengerWebhook('skip account missing page token', { pageId });
+      continue;
+    }
+
     for (const event of entry.messaging || []) {
       if (!isMessengerMessagingEvent(event)) continue;
 
       const senderId = event.sender?.id;
+      if (!senderId) continue;
+
+      if (event.read) {
+        const watermark = event.read.watermark;
+        if (watermark == null) {
+          logMessengerWebhook('skip read without watermark', { read: event.read });
+          continue;
+        }
+        const contactPhone = formatMessengerContactPhone(senderId);
+        const contact = await prisma.contact.findFirst({
+          where: { phone: contactPhone, workspaceId: account.workspaceId },
+          select: { id: true },
+        });
+        if (!contact) {
+          logMessengerWebhook('read: contact not found', { senderId });
+          continue;
+        }
+        const conv = await prisma.conversation.findFirst({
+          where: {
+            workspaceId: account.workspaceId,
+            contactId: contact.id,
+            channel: 'messenger',
+          },
+          orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
+          select: { id: true },
+        });
+        if (!conv) {
+          logMessengerWebhook('read: conversation not found', { contactId: contact.id });
+          continue;
+        }
+        await applyMessagingReadReceipt({
+          channel: 'messenger',
+          workspaceId: account.workspaceId,
+          conversationId: conv.id,
+          watermarkMs: watermark,
+          log: logMessengerWebhook,
+        });
+        continue;
+      }
+
       const message = event.message;
-      if (!senderId || !message?.mid) continue;
+      if (!message?.mid) continue;
       if (message.is_echo) continue;
       if (senderId === account.pageId) continue;
 
@@ -211,7 +265,7 @@ export async function handleMessengerWebhookBody(body: PageMessagingWebhookBody)
         senderId,
         messageId: message.mid,
         parsed,
-        pageAccessToken: account.pageAccessToken,
+        pageAccessToken,
       });
     }
   }

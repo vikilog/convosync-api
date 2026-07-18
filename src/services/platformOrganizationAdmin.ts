@@ -7,6 +7,7 @@ import {
 } from './workspaceMemberAdmin.js';
 import { onboardingPayloadFromUser } from './onboarding.js';
 import { activateWorkspaceSubscription } from './trial.js';
+import { signSessionToken } from './userSecurity.js';
 
 export async function suspendWorkspace(workspaceId: string) {
   const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
@@ -133,15 +134,12 @@ export async function createWorkspaceImpersonationSession(
   if (!user) throw new Error('Owner user not found');
 
   const access = await resolveMembershipAccess(user.id, workspaceId);
-  const token = fastify.jwt.sign(
-    {
-      userId: user.id,
-      workspaceId,
-      role: access.role,
-      impersonatedBy: platformAdminId,
-    },
-    { expiresIn: '2h' }
-  );
+  const token = await signSessionToken(fastify, {
+    userId: user.id,
+    workspaceId,
+    expiresIn: '2h',
+    impersonatedBy: platformAdminId,
+  });
 
   return {
     token,

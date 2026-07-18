@@ -8,17 +8,19 @@ import { findMessengerAccountByPageId } from './workspaceResolve.js';
 
 type MessagingEvent = {
   message?: { messaging_product?: 'instagram' | 'facebook' };
+  read?: { mid?: string; watermark?: number };
 };
 
-/**
- * Instagram Page webhooks include messaging_product:"instagram".
- * Missing product → treat as Messenger when both channels are connected.
- */
+/** Instagram DMs (messages or messaging_seen with mid). */
 function isInstagramMessagingEvent(event: MessagingEvent): boolean {
+  if (event.read?.mid) return true;
   return event.message?.messaging_product === 'instagram';
 }
 
+/** Messenger DMs (messages or message_reads with watermark). */
 function isMessengerMessagingEvent(event: MessagingEvent): boolean {
+  if (event.read?.watermark != null && !event.read?.mid) return true;
+  if (event.read?.mid) return false; // Instagram seen uses mid
   return event.message?.messaging_product !== 'instagram';
 }
 
@@ -56,7 +58,7 @@ export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody)
       continue;
     }
 
-    // Both connected — split by messaging_product; also keep standby on Instagram path
+    // Both connected — split by messaging_product; seen/reads by mid vs watermark
     const messaging = entry.messaging || [];
     const standby = entry.standby || [];
 

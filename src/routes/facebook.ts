@@ -1,8 +1,10 @@
 import { FastifyInstance } from 'fastify';
 import axios from 'axios';
 import { prisma } from '../index.js';
+import { encryptSecret } from '../lib/field-encryption.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
+import { getWorkspaceFacebookPageCredentials } from '../services/facebookCredentials.js';
 import {
   connectWorkspaceFacebook,
   FacebookConnectError,
@@ -187,10 +189,13 @@ async function fetchPageInsights(pageId: string, accessToken: string, followersF
 }
 
 async function getWorkspacePageToken(workspaceId: string) {
-  return prisma.workspace.findUnique({
-    where: { id: workspaceId },
-    select: { fbPageId: true, fbPageToken: true, fbPageName: true },
-  });
+  const creds = await getWorkspaceFacebookPageCredentials(workspaceId);
+  if (!creds) return null;
+  return {
+    fbPageId: creds.pageId,
+    fbPageToken: creds.pageAccessToken,
+    fbPageName: creds.pageName,
+  };
 }
 
 export default async function facebookRoutes(fastify: FastifyInstance) {
@@ -298,7 +303,7 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
         where: { id: workspaceId },
         data: {
           fbPageId: body.pageId,
-          fbPageToken: body.pageAccessToken,
+          fbPageToken: encryptSecret(body.pageAccessToken),
           fbPageName: body.pageName,
         },
       });

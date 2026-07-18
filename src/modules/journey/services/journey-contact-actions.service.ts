@@ -1,5 +1,6 @@
 import { prisma } from '../../../index.js';
 import { applyConversationAssignee } from '../../../services/conversation-assignee.service.js';
+import { onConversationResolved } from '../../../services/conversationThread.service.js';
 
 export async function findActiveConversationForContact(workspaceId: string, contactId: string) {
   return prisma.conversation.findFirst({
@@ -34,13 +35,15 @@ export async function closeContactConversation(
   if (!conv) return null;
 
   const note = closingNote?.trim();
-  return prisma.conversation.update({
+  const updated = await prisma.conversation.update({
     where: { id: conv.id },
     data: {
       status: 'resolved',
       ...(note ? { lastMessage: note.slice(0, 500) } : {}),
     },
   });
+  await onConversationResolved(updated.id);
+  return updated;
 }
 
 export async function assignContactConversation(

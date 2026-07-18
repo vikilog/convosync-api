@@ -1,4 +1,5 @@
 import { prisma } from '../index.js';
+import { decryptSecret } from '../lib/field-encryption.js';
 
 export type MessengerCredentials = {
   pageId: string;
@@ -20,13 +21,14 @@ export async function getWorkspaceMessengerCredentials(
         orderBy: { createdAt: 'desc' },
       });
 
-  if (!account) {
+  const pageAccessToken = decryptSecret(account?.pageAccessToken);
+  if (!account || !pageAccessToken) {
     throw new Error('Messenger not connected for this workspace');
   }
 
   return {
     pageId: account.pageId,
-    pageAccessToken: account.pageAccessToken,
+    pageAccessToken,
     pageName: account.pageName,
     displayName: account.displayName,
   };

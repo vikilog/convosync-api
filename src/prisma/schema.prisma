@@ -109,6 +109,8 @@ model Workspace {
   whatsappPaymentRequests WhatsAppPaymentRequest[]
   wallet                  WorkspaceWallet?
   walletTransactions      WalletTransaction[]
+  callSessions            CallSession[]
+  contactInsights         ContactInsight[]
 }
 
 enum GoogleConnectionStatus {
@@ -443,6 +445,24 @@ model User {
 
   memberships           WorkspaceMembership[]
   assignedConversations Conversation[]
+  securityState         UserSecurityState?
+  assignedCalls         CallSession[]          @relation("CallAssignedAgent")
+  acceptedCalls         CallSession[]          @relation("CallAcceptedAgent")
+  initiatedCalls        CallSession[]          @relation("CallInitiatedBy")
+  callParticipations    CallParticipant[]
+}
+
+/// Session invalidation state (logout-everywhere / password change). Separate from User.
+model UserSecurityState {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenVersion  Int      @default(0)
+  updatedAt     DateTime @updatedAt
+  updatedReason String?
+
+  @@index([userId])
+  @@map("user_security_states")
 }
 
 model Contact {
@@ -455,6 +475,8 @@ model Contact {
   tags          String[]
   customFields  Json?
   journeyStatus String?
+  /// Team/test numbers — never enqueue contact-insight compute
+  excludeFromInsights Boolean @default(false)
   workspaceId   String
   workspace     Workspace @relation(fields: [workspaceId], references: [id])
   createdAt     DateTime  @default(now())
@@ -464,8 +486,12 @@ model Contact {
   journeyExecutions JourneyExecution[]
   agentFlowSessions AgentFlowSession[]
   whatsappPaymentRequests WhatsAppPaymentRequest[]
+  callSessions      CallSession[]
+  callParticipations CallParticipant[]
+  insights          ContactInsight[]
 
   @@unique([phone, workspaceId])
+  @@index([workspaceId, excludeFromInsights])
 }
 
 model Conversation {
@@ -492,9 +518,154 @@ model Conversation {
 
   messages          Message[]
   agentFlowSession  AgentFlowSession?
+  callSessions      CallSession[]
 
   @@index([workspaceId, contactId])
   @@index([workspaceId, channelAccountId])
+}
+
+/// LiveKit 1:1 voice call between customer and agent (media via LiveKit; sockets = signaling only).
+model CallSession {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversationId  String?
+  conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  contactId       String?
+  contact         Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  /// inbound = customer→agent | outbound = agent→customer
+  direction       String
+  /// initiated | ringing | accepted | connected | declined | missed | ended | failed
+  status          String
+  roomName        String   @unique
+  livekitRoomSid  String?
+
+  initiatedByUserId String?
+  initiatedBy       User?   @relation("CallInitiatedBy", fields: [initiatedByUserId], references: [id], onDelete: SetNull)
+  assignedTo        String?
+  assignedAgent     User?   @relation("CallAssignedAgent", fields: [assignedTo], references: [id], onDelete: SetNull)
+  acceptedByUserId  String?
+  acceptedBy        User?   @relation("CallAcceptedAgent", fields: [acceptedByUserId], references: [id], onDelete: SetNull)
+
+  ringingAt       DateTime?
+  ringingUntil    DateTime?
+  acceptedAt      DateTime?
+  connectedAt     DateTime?
+  endedAt         DateTime?
+  durationSeconds Int?
+  endReason       String?
+  /// Audit: [{ at, from, to, reason? }]
+  metadata        Json?
+
+  /// Guest (customer) join — short-lived signed link; jti binds one active guest session
+  guestTokenJti       String?
+  guestTokenExpiresAt DateTime?
+  /// Short public code → /c/{code} redirects to /call/{id}?t=…
+  guestShortCode      String?  @unique
+  guestJoinedAt       DateTime?
+  guestLinkSentAt     DateTime?
+
+  /// LiveKit room composite egress (audio) — uploaded after call ends
+  /// idle | recording | processing | ready | failed | skipped
+  recordingStatus            String?
+  recordingEgressId          String?
+  recordingStorageKey        String?
+  recordingUrl               String?
+  recordingStartedAt         DateTime?
+  recordingEndedAt           DateTime?
+  recordingDurationSeconds   Int?
+  recordingCodec             String?
+  recordingFileSize          Int?
+  recordingError             String?
+
+  /// Client QoS snapshot (packet loss, jitter, rtt, mos, device, browser, …)
+  analyticsJson       Json?
+
+  /// Faster-Whisper STT (post-call) — pending | processing | ready | failed | skipped
+  transcriptStatus    String?
+  transcriptText      String?  @db.Text
+  /// [{ start, end, text }]
+  transcriptJson      Json?
+  transcriptLanguage  String?
+  transcriptError     String?
+  transcriptAt        DateTime?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  participants    CallParticipant[]
+
+  @@index([workspaceId, status])
+  @@index([conversationId])
+  @@index([workspaceId, assignedTo, status])
+  @@index([workspaceId, createdAt])
+  @@index([guestTokenJti])
+  @@map("call_sessions")
+}
+
+/// History of customer insights (one row per computation — keep trends).
+model ContactInsight {
+  id                     String   @id @default(cuid())
+  workspaceId            String
+  workspace              Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contactId              String
+  contact                Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  /// false = internal/test-only history; scores left null
+  isGenuineCustomerInteraction Boolean @default(true)
+
+  /// 0–100 overall relationship health (null if not genuine)
+  healthScore            Int?
+  /// 0–100; higher = more likely to churn
+  churnRiskScore         Int?
+  /// 0–100; higher = more ready to buy
+  purchaseIntentScore    Int?
+  /// −100…100 (negative = negative sentiment)
+  sentimentScore         Int?
+
+  summary                String   @db.Text
+  /// string[]
+  painPoints             Json
+  /// string[]
+  interests              Json
+  recommendedAction      String?  @db.Text
+
+  /// Conversation ids that fed this run
+  basedOnConversationIds Json
+  /// CallSession ids that fed this run
+  basedOnCallSessionIds  Json
+
+  /// Prompt / pipeline version for A/B and regressions
+  modelVersion           String
+  computedAt             DateTime @default(now())
+
+  @@index([workspaceId, contactId, computedAt])
+  @@index([workspaceId, churnRiskScore])
+  @@index([workspaceId, purchaseIntentScore])
+  @@index([workspaceId, isGenuineCustomerInteraction])
+  @@map("contact_insights")
+}
+
+model CallParticipant {
+  id            String   @id @default(cuid())
+  callSessionId String
+  callSession   CallSession @relation(fields: [callSessionId], references: [id], onDelete: Cascade)
+  /// customer | agent | ai | sip
+  role          String
+  /// LiveKit participant identity
+  identity      String
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  contactId     String?
+  contact       Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  joinedAt      DateTime?
+  leftAt        DateTime?
+  createdAt     DateTime @default(now())
+
+  @@unique([callSessionId, identity])
+  @@index([callSessionId])
+  @@map("call_participants")
 }
 
 model Message {

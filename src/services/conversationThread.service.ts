@@ -25,6 +25,17 @@ export async function clearFlowSessionForConversation(conversationId: string): P
 
 export async function onConversationResolved(conversationId: string): Promise<void> {
   await clearFlowSessionForConversation(conversationId);
+  const conv = await prisma.conversation.findUnique({
+    where: { id: conversationId },
+    select: { workspaceId: true, contactId: true },
+  });
+  if (!conv) return;
+  const { enqueueContactInsight } = await import('../queue/contact-insight.queue.js');
+  void enqueueContactInsight({
+    workspaceId: conv.workspaceId,
+    contactId: conv.contactId,
+    reason: 'conversation_resolved',
+  }).catch((err) => console.warn('[contact-insight] enqueue on resolve failed', err));
 }
 
 function accountScope(channelAccountId?: string | null) {

@@ -241,6 +241,9 @@ export async function addWorkspaceMember(input: {
           inboxScope: inboxScopeForStorage(validatedInboxScope),
         },
       },
+      securityState: {
+        create: { tokenVersion: 0, updatedReason: 'invite' },
+      },
     },
     select: {
       id: true,

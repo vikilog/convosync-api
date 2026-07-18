@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { prisma } from '../index.js';
 import { config } from '../config.js';
+import { encryptSecret } from '../lib/field-encryption.js';
 import { assertChannelCreateAllowed } from './planUsageGuards.js';
 
 export type InstagramConnectInput = {
@@ -536,7 +537,7 @@ export async function completeInstagramConnect(input: {
       username: selected.username,
       displayName: selected.displayName,
       profilePicture: selected.profilePicture,
-      pageAccessToken: selected.pageAccessToken,
+      pageAccessToken: encryptSecret(selected.pageAccessToken),
     },
     update: {
       metaUserId: input.metaUserId,
@@ -545,7 +546,7 @@ export async function completeInstagramConnect(input: {
       username: selected.username,
       displayName: selected.displayName,
       profilePicture: selected.profilePicture,
-      pageAccessToken: selected.pageAccessToken,
+      pageAccessToken: encryptSecret(selected.pageAccessToken),
     },
   });
 
@@ -596,8 +597,9 @@ export async function summarizeInstagramDiscovery(
 }
 
 export async function listInstagramAccounts(workspaceId: string) {
-  return prisma.instagramAccount.findMany({
+  const rows = await prisma.instagramAccount.findMany({
     where: { workspaceId },
     orderBy: { createdAt: 'asc' },
   });
+  return rows.map(({ pageAccessToken: _token, ...rest }) => rest);
 }

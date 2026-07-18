@@ -1,4 +1,5 @@
 import { prisma } from '../index.js';
+import { decryptSecret, isSecretStored } from '../lib/field-encryption.js';
 import { ensureWhatsAppAccountsMigrated } from './whatsappAccounts.js';
 
 export type WorkspaceWhatsAppCredentials = {
@@ -19,7 +20,7 @@ export async function getWorkspaceWhatsAppCredentials(
     orderBy: { createdAt: 'asc' },
   });
 
-  const accessToken = workspace?.waToken;
+  const accessToken = decryptSecret(workspace?.waToken);
   let wabaId = workspace?.wabaId || fallbackAccount?.wabaId;
   let resolvedPhoneNumberId =
     phoneNumberId || workspace?.waNumberId || fallbackAccount?.phoneNumberId;
@@ -35,7 +36,7 @@ export async function getWorkspaceWhatsAppCredentials(
     resolvedPhoneNumberId = account.phoneNumberId;
   }
 
-  if (!accessToken || !wabaId) {
+  if (!accessToken || !isSecretStored(workspace?.waToken) || !wabaId) {
     throw new Error(
       'WhatsApp is not connected for this company. Connect a number in WhatsApp Manager first.'
     );

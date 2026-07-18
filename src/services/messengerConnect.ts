@@ -1,4 +1,5 @@
 import { prisma } from '../index.js';
+import { decryptSecret, encryptSecret } from '../lib/field-encryption.js';
 import { assertChannelCreateAllowed } from './planUsageGuards.js';
 
 export type MessengerConnectResult = {
@@ -72,14 +73,14 @@ export async function connectMessengerFromInstagramAccounts(
         pageName: ig.pageName,
         displayName: ig.displayName || ig.pageName,
         profilePicture: ig.profilePicture,
-        pageAccessToken: ig.pageAccessToken,
+        pageAccessToken: encryptSecret(decryptSecret(ig.pageAccessToken) ?? ig.pageAccessToken),
       },
       update: {
         metaUserId: ig.metaUserId,
         pageName: ig.pageName,
         displayName: ig.displayName || ig.pageName,
         profilePicture: ig.profilePicture,
-        pageAccessToken: ig.pageAccessToken,
+        pageAccessToken: encryptSecret(decryptSecret(ig.pageAccessToken) ?? ig.pageAccessToken),
       },
     });
 
@@ -96,8 +97,9 @@ export async function connectMessengerFromInstagramAccounts(
 }
 
 export async function listMessengerAccounts(workspaceId: string) {
-  return prisma.messengerAccount.findMany({
+  const rows = await prisma.messengerAccount.findMany({
     where: { workspaceId },
     orderBy: { createdAt: 'asc' },
   });
+  return rows.map(({ pageAccessToken: _token, ...rest }) => rest);
 }

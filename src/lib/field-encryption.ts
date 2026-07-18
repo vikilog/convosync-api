@@ -2,6 +2,8 @@ import crypto from 'crypto';
 
 const ALGO = 'aes-256-gcm';
 const IV_LENGTH = 12;
+/** Prefix so we can tell encrypted channel tokens from legacy plaintext. */
+export const SECRET_PREFIX = 'csenc:v1:';
 
 function getEncryptionKey(): Buffer {
   const raw =
@@ -39,4 +41,46 @@ export function decryptJson<T extends Record<string, unknown>>(payload: string):
 
 export function hasEncryptedPayload(payload: string | null | undefined): boolean {
   return Boolean(payload && payload.length > 0);
+}
+
+/** Encrypt a single secret string (channel tokens). Reuses AES-256-GCM via encryptJson. */
+export function encryptSecret(plaintext: string): string {
+  if (!plaintext) return plaintext;
+  if (plaintext.startsWith(SECRET_PREFIX)) return plaintext;
+  return `${SECRET_PREFIX}${encryptJson({ v: plaintext })}`;
+}
+
+/**
+ * Decrypt a channel secret. Legacy plaintext (no prefix) is returned as-is
+ * until the migration script encrypts it.
+ */
+export function decryptSecret(stored: string | null | undefined): string | null {
+  if (!stored) return null;
+  if (!stored.startsWith(SECRET_PREFIX)) return stored;
+  try {
+    const { v } = decryptJson<{ v: string }>(stored.slice(SECRET_PREFIX.length));
+    return typeof v === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function isSecretStored(stored: string | null | undefined): boolean {
+  return Boolean(stored && stored.length > 0);
+}
+
+export function requireDecryptedSecret(
+  stored: string | null | undefined,
+  label = 'secret'
+): string {
+  const value = decryptSecret(stored);
+  if (!value) throw new Error(`Missing ${label}`);
+  return value;
+}
+
+/** Encrypt only if still plaintext — safe for migration / re-runs. */
+export function encryptSecretIfPlain(stored: string | null | undefined): string | null {
+  if (!stored) return null;
+  if (stored.startsWith(SECRET_PREFIX)) return stored;
+  return encryptSecret(stored);
 }

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { io, prisma } from '../index.js';
 import { formatMessengerContactPhone } from '../lib/channelContact.js';
+import { decryptSecret } from '../lib/field-encryption.js';
 import {
   fetchMessengerUserProfile,
   resolveMessengerContactName,
@@ -479,11 +480,14 @@ export async function syncMessengerConversationsForWorkspace(
 
   try {
     for (const account of accounts) {
+      const pageAccessToken = decryptSecret(account.pageAccessToken);
+      if (!pageAccessToken) continue;
+
       const stats = await syncPageConversations(
         {
           workspaceId: account.workspaceId,
           pageId: account.pageId,
-          pageAccessToken: account.pageAccessToken,
+          pageAccessToken,
         },
         syncOptions,
         counters

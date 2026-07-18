@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { prisma } from '../index.js';
+import { bumpTokenVersion } from './userSecurity.js';
 
 const MAX_AVATAR_BYTES = 512 * 1024;
 
@@ -113,5 +114,7 @@ export async function changeUserPassword(
     data: { password: await bcrypt.hash(newPassword, 12) },
   });
 
-  return { success: true };
+  await bumpTokenVersion(userId, 'password_change');
+
+  return { success: true, sessionsInvalidated: true };
 }

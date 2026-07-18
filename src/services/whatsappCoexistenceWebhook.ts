@@ -35,6 +35,7 @@ export async function handleSmbMessageEchoes(value: CoexistenceWebhookValue): Pr
   if (!echo) return;
 
   const waNumberId = value.metadata?.phone_number_id;
+  console.log('waNumberId', waNumberId);
   if (!waNumberId) {
     logCoexistence('smb_message_echoes → skip (no phone_number_id)', value.metadata);
     return;

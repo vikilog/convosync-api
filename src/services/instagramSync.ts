@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { io, prisma } from '../index.js';
 import { formatInstagramContactPhone } from '../lib/channelContact.js';
+import { decryptSecret } from '../lib/field-encryption.js';
 import { resolveInstagramContactName } from '../lib/instagramProfile.js';
 import { refreshInstagramContactProfile } from './instagramContactProfile.js';
 import { emitInstagramSyncProgress } from './instagramSyncNotify.js';
@@ -533,7 +534,10 @@ export async function syncInstagramConversationsForWorkspace(
 
   try {
     for (const account of accounts) {
-      void subscribeInstagramPageWebhooks(account.pageId, account.pageAccessToken).catch(() => {
+      const pageAccessToken = decryptSecret(account.pageAccessToken);
+      if (!pageAccessToken) continue;
+
+      void subscribeInstagramPageWebhooks(account.pageId, pageAccessToken).catch(() => {
         // ponytail: sync still imports history if webhook subscribe fails
       });
 
@@ -542,7 +546,7 @@ export async function syncInstagramConversationsForWorkspace(
           workspaceId: account.workspaceId,
           pageId: account.pageId,
           instagramUserId: account.instagramUserId,
-          pageAccessToken: account.pageAccessToken,
+          pageAccessToken,
         },
         syncOptions,
         counters

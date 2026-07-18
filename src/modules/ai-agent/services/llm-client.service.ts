@@ -50,6 +50,69 @@ export class LlmClient {
     return this.completeOpenAiCompatible(messages, maxTokens, temperature, options?.jsonMode);
   }
 
+  /**
+   * OpenAI Structured Outputs (`json_schema` + strict). Not supported on Anthropic.
+   * Reuses the same client timeout as `complete` (`config.openai.timeoutMs`).
+   */
+  async completeJsonSchema(
+    messages: LlmMessage[],
+    jsonSchema: Record<string, unknown>,
+    options?: { name?: string; maxTokens?: number; temperature?: number }
+  ): Promise<{ content: string; usage: LlmCompletionUsage }> {
+    if (this.resolved.provider === 'anthropic') {
+      throw new LlmClientError(
+        'Structured Outputs (json_schema) require OpenAI or an OpenAI-compatible provider.',
+        'LLM_STRUCTURED_UNSUPPORTED',
+        400
+      );
+    }
+
+    const maxTokens = options?.maxTokens ?? this.resolved.maxOutputTokens;
+    const temperature = options?.temperature ?? this.resolved.temperature;
+    const schemaName = options?.name || 'response';
+
+    const baseURL = this.resolved.baseUrl?.replace(/\/$/, '') || undefined;
+    const client = new OpenAI({
+      apiKey: this.resolved.apiKey,
+      baseURL: baseURL ? `${baseURL}/v1` : undefined,
+      timeout: config.openai.timeoutMs,
+    });
+
+    try {
+      const response = await client.chat.completions.create({
+        model: this.resolved.model,
+        messages,
+        max_tokens: maxTokens,
+        temperature,
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: schemaName,
+            strict: true,
+            schema: jsonSchema,
+          },
+        },
+      });
+
+      const content = response.choices[0]?.message?.content?.trim();
+      if (!content) {
+        throw new LlmClientError('Empty response from AI provider', 'LLM_EMPTY_RESPONSE', 502);
+      }
+
+      const usage = response.usage;
+      return {
+        content,
+        usage: {
+          promptTokens: usage?.prompt_tokens ?? 0,
+          completionTokens: usage?.completion_tokens ?? 0,
+          totalTokens: usage?.total_tokens ?? 0,
+        },
+      };
+    } catch (err) {
+      throw mapClientError(err);
+    }
+  }
+
   private async completeOpenAiCompatible(
     messages: LlmMessage[],
     maxTokens: number,
