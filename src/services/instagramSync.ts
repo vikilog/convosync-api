@@ -13,14 +13,30 @@ import {
   saveMessageMediaFile,
   type MessageMediaMetadata,
 } from './instagramMedia.js';
+import {
+  isInstagramPageSender,
+  resolveInstagramThreadCustomer,
+  type InstagramGraphMessage,
+  type InstagramGraphParticipant,
+} from './instagramSyncParticipants.js';
 
 const GRAPH = 'https://graph.facebook.com/v25.0';
 const DEFAULT_CONVERSATIONS_PAGE_LIMIT = 25;
-const CONVERSATION_LIST_FIELDS = 'participants,updated_time,id,message,from,created_time';
+/** Valid Conversation fields only — nested message fields on the conversation node break/omit participants. */
+const CONVERSATION_LIST_FIELDS =
+  'id,updated_time,participants{id,username,name},messages.limit(1){id,message,from,created_time,attachments}';
+const CONVERSATION_DETAIL_FIELDS =
+  'id,updated_time,participants{id,username,name},messages.limit(5){id,message,from,created_time,attachments}';
 const DEFAULT_MAX_CONVERSATION_PAGES = 25;
 const GRAPH_HTTP_TIMEOUT_MS = 20_000;
 
 export { DEFAULT_MAX_CONVERSATION_PAGES };
+export {
+  isInstagramPageSender,
+  pickCustomerFromMessages,
+  pickCustomerParticipant,
+  resolveInstagramThreadCustomer,
+} from './instagramSyncParticipants.js';
 
 export type InstagramSyncOptions = {
   maxPages?: number;
@@ -38,7 +54,7 @@ export type InstagramSyncResult = {
   warning?: string;
 };
 
-type GraphParticipant = { id?: string; name?: string; username?: string };
+type GraphParticipant = InstagramGraphParticipant;
 
 type GraphMessageAttachment = {
   mime_type?: string;
@@ -48,10 +64,7 @@ type GraphMessageAttachment = {
   video_data?: { url?: string };
 };
 
-type GraphMessage = {
-  id?: string;
-  message?: string;
-  from?: GraphParticipant;
+type GraphMessage = InstagramGraphMessage & {
   created_time?: string;
   attachments?: { data?: GraphMessageAttachment[] };
 };
@@ -78,6 +91,7 @@ type InstagramAccountRow = {
 type SyncCounters = {
   loadedConversations: number;
   syncedConversations: number;
+  skippedConversations: number;
   importedMessages: number;
 };
 
@@ -94,6 +108,7 @@ function progressSnapshot(counters: SyncCounters, extra?: { pageNumber?: number;
   return {
     loadedConversations: counters.loadedConversations,
     syncedConversations: counters.syncedConversations,
+    skippedConversations: counters.skippedConversations,
     importedMessages: counters.importedMessages,
     ...extra,
   };
@@ -222,16 +237,7 @@ function graphErrorSubcode(err: unknown): number | undefined {
 }
 
 function isPageSender(fromId: string | undefined, account: InstagramAccountRow): boolean {
-  if (!fromId) return false;
-  return fromId === account.pageId || fromId === account.instagramUserId;
-}
-
-function pickCustomerParticipant(
-  participants: GraphParticipant[],
-  account: InstagramAccountRow
-): GraphParticipant | undefined {
-  const ours = new Set([account.pageId, account.instagramUserId].filter(Boolean));
-  return participants.find((participant) => participant.id && !ours.has(participant.id));
+  return isInstagramPageSender(fromId, account.pageId, account.instagramUserId);
 }
 
 function messagesFromConversation(thread: GraphConversation): GraphMessage[] {
@@ -248,7 +254,7 @@ async function fetchGraphConversation(
   try {
     const res = await axios.get<GraphConversation>(`${GRAPH}/${conversationId}`, {
       params: {
-        fields: `${CONVERSATION_LIST_FIELDS},messages.limit(1){id,message,from,created_time,attachments}`,
+        fields: CONVERSATION_DETAIL_FIELDS,
         access_token: pageAccessToken,
       },
       timeout: GRAPH_HTTP_TIMEOUT_MS,
@@ -259,6 +265,19 @@ async function fetchGraphConversation(
   }
 }
 
+function resolveThreadCustomer(
+  participants: GraphParticipant[],
+  messages: GraphMessage[],
+  account: InstagramAccountRow
+): GraphParticipant | undefined {
+  return resolveInstagramThreadCustomer(
+    participants,
+    messages,
+    account.pageId,
+    account.instagramUserId
+  );
+}
+
 async function upsertSyncedThread(
   account: InstagramAccountRow,
   thread: GraphConversation,
@@ -266,21 +285,48 @@ async function upsertSyncedThread(
 ): Promise<{ imported: number; conversationId: string } | null> {
   let resolvedThread = thread;
   let participants = parseParticipants(thread.participants);
-  let customer = pickCustomerParticipant(participants, account);
+  let customer = resolveThreadCustomer(participants, messageItems, account);
 
   if (!customer?.id && thread.id) {
     const detailed = await fetchGraphConversation(thread.id, account.pageAccessToken);
     if (detailed) {
       resolvedThread = { ...thread, ...detailed };
       participants = parseParticipants(detailed.participants);
-      customer = pickCustomerParticipant(participants, account);
       if (!messageItems.length) {
         messageItems = messagesFromConversation(detailed);
       }
+      customer = resolveThreadCustomer(participants, messageItems, account);
     }
   }
 
-  if (!customer?.id) return null;
+  // Participants empty but messages not yet loaded — fetch once to recover the customer IGSID.
+  if (!customer?.id && thread.id && messageItems.length === 0) {
+    try {
+      messageItems = await fetchConversationMessages(
+        thread.id,
+        account.pageAccessToken,
+        undefined,
+        {
+          loadedConversations: 0,
+          syncedConversations: 0,
+          skippedConversations: 0,
+          importedMessages: 0,
+        }
+      );
+      customer = resolveThreadCustomer(participants, messageItems, account);
+    } catch {
+      // leave customer unset — caller counts skip
+    }
+  }
+
+  if (!customer?.id) {
+    console.warn('[instagram-sync] skip thread: no customer participant', {
+      conversationId: thread.id,
+      participantIds: participants.map((p) => p.id).filter(Boolean),
+      messageFromIds: messageItems.map((m) => m.from?.id).filter(Boolean),
+    });
+    return null;
+  }
 
   const senderId = customer.id;
   const contactPhone = formatInstagramContactPhone(senderId);
@@ -446,9 +492,50 @@ async function syncPageConversations(
       options,
       counters
     );
-    threads = listed.conversations;
-    pagesFetched = listed.pagesFetched;
-    hasMore = listed.hasMore;
+
+    // Dedupe by conversation id — Meta paging can re-emit the same thread.
+    const byId = new Map<string, GraphConversation>();
+    for (const row of listed.conversations) {
+      if (row.id) byId.set(row.id, row);
+      else byId.set(`anon:${byId.size}`, row);
+    }
+
+    // Some Meta setups only surface a chat on the IG user node — merge without double-counting.
+    if (account.instagramUserId && account.instagramUserId !== account.pageId) {
+      try {
+        const shadow: SyncCounters = {
+          loadedConversations: 0,
+          syncedConversations: 0,
+          skippedConversations: 0,
+          importedMessages: 0,
+        };
+        const alt = await fetchInstagramConversations(
+          account.instagramUserId,
+          account.pageAccessToken,
+          options,
+          shadow
+        );
+        for (const row of alt.conversations) {
+          if (!row.id || byId.has(row.id)) continue;
+          byId.set(row.id, row);
+          counters.loadedConversations += 1;
+        }
+        pagesFetched = Math.max(listed.pagesFetched, alt.pagesFetched);
+        hasMore = listed.hasMore || alt.hasMore;
+      } catch {
+        // ponytail: IG-node list optional — page list is the primary Meta path
+        pagesFetched = listed.pagesFetched;
+        hasMore = listed.hasMore;
+      }
+    } else {
+      pagesFetched = listed.pagesFetched;
+      hasMore = listed.hasMore;
+    }
+
+    if (byId.size < listed.conversations.length) {
+      counters.loadedConversations -= listed.conversations.length - byId.size;
+    }
+    threads = Array.from(byId.values());
   } catch (err) {
     const sub = graphErrorSubcode(err);
     if (sub === 2207085) {
@@ -460,32 +547,55 @@ async function syncPageConversations(
   }
 
   for (const thread of threads) {
-    let msgItems = messagesFromConversation(thread);
-    if (thread.id && msgItems.length === 0) {
-      msgItems = await fetchConversationMessages(
-        thread.id,
-        account.pageAccessToken,
-        workspaceId,
-        counters
-      );
-    }
+    try {
+      let msgItems = messagesFromConversation(thread);
+      if (thread.id && msgItems.length === 0) {
+        try {
+          msgItems = await fetchConversationMessages(
+            thread.id,
+            account.pageAccessToken,
+            workspaceId,
+            counters
+          );
+        } catch (msgErr) {
+          // ponytail: one dead message page must not abort the whole inbox sync
+          console.warn('[instagram-sync] message fetch failed', {
+            conversationId: thread.id,
+            err: msgErr instanceof Error ? msgErr.message : msgErr,
+          });
+        }
+      }
 
-    const saved = await upsertSyncedThread(account, thread, msgItems);
-    if (!saved) continue;
+      const saved = await upsertSyncedThread(account, thread, msgItems);
+      if (!saved) {
+        counters.skippedConversations += 1;
+        continue;
+      }
 
-    counters.syncedConversations += 1;
-    counters.importedMessages += saved.imported;
+      counters.syncedConversations += 1;
+      counters.importedMessages += saved.imported;
 
-    if (workspaceId) {
-      emitInstagramSyncProgress(workspaceId, {
-        phase: 'thread_saved',
-        ...progressSnapshot(counters, {
-          message: `Saved chat ${counters.syncedConversations}/${counters.loadedConversations} (${counters.importedMessages} messages)`,
-        }),
+      if (workspaceId) {
+        emitInstagramSyncProgress(workspaceId, {
+          phase: 'thread_saved',
+          ...progressSnapshot(counters, {
+            message: `Saved chat ${counters.syncedConversations}/${counters.loadedConversations} (${counters.importedMessages} messages)`,
+          }),
+        });
+
+        io?.to(workspaceId).emit('conversation_updated', { conversationId: saved.conversationId });
+      }
+    } catch (threadErr) {
+      counters.skippedConversations += 1;
+      console.warn('[instagram-sync] thread sync failed', {
+        conversationId: thread.id,
+        err: threadErr instanceof Error ? threadErr.message : threadErr,
       });
-
-      io?.to(workspaceId).emit('conversation_updated', { conversationId: saved.conversationId });
     }
+  }
+
+  if (!warning && counters.skippedConversations > 0) {
+    warning = `Skipped ${counters.skippedConversations} chat(s) — Meta didn't return a usable customer id (Requests folder / linked accounts / empty participants).`;
   }
 
   return { pagesFetched, hasMore, warning };
@@ -499,6 +609,7 @@ export async function syncInstagramConversationsForWorkspace(
   const counters: SyncCounters = {
     loadedConversations: 0,
     syncedConversations: 0,
+    skippedConversations: 0,
     importedMessages: 0,
   };
 

@@ -10,8 +10,16 @@ import { config } from '../../config.js';
 import { getObject } from '../../services/objectStorage.js';
 import { CallingError } from './calling.types.js';
 
-const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
-const SCRIPT = path.join(backendRoot, 'scripts/stt/transcribe.py');
+const callingDir = path.dirname(fileURLToPath(import.meta.url));
+const backendRoot = path.resolve(callingDir, '../../..');
+const repoRoot = path.resolve(backendRoot, '..');
+const DEFAULT_SCRIPT = path.join(repoRoot, 'stt', 'transcribe.py');
+
+function resolveSttScript(): string {
+  const override = config.callStt.scriptPath?.trim();
+  if (!override) return DEFAULT_SCRIPT;
+  return path.isAbsolute(override) ? override : path.resolve(backendRoot, override);
+}
 
 export type TranscriptSegment = {
   start: number;
@@ -37,13 +45,137 @@ function emitTranscript(workspaceId: string, payload: Record<string, unknown>) {
   }
 }
 
-async function runFasterWhisper(
+async function enqueueInsightAfterTranscript(call: CallSession): Promise<void> {
+  if (!call.contactId) return;
+  const { enqueueContactInsight } = await import('../../queue/contact-insight.queue.js');
+  void enqueueContactInsight({
+    workspaceId: call.workspaceId,
+    contactId: call.contactId,
+    reason: 'call_transcript_ready',
+  }).catch((err) => console.warn('[contact-insight] enqueue after STT failed', err));
+}
+
+/**
+ * Persist a ready transcript (Faster-Whisper or Pipecat voice agent) + insight enqueue.
+ */
+export async function saveCallTranscriptFromExternal(input: {
+  callSessionId: string;
+  text: string;
+  language?: string | null;
+  segments?: TranscriptSegment[];
+}): Promise<CallSession> {
+  const text = input.text.trim();
+  if (!text) {
+    throw new CallingError('Empty transcript', 400, 'empty_transcript');
+  }
+
+  const call = await prisma.callSession.findUnique({ where: { id: input.callSessionId } });
+  if (!call) throw new CallingError('Call not found', 404, 'call_not_found');
+
+  const updated = await prisma.callSession.update({
+    where: { id: call.id },
+    data: {
+      transcriptStatus: 'ready',
+      transcriptText: text,
+      transcriptJson: (input.segments ?? []) as unknown as Prisma.InputJsonValue,
+      transcriptLanguage: input.language ?? null,
+      transcriptError: null,
+      transcriptAt: new Date(),
+    },
+  });
+
+  emitTranscript(call.workspaceId, {
+    callId: call.id,
+    conversationId: call.conversationId,
+    transcriptStatus: 'ready',
+    transcriptLanguage: updated.transcriptLanguage,
+    transcriptPreview: text.slice(0, 240),
+  });
+
+  await enqueueInsightAfterTranscript(updated);
+  return updated;
+}
+
+/** Relay a live voice-agent turn to the workspace Socket.IO room. */
+export async function emitLiveTranscriptChunk(input: {
+  callSessionId: string;
+  role: 'customer' | 'agent';
+  text: string;
+  at?: string;
+}): Promise<void> {
+  const text = input.text.trim();
+  if (!text) return;
+
+  const call = await prisma.callSession.findUnique({
+    where: { id: input.callSessionId },
+    select: { id: true, workspaceId: true, conversationId: true },
+  });
+  if (!call) throw new CallingError('Call not found', 404, 'call_not_found');
+
+  try {
+    const { CALL_SOCKET_EVENTS } = await import('./calling.types.js');
+    getIo().to(call.workspaceId).emit(CALL_SOCKET_EVENTS.transcriptChunk, {
+      callId: call.id,
+      conversationId: call.conversationId,
+      role: input.role,
+      text,
+      at: input.at || new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn('[calling] live transcript chunk emit failed', err);
+  }
+}
+
+async function runFasterWhisperHttp(
+  audioPath: string,
+  opts?: { language?: string }
+): Promise<WhisperOut> {
+  const language = (opts?.language || config.callStt.language || 'auto').trim();
+  const buf = await fs.readFile(audioPath);
+  const form = new FormData();
+  form.append('file', new Blob([new Uint8Array(buf)]), path.basename(audioPath) || 'audio.ogg');
+  form.append('language', language);
+  form.append('prefer_language', config.callStt.preferLanguage || 'hi');
+  form.append('model', config.callStt.model);
+  form.append('device', config.callStt.device);
+  form.append('compute_type', config.callStt.computeType);
+  if (config.callStt.initialPrompt) {
+    form.append('initial_prompt', config.callStt.initialPrompt);
+  }
+
+  const res = await fetch(`${config.callStt.url}/transcribe`, {
+    method: 'POST',
+    body: form,
+    // ponytail: Whisper medium on CPU can take many minutes; fail clean vs hang forever
+    signal: AbortSignal.timeout(18 * 60 * 1000),
+  });
+  const text = await res.text();
+  let parsed: WhisperOut | null = null;
+  try {
+    parsed = JSON.parse(text) as WhisperOut;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const detail =
+      (parsed as { detail?: string } | null)?.detail ||
+      parsed?.message ||
+      parsed?.error ||
+      text.slice(0, 300) ||
+      `STT HTTP ${res.status}`;
+    throw new Error(String(detail));
+  }
+  if (!parsed) throw new Error(`Invalid STT JSON: ${text.slice(0, 200)}`);
+  return parsed;
+}
+
+async function runFasterWhisperCli(
   audioPath: string,
   opts?: { language?: string }
 ): Promise<WhisperOut> {
   const language = (opts?.language || config.callStt.language || 'auto').trim();
   const args = [
-    SCRIPT,
+    resolveSttScript(),
     audioPath,
     '--model',
     config.callStt.model,
@@ -99,6 +231,16 @@ async function runFasterWhisper(
       );
     });
   });
+}
+
+async function runFasterWhisper(
+  audioPath: string,
+  opts?: { language?: string }
+): Promise<WhisperOut> {
+  if (config.callStt.url) {
+    return runFasterWhisperHttp(audioPath, opts);
+  }
+  return runFasterWhisperCli(audioPath, opts);
 }
 
 /** Run Faster-Whisper on a call's ready recording and persist transcript. */
@@ -179,14 +321,7 @@ export async function transcribeCallRecording(
       transcriptPreview: text.slice(0, 240),
     });
 
-    if (updated.contactId) {
-      const { enqueueContactInsight } = await import('../../queue/contact-insight.queue.js');
-      void enqueueContactInsight({
-        workspaceId: updated.workspaceId,
-        contactId: updated.contactId,
-        reason: 'call_transcript_ready',
-      }).catch((err) => console.warn('[contact-insight] enqueue after STT failed', err));
-    }
+    await enqueueInsightAfterTranscript(updated);
 
     return updated;
   } catch (err) {

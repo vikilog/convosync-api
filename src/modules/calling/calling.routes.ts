@@ -18,10 +18,12 @@ import {
   markCallConnected,
   mintAgentCallToken,
   mintGuestCallToken,
+  mintListenInCallToken,
   publicCallPayload,
   resendGuestCallLink,
   resolveGuestShortCode,
   saveCallAnalytics,
+  takeOverCall,
   uploadManualCallRecording,
 } from './calling.service.js';
 import {
@@ -354,7 +356,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
         callId,
         userId: ids.userId,
       });
-          return {
+      return {
         token: session.token,
         url: session.url,
         expiresInSeconds: session.expiresInSeconds,
@@ -366,6 +368,59 @@ export default async function callingRoutes(fastify: FastifyInstance) {
       }
       request.log.error(err);
       return reply.code(500).send({ error: 'Failed to mint call token' });
+    }
+  });
+
+  /** Subscribe-only while AI is on the call. */
+  fastify.post('/calls/:callId/listen', companyAuth, async (request, reply) => {
+    try {
+      const ids = requireIds(request, reply);
+      if (!ids) return;
+      const { callId } = request.params as { callId: string };
+      const session = await mintListenInCallToken({
+        workspaceId: ids.workspaceId,
+        callId,
+        userId: ids.userId,
+      });
+      return {
+        token: session.token,
+        url: session.url,
+        expiresInSeconds: session.expiresInSeconds,
+        callId,
+        mode: 'listen' as const,
+      };
+    } catch (err) {
+      if (err instanceof CallingError) {
+        return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+      }
+      request.log.error(err);
+      return reply.code(500).send({ error: 'Failed to mint listen-in token' });
+    }
+  });
+
+  /** Stop AI voice agent (LiveKit data + remove) and mint publish token for human. */
+  fastify.post('/calls/:callId/take-over', companyAuth, async (request, reply) => {
+    try {
+      const ids = requireIds(request, reply);
+      if (!ids) return;
+      const { callId } = request.params as { callId: string };
+      const result = await takeOverCall({
+        workspaceId: ids.workspaceId,
+        callId,
+        userId: ids.userId,
+      });
+      return {
+        call: publicCallPayload(result.call),
+        token: result.token,
+        url: result.url,
+        expiresInSeconds: result.expiresInSeconds,
+      };
+    } catch (err) {
+      if (err instanceof CallingError) {
+        return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+      }
+      request.log.error(err);
+      return reply.code(500).send({ error: 'Failed to take over call' });
     }
   });
 

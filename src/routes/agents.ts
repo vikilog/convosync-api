@@ -47,6 +47,8 @@ const profileUpdateSchema = z.object({
     .optional(),
   isPublished: z.boolean().optional(),
   isEnabled: z.boolean().optional(),
+  voiceAgentEnabled: z.boolean().optional(),
+  voiceSttProvider: z.string().min(1).optional(),
   flowDefinition: z.record(z.unknown()).optional(),
 });
 

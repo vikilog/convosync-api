@@ -25,6 +25,9 @@ function isMessengerMessagingEvent(event: MessagingEvent): boolean {
 }
 
 export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody) {
+  // ponytail: temporary — inspect raw Meta IG/Page webhook payload
+  console.log('[Instagram Webhook] raw payload', JSON.stringify(body, null, 2));
+
   if (body.object === 'instagram') {
     await handleInstagramWebhookBody(body);
     return;

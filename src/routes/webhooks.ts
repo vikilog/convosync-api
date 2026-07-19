@@ -315,6 +315,7 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
   fastify.post('/instagram', async (request, reply) => {
     console.log('[Instagram Webhook] POST hit — incoming event', new Date().toISOString());
     const body = request.body as PageMessagingWebhookBody;
+    console.log('[Instagram Webhook] payload', JSON.stringify(body, null, 2));
 
     logInstagramWebhook('POST payload', body);
 

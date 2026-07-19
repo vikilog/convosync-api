@@ -18,7 +18,9 @@ import {
   customerLiveKitIdentity,
   deleteLiveKitRoom,
   ensureLiveKitRoom,
+  listenerLiveKitIdentity,
   mintLiveKitAccessToken,
+  signalAiAgentTakeOver,
   startCallRecording,
   stopAndFinalizeRecording,
   callRecordingStorageKey,
@@ -39,6 +41,10 @@ import { sendInstagramMessage } from '../../services/instagram.js';
 import { getWorkspaceMessengerCredentials } from '../../services/messengerCredentials.js';
 import { sendMessengerMessage } from '../../services/messenger.js';
 import { parseInstagramScopedUserId, parseMessengerPsid } from '../../lib/channelContact.js';
+import {
+  findVoiceAgentForConversation,
+  maybeStartVoiceAgentForCall,
+} from './voice-agent-trigger.service.js';
 
 async function allocateGuestShortCode(): Promise<string> {
   for (let i = 0; i < 8; i++) {
@@ -120,6 +126,9 @@ function publicCallPayload(call: CallSession) {
     transcriptStatus: call.transcriptStatus,
     transcriptLanguage: call.transcriptLanguage,
     transcriptAt: call.transcriptAt,
+    currentHandler: call.currentHandler ?? 'none',
+    takenOverAt: call.takenOverAt ?? null,
+    takenOverByUserId: call.takenOverByUserId ?? null,
     createdAt: call.createdAt,
   };
 }
@@ -315,6 +324,35 @@ export async function createAndRingCall(input: {
 
   emitCall(input.workspaceId, CALL_SOCKET_EVENTS.initiated, payload);
   // No agent-agent incoming_call for customer-link flow
+
+  // If conversation is assigned to a voice-enabled AI agent, mark handler=ai
+  // BEFORE returning so CallPage never asks for mic on open.
+  const voiceAgent = await findVoiceAgentForConversation(input.workspaceId, {
+    id: conversation.id,
+    contactId: conversation.contactId,
+    assigneeType: conversation.assigneeType,
+    assigneeId: conversation.assigneeId,
+  });
+  if (voiceAgent) {
+    call = await prisma.callSession.update({
+      where: { id: call.id },
+      data: { currentHandler: 'ai' },
+    });
+    emitCall(input.workspaceId, CALL_SOCKET_EVENTS.handlerChanged, {
+      ...publicCallPayload(call),
+      previousHandler: 'none',
+    });
+    void maybeStartVoiceAgentForCall(
+      call,
+      {
+        id: conversation.id,
+        contactId: conversation.contactId,
+        assigneeType: conversation.assigneeType,
+        assigneeId: conversation.assigneeId,
+      },
+      voiceAgent
+    ).catch((err) => console.warn('[calling] voice agent trigger failed', call.id, err));
+  }
 
   // Auto-send short guest link on the conversation channel (best-effort)
   if (guestUrl && conversation.id) {
@@ -754,6 +792,99 @@ export async function mintAgentCallToken(input: {
     canSubscribe: true,
     metadata: JSON.stringify({ callId: call.id, role: 'agent' }),
   });
+}
+
+/** Subscribe-only join while AI is handling the call (no mic publish). */
+export async function mintListenInCallToken(input: {
+  workspaceId: string;
+  callId: string;
+  userId: string;
+  userName?: string;
+}) {
+  const call = await getCallForWorkspace(input.workspaceId, input.callId);
+  if (!call) throw new CallingError('Call not found', 404, 'call_not_found');
+
+  const status = asStatus(call.status);
+  if (!['ringing', 'accepted', 'connected'].includes(status)) {
+    throw new CallingError('Call is not joinable', 409, 'call_not_joinable');
+  }
+  if ((call.currentHandler || 'none') !== 'ai') {
+    throw new CallingError('Listen-in is only available while AI is on the call', 409, 'not_ai_handler');
+  }
+
+  return mintLiveKitAccessToken({
+    roomName: call.roomName,
+    identity: listenerLiveKitIdentity(input.userId),
+    name: input.userName ? `${input.userName} (listening)` : 'Listener',
+    canPublish: false,
+    canSubscribe: true,
+    metadata: JSON.stringify({ callId: call.id, role: 'listener' }),
+  });
+}
+
+/**
+ * Human takes over from AI: update handler, signal Pipecat via LiveKit data,
+ * return a publish-capable agent token.
+ */
+export async function takeOverCall(input: {
+  workspaceId: string;
+  callId: string;
+  userId: string;
+  userName?: string;
+}): Promise<{
+  call: CallSession;
+  token: string;
+  url: string;
+  expiresInSeconds: number;
+}> {
+  const call = await getCallForWorkspace(input.workspaceId, input.callId);
+  if (!call) throw new CallingError('Call not found', 404, 'call_not_found');
+
+  const status = asStatus(call.status);
+  if (!['ringing', 'accepted', 'connected'].includes(status)) {
+    throw new CallingError('Call is not joinable', 409, 'call_not_joinable');
+  }
+  if ((call.currentHandler || 'none') !== 'ai') {
+    throw new CallingError('Call is not handled by AI', 409, 'not_ai_handler');
+  }
+
+  const updated = await prisma.callSession.update({
+    where: { id: call.id },
+    data: {
+      currentHandler: 'human',
+      takenOverAt: new Date(),
+      takenOverByUserId: input.userId,
+      acceptedByUserId: call.acceptedByUserId || input.userId,
+      acceptedAt: call.acceptedAt || new Date(),
+    },
+  });
+
+  emitCall(input.workspaceId, CALL_SOCKET_EVENTS.handlerChanged, {
+    ...publicCallPayload(updated),
+    previousHandler: 'ai',
+  });
+
+  // Fire-and-forget LiveKit signal + force-remove (do not block token mint forever)
+  void signalAiAgentTakeOver({
+    roomName: call.roomName,
+    callSessionId: call.id,
+  }).catch((err) => console.warn('[calling] take-over signal failed', call.id, err));
+
+  const minted = await mintLiveKitAccessToken({
+    roomName: call.roomName,
+    identity: agentLiveKitIdentity(input.userId),
+    name: input.userName,
+    canPublish: true,
+    canSubscribe: true,
+    metadata: JSON.stringify({ callId: call.id, role: 'agent', takenOver: true }),
+  });
+
+  return {
+    call: updated,
+    token: minted.token,
+    url: minted.url,
+    expiresInSeconds: minted.expiresInSeconds,
+  };
 }
 
 export async function getGuestCallSession(guestToken: string) {

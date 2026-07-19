@@ -1,4 +1,0 @@
-# Call STT worker — install in a venv:
-#   python3 -m venv .venv-stt && source .venv-stt/bin/activate
-#   pip install -r requirements.txt
-faster-whisper>=1.1.0

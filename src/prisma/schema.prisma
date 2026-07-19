@@ -541,6 +541,11 @@ model CallSession {
   roomName        String   @unique
   livekitRoomSid  String?
 
+  /// Who is speaking on the call: none | ai | human
+  currentHandler       String    @default("none")
+  takenOverAt          DateTime?
+  takenOverByUserId    String?
+
   initiatedByUserId String?
   initiatedBy       User?   @relation("CallInitiatedBy", fields: [initiatedByUserId], references: [id], onDelete: SetNull)
   assignedTo        String?
@@ -836,6 +841,10 @@ model AiAgent {
   captureFields             String[]
   escalationRules           Json?
   isEnabled                 Boolean   @default(false)
+  /// When true and a conversation is assigned to this agent, call links spawn Pipecat voice agent
+  voiceAgentEnabled         Boolean   @default(false)
+  /// Pipecat STT provider key (e.g. cartesia, deepgram) — UI dropdown options grow over time
+  voiceSttProvider          String    @default("cartesia")
   conversationsCount        Int       @default(0)
   escalatedCount            Int       @default(0)
   flowsCount                Int       @default(1)

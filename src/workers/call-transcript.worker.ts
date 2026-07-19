@@ -8,6 +8,13 @@ import { transcribeCallRecording } from '../modules/calling/call-transcript.serv
 
 const connection = { url: config.redisUrl, maxRetriesPerRequest: null as null };
 
+/**
+ * Faster-Whisper on CPU often runs 2–10+ min. BullMQ default lockDuration is 30s —
+ * if the API process restarts (tsx watch) or lock renewals lag, the job is marked
+ * stalled and fails with "job stalled more than allowable limit".
+ */
+const STT_LOCK_MS = 20 * 60 * 1000; // 20 min
+
 /** Faster-Whisper is CPU/GPU heavy — keep concurrency at 1. */
 export function startCallTranscriptWorker() {
   if (!config.callStt.enabled) {
@@ -22,7 +29,13 @@ export function startCallTranscriptWorker() {
         language: job.data.language,
       });
     },
-    { connection, concurrency: 1 }
+    {
+      connection,
+      concurrency: 1,
+      lockDuration: STT_LOCK_MS,
+      stalledInterval: 60_000,
+      maxStalledCount: 3,
+    }
   );
 
   worker.on('failed', (job, err) => {
@@ -31,6 +44,10 @@ export function startCallTranscriptWorker() {
 
   worker.on('completed', (job) => {
     console.log('[calling] STT completed', job.data.callId);
+  });
+
+  worker.on('stalled', (jobId) => {
+    console.warn('[calling] STT job stalled (will retry if under maxStalledCount)', jobId);
   });
 
   return worker;

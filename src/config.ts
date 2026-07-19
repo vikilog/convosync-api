@@ -172,10 +172,30 @@ export const config = {
       process.env.LIVEKIT_URL && process.env.LIVEKIT_API_KEY && process.env.LIVEKIT_API_SECRET
     ),
   },
+  /**
+   * Pipecat voice AI agent service (joins LiveKit rooms for AI-handled calls).
+   * Local: http://127.0.0.1:8092 — prod: dedicated host.
+   */
+  voiceAgent: {
+    serviceUrl: (process.env.VOICE_AGENT_SERVICE_URL || 'http://127.0.0.1:8092').replace(
+      /\/$/,
+      ''
+    ),
+    internalSecret: process.env.CONVOSYNC_INTERNAL_SECRET || '',
+    startTimeoutMs: parseInt(process.env.VOICE_AGENT_START_TIMEOUT_MS || '4000', 10),
+  },
   /** Post-call Faster-Whisper STT (optional — skipped if python/deps missing) */
   callStt: {
     enabled: process.env.CALL_STT_ENABLED !== 'false',
     pythonBin: process.env.CALL_STT_PYTHON || 'python3',
+    /**
+     * When set (e.g. http://127.0.0.1:8091), POST /transcribe to the STT HTTP service.
+     * Local `npm run dev` starts that service; prod points at a separate STT host.
+     * Empty = spawn local `stt/transcribe.py` CLI.
+     */
+    url: (process.env.CALL_STT_URL || '').replace(/\/$/, ''),
+    /** Override path to stt/transcribe.py (default: <repo>/stt/transcribe.py) */
+    scriptPath: process.env.CALL_STT_SCRIPT || '',
     /** medium is a good India default; large-v3 better but slower/heavier */
     model: process.env.CALL_STT_MODEL || 'medium',
     /** auto | hi | en | bn | ta | te | mr | gu | kn | ml | pa | ur | … */

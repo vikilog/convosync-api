@@ -45,6 +45,8 @@ export const CALL_SOCKET_EVENTS = {
   participantJoined: 'call_participant_joined',
   participantLeft: 'call_participant_left',
   reconnect: 'call_reconnect',
+  handlerChanged: 'call_handler_changed',
+  transcriptChunk: 'call_transcript_chunk',
 } as const;
 
 export type CallTransitionRecord = {

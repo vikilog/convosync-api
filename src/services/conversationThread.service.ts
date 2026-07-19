@@ -198,7 +198,15 @@ export function dedupeConversationsByContact<
     byKey.set(key, existing ? (pickPreferredConversation(existing, conv) as T) : conv);
   }
 
-  return Array.from(byKey.values());
+  return Array.from(byKey.values()).sort((a, b) => {
+    const time = (conv: { lastMessageAt?: Date | string | null }) => {
+      const raw = conv.lastMessageAt;
+      if (!raw) return 0;
+      const parsed = raw instanceof Date ? raw.getTime() : Date.parse(String(raw));
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+    return time(b) - time(a);
+  });
 }
 
 /** One inbox row per WhatsApp phone (collapses +91… vs local forms). */

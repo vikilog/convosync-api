@@ -114,6 +114,83 @@ export function agentLiveKitIdentity(userId: string): string {
   return `agent:${userId}`;
 }
 
+/** Headless Pipecat bot participant in the customer call room. */
+export function aiVoiceAgentLiveKitIdentity(): string {
+  return 'ai-agent';
+}
+
+export function listenerLiveKitIdentity(userId: string): string {
+  return `listener:${userId}`;
+}
+
+/** Send reliable take_over data packet to the Pipecat participant. */
+export async function sendTakeOverToAiAgent(input: {
+  roomName: string;
+  callSessionId: string;
+}): Promise<void> {
+  requireLiveKit();
+  const { DataPacket_Kind } = await import('@livekit/protocol');
+  const payload = Buffer.from(
+    JSON.stringify({
+      type: 'take_over',
+      callSessionId: input.callSessionId,
+      at: new Date().toISOString(),
+    }),
+    'utf8'
+  );
+  await roomClient().sendData(input.roomName, payload, DataPacket_Kind.RELIABLE, {
+    destinationIdentities: [aiVoiceAgentLiveKitIdentity()],
+  });
+}
+
+export async function listRoomParticipantIdentities(roomName: string): Promise<string[]> {
+  requireLiveKit();
+  try {
+    const list = await roomClient().listParticipants(roomName);
+    return list.map((p) => p.identity).filter(Boolean);
+  } catch (err) {
+    console.warn('[calling] listParticipants failed', roomName, err);
+    return [];
+  }
+}
+
+export async function removeAiVoiceAgentFromRoom(roomName: string): Promise<void> {
+  requireLiveKit();
+  try {
+    await roomClient().removeParticipant(roomName, aiVoiceAgentLiveKitIdentity());
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/not found|does not exist|participant/i.test(msg)) {
+      console.warn('[calling] removeParticipant ai-agent failed', roomName, err);
+    }
+  }
+}
+
+/**
+ * Ask Pipecat to leave gracefully; if still present after delay, force-remove.
+ */
+export async function signalAiAgentTakeOver(input: {
+  roomName: string;
+  callSessionId: string;
+  forceRemoveAfterMs?: number;
+}): Promise<void> {
+  try {
+    await sendTakeOverToAiAgent({
+      roomName: input.roomName,
+      callSessionId: input.callSessionId,
+    });
+  } catch (err) {
+    console.warn('[calling] sendTakeOver data failed', input.callSessionId, err);
+  }
+
+  const waitMs = input.forceRemoveAfterMs ?? 2000;
+  await sleep(waitMs);
+  const ids = await listRoomParticipantIdentities(input.roomName);
+  if (ids.includes(aiVoiceAgentLiveKitIdentity())) {
+    await removeAiVoiceAgentFromRoom(input.roomName);
+  }
+}
+
 export function customerLiveKitIdentity(contactId: string): string {
   return `customer:${contactId}`;
 }

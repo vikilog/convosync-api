@@ -54,6 +54,7 @@ import { initSocket } from './socket.js';
 import { IdleTimeoutService } from './modules/ai-agent/idle-timeout.service.js';
 import aiProviderRoutes from './modules/ai-agent/routes/ai-provider.routes.js';
 import callingRoutes from './modules/calling/calling.routes.js';
+import internalRoutes from './routes/internal.js';
 import { startCallingSweeper } from './modules/calling/calling.sweeper.js';
 import { startCallTranscriptWorker } from './workers/call-transcript.worker.js';
 import { startContactInsightWorker } from './workers/contact-insight.worker.js';
@@ -110,6 +111,7 @@ async function start() {
   await fastify.register(mediaRoutes, { prefix: '/api/media' });
   await fastify.register(import('./modules/billing/billing.routes.js'), { prefix: '/api' });
   await fastify.register(callingRoutes, { prefix: '/api' });
+  await fastify.register(internalRoutes, { prefix: '/api/internal' });
 
   fastify.get('/health', async () => ({
     status: 'ok',
