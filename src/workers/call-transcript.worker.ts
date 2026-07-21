@@ -5,6 +5,7 @@ import {
   type CallTranscriptJobData,
 } from '../queue/call-transcript.queue.js';
 import { transcribeCallRecording } from '../modules/calling/call-transcript.service.js';
+import { withJobSpan } from '../lib/otel-job.js';
 
 const connection = { url: config.redisUrl, maxRetriesPerRequest: null as null };
 
@@ -25,9 +26,14 @@ export function startCallTranscriptWorker() {
   const worker = new Worker<CallTranscriptJobData>(
     CALL_TRANSCRIPT_QUEUE,
     async (job) => {
-      await transcribeCallRecording(job.data.callId, {
-        language: job.data.language,
-      });
+      await withJobSpan(
+        'queue.call-transcript',
+        { callId: job.data.callId, jobId: String(job.id ?? '') },
+        () =>
+          transcribeCallRecording(job.data.callId, {
+            language: job.data.language,
+          })
+      );
     },
     {
       connection,

@@ -173,6 +173,17 @@ export const config = {
     ),
   },
   /**
+   * Platform owner (isSuperAdmin workspace) — long-lived Meta tokens from .env.
+   * Used for WhatsApp/IG Graph calls instead of the short-lived Embedded Signup token.
+   */
+  superAdmin: {
+    wabaId: (process.env.SUPER_ADMIN_WABA_ID || '').trim(),
+    phoneNumberId: (process.env.SUPER_ADMIN_PHONE_NUMBER_ID || '').trim(),
+    whatsappAccessToken: (process.env.SUPER_ADMIN_ACCESS_TOKEN || '').trim(),
+    igAccountId: (process.env.SUPER_ADMIN_IG_ACCOUNT_ID || '').trim(),
+    igAccessToken: (process.env.SUPER_ADMIN_IG_ACCESS_TOKEN || '').trim(),
+  },
+  /**
    * Pipecat voice AI agent service (joins LiveKit rooms for AI-handled calls).
    * Local: http://127.0.0.1:8092 — prod: dedicated host.
    */

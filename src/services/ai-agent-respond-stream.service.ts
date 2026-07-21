@@ -199,6 +199,8 @@ export async function* respondAiAgentTurnStream(input: {
     agentId,
     query: text,
     topK: config.ai.hybridTopK,
+    resolvePath: (s) =>
+      s.ok ? decideRetrievalPath(s.topScore, high, low, escalateOnLow) : 'full_llm',
   });
 
   let path: Exclude<RetrievalPath, 'cache'> = search.ok

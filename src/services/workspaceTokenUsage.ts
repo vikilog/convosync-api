@@ -107,6 +107,43 @@ function round2(value: number) {
   return Math.round(value * 100) / 100;
 }
 
+function round4(value: number) {
+  return Math.round(value * 10000) / 10000;
+}
+
+/**
+ * Split a rounded provider subtotal into input/output line costs that always add up.
+ * Rates stay exact; remainder goes to the output line so UI rows match the subtotal.
+ */
+export function allocateAiLineCosts(params: {
+  inputTokens: number;
+  outputTokens: number;
+  rawCostInr: number;
+}) {
+  const rates = getTokenRateInrPer1k();
+  const inputExact = (params.inputTokens / 1000) * rates.input;
+  const outputExact = (params.outputTokens / 1000) * rates.output;
+  const exactSum = inputExact + outputExact;
+
+  if (params.rawCostInr <= 0 || exactSum <= 0) {
+    return {
+      inputRateInrPer1k: rates.input,
+      outputRateInrPer1k: rates.output,
+      inputCostInr: 0,
+      outputCostInr: 0,
+    };
+  }
+
+  const inputCostInr = round4((inputExact / exactSum) * params.rawCostInr);
+  const outputCostInr = round4(params.rawCostInr - inputCostInr);
+  return {
+    inputRateInrPer1k: rates.input,
+    outputRateInrPer1k: rates.output,
+    inputCostInr,
+    outputCostInr,
+  };
+}
+
 /** Blended INR/1K tokens (70% input, 30% output) — matches plan included-credit estimates. */
 export function avgTokenCostInrPer1k() {
   const inputInrPer1k = INPUT_COST_PER_1K * USD_TO_INR;

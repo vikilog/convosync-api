@@ -25,6 +25,16 @@ export type TranscriptSegment = {
   start: number;
   end: number;
   text: string;
+  role?: string;
+  at?: string;
+  latency?: TranscriptTurnLatency;
+};
+
+export type TranscriptTurnLatency = {
+  sttMs?: number;
+  llmMs?: number;
+  ttsMs?: number;
+  totalMs?: number;
 };
 
 type WhisperOut = {
@@ -102,6 +112,9 @@ export async function emitLiveTranscriptChunk(input: {
   role: 'customer' | 'agent';
   text: string;
   at?: string;
+  turnId?: string;
+  latency?: TranscriptTurnLatency;
+  patch?: boolean;
 }): Promise<void> {
   const text = input.text.trim();
   if (!text) return;
@@ -120,6 +133,9 @@ export async function emitLiveTranscriptChunk(input: {
       role: input.role,
       text,
       at: input.at || new Date().toISOString(),
+      turnId: input.turnId,
+      latency: input.latency,
+      patch: input.patch === true,
     });
   } catch (err) {
     console.warn('[calling] live transcript chunk emit failed', err);

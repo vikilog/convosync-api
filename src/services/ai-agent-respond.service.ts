@@ -5,6 +5,7 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../lib/prisma.js';
 import { getRedis } from '../lib/redis.js';
+import { recordAiAgentTurn } from '../lib/otel-metrics.js';
 import { ConversationService } from '../modules/ai-agent/conversation.service.js';
 
 function aiAgentRuntime(): FastifyInstance {
@@ -71,22 +72,47 @@ export async function respondAiAgentTurn(input: {
     select: { id: true },
   });
 
-  const result = await new ConversationService(aiAgentRuntime()).chat({
-    workspaceId: input.workspaceId,
-    agentId,
-    conversationId: existingChat?.id,
-    message: text,
-    channel: channelKey,
-  });
+  const t0 = Date.now();
+  try {
+    const result = await new ConversationService(aiAgentRuntime()).chat({
+      workspaceId: input.workspaceId,
+      agentId,
+      conversationId: existingChat?.id,
+      message: text,
+      channel: channelKey,
+    });
 
-  const response = result.reply?.trim() || '';
-  if (!response) {
-    throw new AiAgentRespondError('Empty agent reply', 502, 'EMPTY_REPLY');
+    const response = result.reply?.trim() || '';
+    if (!response) {
+      recordAiAgentTurn({
+        durationMs: Date.now() - t0,
+        path: result.retrievalPath,
+        workspaceId: input.workspaceId,
+        ok: false,
+      });
+      throw new AiAgentRespondError('Empty agent reply', 502, 'EMPTY_REPLY');
+    }
+
+    recordAiAgentTurn({
+      durationMs: Date.now() - t0,
+      path: result.retrievalPath,
+      workspaceId: input.workspaceId,
+      ok: true,
+    });
+
+    return {
+      response,
+      agentId,
+      retrievalPath: result.retrievalPath,
+    };
+  } catch (err) {
+    if (!(err instanceof AiAgentRespondError && err.code === 'EMPTY_REPLY')) {
+      recordAiAgentTurn({
+        durationMs: Date.now() - t0,
+        workspaceId: input.workspaceId,
+        ok: false,
+      });
+    }
+    throw err;
   }
-
-  return {
-    response,
-    agentId,
-    retrievalPath: result.retrievalPath,
-  };
 }

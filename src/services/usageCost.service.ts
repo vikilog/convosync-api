@@ -10,8 +10,8 @@ import {
   type WhatsAppConversationCategory,
 } from './usageCost.constants.js';
 import {
+  allocateAiLineCosts,
   computeTokenBillingCosts,
-  getTokenRateInrPer1k,
   getWorkspaceTokenUsageBreakdown,
   resolveWorkspaceBillingMode,
 } from './workspaceTokenUsage.js';
@@ -217,8 +217,12 @@ export async function getWorkspaceUsageCost(
   const whatsappBilledTotal = round2(whatsappRows.reduce((s, r) => s + r.billedCost, 0));
 
   const aiTotalTokens = aiInputTokens + aiOutputTokens;
-  const tokenRates = getTokenRateInrPer1k();
   const aiRawCostInr = round2(tokenBreakdown.costInr);
+  const lineCosts = allocateAiLineCosts({
+    inputTokens: aiInputTokens,
+    outputTokens: aiOutputTokens,
+    rawCostInr: aiRawCostInr,
+  });
   const aiGrossCostInr = round2(applyAiUsageMarkup(aiRawCostInr));
   const tokenBilling = computeTokenBillingCosts({
     used: aiTotalTokens,
@@ -289,8 +293,10 @@ export async function getWorkspaceUsageCost(
       inputTokens: aiInputTokens,
       outputTokens: aiOutputTokens,
       totalTokens: aiTotalTokens,
-      inputRateInrPer1k: tokenRates.input,
-      outputRateInrPer1k: tokenRates.output,
+      inputRateInrPer1k: lineCosts.inputRateInrPer1k,
+      outputRateInrPer1k: lineCosts.outputRateInrPer1k,
+      inputCostInr: lineCosts.inputCostInr,
+      outputCostInr: lineCosts.outputCostInr,
       rawCostInr: aiRawCostInr,
       markupMultiplier: AI_USAGE_MARKUP_MULTIPLIER,
       markupInr: round2(Math.max(0, aiGrossCostInr - aiRawCostInr)),

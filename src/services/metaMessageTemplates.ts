@@ -31,14 +31,20 @@ export type MetaTemplateRecord = {
 };
 
 export function sanitizeTemplateName(raw: string): string {
-  const name = raw
+  const trimmed = raw.trim();
+  if (/https?:\/\//i.test(trimmed) || /^www\./i.test(trimmed) || /\.[a-z]{2,}(\/|$)/i.test(trimmed)) {
+    throw new Error('Template name cannot be a URL — use letters, numbers, and underscores only');
+  }
+  const name = trimmed
     .toLowerCase()
-    .trim()
     .replace(/\s+/g, '_')
     .replace(/[^a-z0-9_]/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_|_$/g, '');
   if (!name) throw new Error('Template name must contain letters or numbers');
+  if (name.includes('http') || name.includes('www')) {
+    throw new Error('Template name cannot be a URL — use letters, numbers, and underscores only');
+  }
   return name.slice(0, 512);
 }
 

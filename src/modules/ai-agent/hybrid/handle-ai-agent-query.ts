@@ -54,6 +54,8 @@ export async function handleAIAgentQuery(params: {
     agentId,
     query: message,
     topK: config.ai.hybridTopK,
+    resolvePath: (s) =>
+      s.ok ? decideRetrievalPath(s.topScore, high, low, escalateOnLow) : 'full_llm',
   });
 
   // Pinecone hard failure → full LLM with ContextBuilder / DB fallback
@@ -83,6 +85,7 @@ export async function handleAIAgentQuery(params: {
     });
     const rag = await callLlmWithRagContext({
       llm,
+      workspaceId,
       agentName: agent?.name ?? 'Assistant',
       toneOfVoice: agent?.toneOfVoice ?? 'professional',
       brandBackground: agent?.brandBackground ?? null,

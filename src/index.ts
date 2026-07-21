@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
+import { context, trace } from '@opentelemetry/api';
+import pino from 'pino';
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 dotenv.config({ path: path.join(backendRoot, '.env') });
@@ -9,6 +11,7 @@ import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import { config } from './config.js';
 import { corsOriginDelegate } from './lib/cors.js';
+import { createOtelJsonLogStream } from './lib/pino-otel-json-stream.js';
 import { authenticate } from './middleware/auth.js';
 
 import authRoutes from './routes/auth.js';
@@ -34,6 +37,8 @@ import platformAuthRoutes from './routes/platform/auth.js';
 import platformOrganizationRoutes from './routes/platform/organizations.js';
 import platformPlanRoutes from './routes/platform/plans.js';
 import platformSettingsRoutes from './routes/platform/settings.js';
+import platformDemoRequestRoutes from './routes/platform/demo-requests.js';
+import demoRequestRoutes from './routes/demo-requests.js';
 import aiKnowledgeRoutes from './modules/ai-knowledge/routes/ai-knowledge.routes.js';
 import aiChatRoutes from './modules/ai-chat/routes/ai-chat.routes.js';
 import developersRoutes from './modules/developers/routes/developers.routes.js';
@@ -59,13 +64,32 @@ import { startCallingSweeper } from './modules/calling/calling.sweeper.js';
 import { startCallTranscriptWorker } from './workers/call-transcript.worker.js';
 import { startContactInsightWorker } from './workers/contact-insight.worker.js';
 import { startContactInsightScheduler } from './workers/contact-insight.scheduler.js';
+import { startQueueDepthPoller } from './lib/queue-depth-poller.js';
 
 export { prisma } from './lib/prisma.js';
 import { prisma } from './lib/prisma.js';
 export { io, getIo } from './socket.js';
 
 async function start() {
-  const fastify = Fastify({ logger: { level: 'info' } });
+  // Full JSON → OTel/Loki (not just msg). Trace ids still injected by pino instrumentation + mixin.
+  const loggerStream = pino.multistream([
+    { stream: process.stdout },
+    { stream: createOtelJsonLogStream() },
+  ]);
+
+  const fastify = Fastify({
+    logger: {
+      level: process.env.LOG_LEVEL || 'warn',
+      stream: loggerStream,
+      mixin() {
+        const span = trace.getSpan(context.active());
+        if (!span) return {};
+        const sc = span.spanContext();
+        if (!sc.traceId || sc.traceFlags === 0) return {};
+        return { trace_id: sc.traceId, span_id: sc.spanId };
+      },
+    },
+  });
 
   await fastify.register(cors, {
     origin: corsOriginDelegate,
@@ -73,6 +97,7 @@ async function start() {
   });
   await fastify.register(import('@fastify/formbody'));
   await fastify.register(jwt, { secret: config.jwtSecret });
+  await fastify.register(import('./plugins/request-timing.js'));
   await fastify.register(import('./plugins/prisma.js'));
   await fastify.register(import('./plugins/redis.plugin.js'));
   await fastify.register(import('./plugins/razorpay.plugin.js'));
@@ -103,6 +128,8 @@ async function start() {
   await fastify.register(platformOrganizationRoutes, { prefix: '/api/platform/organizations' });
   await fastify.register(platformPlanRoutes, { prefix: '/api/platform/plans' });
   await fastify.register(platformSettingsRoutes, { prefix: '/api/platform/settings' });
+  await fastify.register(platformDemoRequestRoutes, { prefix: '/api/platform/demo-requests' });
+  await fastify.register(demoRequestRoutes, { prefix: '/api/demo-requests' });
   await fastify.register(aiKnowledgeRoutes, { prefix: '/api/ai-knowledge' });
   await fastify.register(aiChatRoutes, { prefix: '/api/ai-chat' });
   await fastify.register(developersRoutes, { prefix: '/api/developers' });
@@ -135,6 +162,7 @@ async function start() {
   startGbpSyncWorker();
   startGbpScheduler();
   startTrialScheduler();
+  startQueueDepthPoller();
   // AUTO_RECHARGE_DISABLED — re-enable later
   // startWalletAutoRechargeWorker();
 

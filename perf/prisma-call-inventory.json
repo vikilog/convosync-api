@@ -1,0 +1,6330 @@
+[
+  {
+    "file": "middleware/workspacePermissions.ts",
+    "function": "loadMembershipAccess",
+    "queryType": "findUnique",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "middleware/workspaceScope.ts",
+    "function": "requireWritableSubscription",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(companyAuth)"
+  },
+  {
+    "file": "modules/ai-agent/cache.service.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "cachedResponse",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/cache.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "cachedResponse",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/cache.service.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "cachedResponse",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/context-builder.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/conversation.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/conversation.service.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/conversation.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/conversation.service.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "agentChatMessage",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/hybrid/handle-ai-agent-query.ts",
+    "function": "handleAIAgentQuery",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/idle-timeout.service.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/idle-timeout.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/idle-timeout.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/idle-timeout.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/idle-timeout.service.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/services/ai-provider-config.service.ts",
+    "function": "defaultRow",
+    "queryType": "findUnique",
+    "model": "workspaceAiProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/services/ai-provider-config.service.ts",
+    "function": "defaultRow",
+    "queryType": "create",
+    "model": "workspaceAiProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/services/ai-provider-config.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspaceAiProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/services/ai-provider-config.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspaceAiProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/services/ai-provider-config.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspaceAiProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/token-tracker.service.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/token-tracker.service.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "workspaceAiProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/token-tracker.service.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "workspaceUsageLimits",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-agent/token-tracker.service.ts",
+    "function": "(module)",
+    "queryType": "aggregate",
+    "model": "tokenUsageLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-knowledge/repositories/ai-knowledge.repository.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "aiKnowledgeConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-knowledge/repositories/ai-knowledge.repository.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "aiKnowledgeConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-knowledge/repositories/ai-knowledge.repository.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "aiKnowledge",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-knowledge/repositories/ai-knowledge.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "aiKnowledge",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-knowledge/repositories/ai-knowledge.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "aiKnowledge",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-knowledge/repositories/ai-knowledge.repository.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "aiKnowledge",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-knowledge/repositories/ai-knowledge.repository.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "aiKnowledge",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-knowledge/repositories/ai-knowledge.repository.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "aiKnowledge",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/ai-knowledge/repositories/ai-knowledge.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "aiKnowledge",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "parseFeatureLimit",
+    "queryType": "findMany",
+    "model": "subscriptionPlan",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "parseFeatureLimit",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "parseFeatureLimit",
+    "queryType": "findFirst",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "parseFeatureLimit",
+    "queryType": "findMany",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "parseFeatureLimit",
+    "queryType": "findMany",
+    "model": "billingAddOnPurchase",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "contact",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "workspaceMembership",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "aiAgent",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "campaign",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "emailLog",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "instagramAccount",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "messengerAccount",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "toSnapshotItem",
+    "queryType": "findMany",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "toSnapshotItem",
+    "queryType": "findMany",
+    "model": "instagramAccount",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "toSnapshotItem",
+    "queryType": "findMany",
+    "model": "messengerAccount",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "toSnapshotItem",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "billingAddOnPurchase",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "billingAddOnPurchase",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "$transaction",
+    "model": "$transaction",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingAddOnPurchase",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "billingAddOnPurchase",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "subscriptionPlan",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "subscriptionPlan",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "meta",
+    "queryType": "findUnique",
+    "model": "subscriptionPlan",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "meta",
+    "queryType": "create",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "meta",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "meta",
+    "queryType": "findFirst",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "meta",
+    "queryType": "$transaction",
+    "model": "$transaction",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "meta",
+    "queryType": "update",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "meta",
+    "queryType": "create",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "$transaction",
+    "model": "$transaction",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingAddOnPurchase",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "billingAddOnPurchase",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspaceWallet",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "billingAddOnPurchase",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "$transaction",
+    "model": "$transaction",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "billingInvoice",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "billingSubscription",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "json",
+    "queryType": "findUnique",
+    "model": "workspaceUsageLimits",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "json",
+    "queryType": "create",
+    "model": "workspaceUsageLimits",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "json",
+    "queryType": "update",
+    "model": "workspaceUsageLimits",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "json",
+    "queryType": "upsert",
+    "model": "workspaceUsageLimits",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/billing/billing.service.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "workspaceUsageLimits",
+    "endpoint": "/api/billing/*"
+  },
+  {
+    "file": "modules/calling/call-transcript.service.ts",
+    "function": "saveCallTranscriptFromExternal",
+    "queryType": "findUnique",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/call-transcript.service.ts",
+    "function": "saveCallTranscriptFromExternal",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/call-transcript.service.ts",
+    "function": "emitLiveTranscriptChunk",
+    "queryType": "findUnique",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/call-transcript.service.ts",
+    "function": "transcribeCallRecording",
+    "queryType": "findUnique",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/call-transcript.service.ts",
+    "function": "transcribeCallRecording",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/call-transcript.service.ts",
+    "function": "transcribeCallRecording",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/call-transcript.service.ts",
+    "function": "text",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/call-transcript.service.ts",
+    "function": "text",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/call-transcript.service.ts",
+    "function": "text",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/call-transcript.service.ts",
+    "function": "getCallTranscript",
+    "queryType": "findFirst",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/calling.routes.ts",
+    "function": "POST /calls/:callId/transcribe",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "allocateGuestShortCode",
+    "queryType": "findUnique",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "resolveCallPresentation",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "resolveCallPresentation",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "resolveCallPresentation",
+    "queryType": "findFirst",
+    "model": "user",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "resolveCallPresentation",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "transitionCall",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "createAndRingCall",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "createAndRingCall",
+    "queryType": "findMany",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "createAndRingCall",
+    "queryType": "create",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "createAndRingCall",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "(module)",
+    "queryType": "createMany",
+    "model": "callParticipant",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "getCallForWorkspace",
+    "queryType": "findFirst",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "listCallsForWorkspace",
+    "queryType": "findMany",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "fresh",
+    "queryType": "findUnique",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "finalizeRecordingForCall",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "finalizeRecordingForCall",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "completeRecordingJob",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "completeRecordingJob",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "completeRecordingJob",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "acceptCall",
+    "queryType": "updateMany",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "acceptCall",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "acceptCall",
+    "queryType": "upsert",
+    "model": "callParticipant",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "declineCall",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "takeOverCall",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "getGuestCallSession",
+    "queryType": "findFirst",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "markGuestCallConnected",
+    "queryType": "findFirst",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "markGuestCallConnected",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "markGuestCallConnected",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "markGuestCallConnected",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "markGuestCallConnected",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "mintGuestCallToken",
+    "queryType": "findFirst",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "mintGuestCallToken",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "endCallAsGuest",
+    "queryType": "findFirst",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "getOrRefreshGuestUrl",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "sendGuestCallLinkToConversation",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "sendGuestCallLinkToConversation",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "sendGuestCallLinkToConversation",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "sendGuestCallLinkToConversation",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "resendGuestCallLink",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "saveCallAnalytics",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "uploadManualCallRecording",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "ext",
+    "queryType": "create",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "ext",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "deleteCallRecording",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "resolveGuestShortCode",
+    "queryType": "findFirst",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "expireStaleCallsForWorkspace",
+    "queryType": "findMany",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "expireStaleCallsForWorkspace",
+    "queryType": "findMany",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "expireStaleCallsForWorkspace",
+    "queryType": "findMany",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/calling.service.ts",
+    "function": "expireStaleCallsForWorkspace",
+    "queryType": "findMany",
+    "model": "callSession",
+    "endpoint": "/api/calls*"
+  },
+  {
+    "file": "modules/calling/voice-agent-trigger.service.ts",
+    "function": "findVoiceAgentForConversation",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/voice-agent-trigger.service.ts",
+    "function": "maybeStartVoiceAgentForCall",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/voice-agent-trigger.service.ts",
+    "function": "maybeStartVoiceAgentForCall",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/voice-agent-trigger.service.ts",
+    "function": "maybeStartVoiceAgentForCall",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/calling/voice-agent-trigger.service.ts",
+    "function": "maybeStartVoiceAgentForCall",
+    "queryType": "update",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/contact-insight/contact-insight.context.ts",
+    "function": "buildInsightContext",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/contact-insight/contact-insight.context.ts",
+    "function": "buildInsightContext",
+    "queryType": "findMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/contact-insight/contact-insight.context.ts",
+    "function": "buildInsightContext",
+    "queryType": "findMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/contact-insight/contact-insight.context.ts",
+    "function": "text",
+    "queryType": "findMany",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/contact-insight/contact-insight.service.ts",
+    "function": "latestInsightAt",
+    "queryType": "findFirst",
+    "model": "contactInsight",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/contact-insight/contact-insight.service.ts",
+    "function": "computeContactInsight",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/contact-insight/contact-insight.service.ts",
+    "function": "computeContactInsight",
+    "queryType": "create",
+    "model": "contactInsight",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/contact-insight/contact-insight.service.ts",
+    "function": "getLatestContactInsight",
+    "queryType": "findFirst",
+    "model": "contactInsight",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/contact-insight/contact-insight.service.ts",
+    "function": "findContactsNeedingInsight",
+    "queryType": "findMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/contact-insight/contact-insight.service.ts",
+    "function": "findContactsNeedingInsight",
+    "queryType": "findMany",
+    "model": "callSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/contact-insight/contact-insight.tags.ts",
+    "function": "applyInsightTags",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/contact-insight/contact-insight.tags.ts",
+    "function": "applyInsightTags",
+    "queryType": "update",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "randomToken",
+    "queryType": "findUnique",
+    "model": "developerIncomingWebhook",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "randomToken",
+    "queryType": "create",
+    "model": "developerIncomingWebhook",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "randomToken",
+    "queryType": "update",
+    "model": "developerIncomingWebhook",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "randomToken",
+    "queryType": "findUnique",
+    "model": "developerIncomingWebhook",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "randomToken",
+    "queryType": "update",
+    "model": "developerIncomingWebhook",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "randomToken",
+    "queryType": "findMany",
+    "model": "developerOutgoingWebhook",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "randomToken",
+    "queryType": "create",
+    "model": "developerOutgoingWebhook",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "randomToken",
+    "queryType": "findFirst",
+    "model": "developerOutgoingWebhook",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "randomToken",
+    "queryType": "update",
+    "model": "developerOutgoingWebhook",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "randomToken",
+    "queryType": "findFirst",
+    "model": "developerOutgoingWebhook",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "delete",
+    "model": "developerOutgoingWebhook",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "developerOutgoingWebhook",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "developerWebhookLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "developerWebhookLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "developerAction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "createMany",
+    "model": "developerAction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "developerAction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "developerAction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "developerSyncEvent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "developerSyncEvent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "developerSyncEvent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "developerSyncEvent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "developerSyncEvent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "developerSyncEvent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "developerSyncEvent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "aiKnowledgeConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "aiKnowledge",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/developers/repositories/developers.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "developerSyncEvent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "emailDomain",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "emailAddress",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "emailProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "$transaction",
+    "model": "$transaction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "deleteMany",
+    "model": "emailAddress",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "deleteMany",
+    "model": "emailDomain",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "deleteMany",
+    "model": "emailProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "emailDomain",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "emailDomain",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "emailDomain",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "emailDomain",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "emailDomain",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "emailAddress",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "emailAddress",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "emailAddress",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "emailAddress",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "emailAddress",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "emailLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "emailLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "emailLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "emailProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "emailProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "emailProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "emailProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "emailProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "emailProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "delete",
+    "model": "emailProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "emailProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "emailTemplate",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "emailTemplate",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "emailTemplate",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "emailTemplate",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "emailTemplate",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/repositories/email.repository.ts",
+    "function": "(module)",
+    "queryType": "delete",
+    "model": "emailTemplate",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/services/resend-webhook.service.ts",
+    "function": "handleResendEmailWebhook",
+    "queryType": "findFirst",
+    "model": "emailLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/email/services/resend-webhook.service.ts",
+    "function": "handleResendEmailWebhook",
+    "queryType": "update",
+    "model": "emailLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-account.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "googleBusinessAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-account.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "googleBusinessAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-account.repository.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "googleBusinessAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-account.repository.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "googleBusinessAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-account.repository.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "googleBusinessAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-account.repository.ts",
+    "function": "(module)",
+    "queryType": "aggregate",
+    "model": "googleBusinessAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-account.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "googleBusinessAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-location.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "googleBusinessLocation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-location.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "googleBusinessLocation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-location.repository.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "googleBusinessLocation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-location.repository.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "googleBusinessLocation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-location.repository.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "googleBusinessLocation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-location.repository.ts",
+    "function": "(module)",
+    "queryType": "aggregate",
+    "model": "googleBusinessLocation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-location.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "googleBusinessLocation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-metric.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "googleBusinessMetric",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-metric.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "googleBusinessMetric",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-metric.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "googleBusinessLocation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-metric.repository.ts",
+    "function": "(module)",
+    "queryType": "aggregate",
+    "model": "googleBusinessMetric",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-review.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "googleBusinessReview",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-review.repository.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "googleBusinessReview",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-review.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "googleBusinessLocation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-review.repository.ts",
+    "function": "(module)",
+    "queryType": "aggregate",
+    "model": "googleBusinessReview",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-sync-log.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "googleBusinessSyncLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-sync-log.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "googleBusinessSyncLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/repositories/gbp-sync-log.repository.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "googleBusinessSyncLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/workers/gbp-scheduler.worker.ts",
+    "function": "tick",
+    "queryType": "findMany",
+    "model": "googleProductIntegration",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/workers/gbp-scheduler.worker.ts",
+    "function": "tick",
+    "queryType": "findMany",
+    "model": "googleBusinessAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/workers/gbp-scheduler.worker.ts",
+    "function": "tick",
+    "queryType": "findMany",
+    "model": "googleBusinessLocation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/business-profile/workers/gbp-scheduler.worker.ts",
+    "function": "tick",
+    "queryType": "findMany",
+    "model": "googleBusinessLocation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-connection.repository.ts",
+    "function": "tokensFromRow",
+    "queryType": "findMany",
+    "model": "googleConnection",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-connection.repository.ts",
+    "function": "tokensFromRow",
+    "queryType": "findFirst",
+    "model": "googleConnection",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-connection.repository.ts",
+    "function": "tokensFromRow",
+    "queryType": "findFirst",
+    "model": "googleConnection",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-connection.repository.ts",
+    "function": "tokensFromRow",
+    "queryType": "upsert",
+    "model": "googleConnection",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-connection.repository.ts",
+    "function": "tokensFromRow",
+    "queryType": "update",
+    "model": "googleConnection",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-connection.repository.ts",
+    "function": "tokensFromRow",
+    "queryType": "update",
+    "model": "googleConnection",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-connection.repository.ts",
+    "function": "(module)",
+    "queryType": "deleteMany",
+    "model": "googleConnection",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-product.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "googleProductIntegration",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-product.repository.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "googleProductIntegration",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-product.repository.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "googleProductIntegration",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-product.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "googleProductIntegration",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-product.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "googleProductIntegration",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-product.repository.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "googleProductIntegration",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-product.repository.ts",
+    "function": "(module)",
+    "queryType": "deleteMany",
+    "model": "googleProductIntegration",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-product.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "googleProductIntegration",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-sync-log.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "googleSyncLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-sync-log.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "googleSyncLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/google/repositories/google-webhook-log.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "googleWebhookLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/providers/meta-cloud.messaging.provider.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/providers/meta-cloud.messaging.provider.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "template",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/providers/meta-cloud.messaging.provider.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/providers/meta-cloud.messaging.provider.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey-execution.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "journeyExecution",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey-execution.repository.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "journeyExecution",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey-execution.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "journeyExecution",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey-execution.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "journeyExecution",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey-execution.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "journeyExecutionLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey-execution.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "journeyExecutionLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey-execution.repository.ts",
+    "function": "(module)",
+    "queryType": "groupBy",
+    "model": "journeyExecution",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey-execution.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "journeyExecution",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey-execution.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "journeyExecution",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "deleteMany",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "$transaction",
+    "model": "$transaction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "deleteMany",
+    "model": "journeyEdge",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "deleteMany",
+    "model": "journeyNode",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "createMany",
+    "model": "journeyNode",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "createMany",
+    "model": "journeyEdge",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "journeyNode",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/repositories/journey.repository.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "journeyNode",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/services/journey-contact-actions.service.ts",
+    "function": "findActiveConversationForContact",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/services/journey-contact-actions.service.ts",
+    "function": "openContactConversation",
+    "queryType": "update",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/services/journey-contact-actions.service.ts",
+    "function": "openContactConversation",
+    "queryType": "update",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/services/journey-contact-actions.service.ts",
+    "function": "closeContactConversation",
+    "queryType": "update",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/services/journey-contact-actions.service.ts",
+    "function": "assignContactConversation",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/services/journey-contact-actions.service.ts",
+    "function": "mergeContactCustomFields",
+    "queryType": "findUnique",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/services/journey-contact-actions.service.ts",
+    "function": "mergeContactCustomFields",
+    "queryType": "update",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/services/journey-contact-actions.service.ts",
+    "function": "updateContactField",
+    "queryType": "update",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/services/journey-engine.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "journeyExecutionLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/services/journey-engine.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "modules/journey/services/journey-trigger.service.ts",
+    "function": "ctx",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "queue/contact-insight.queue.ts",
+    "function": "enqueueContactInsight",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "reset-db.ts",
+    "function": "main",
+    "queryType": "$queryRaw",
+    "model": "raw",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "reset-db.ts",
+    "function": "main",
+    "queryType": "$executeRaw",
+    "model": "raw",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "reset-db.ts",
+    "function": "main",
+    "queryType": "updateMany",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "reset-db.ts",
+    "function": "main",
+    "queryType": "count",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "reset-db.ts",
+    "function": "main",
+    "queryType": "count",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "getAgentOr404",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "/api/agents"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "GET /",
+    "queryType": "findMany",
+    "model": "aiAgent",
+    "endpoint": "/api/agents"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "GET /:id",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "/api/agents/:id"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "POST /",
+    "queryType": "create",
+    "model": "aiAgent",
+    "endpoint": "/api/agents"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "PUT /:id",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "/api/agents/:id"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "PUT /:id",
+    "queryType": "updateMany",
+    "model": "aiAgent",
+    "endpoint": "/api/agents/:id"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "PUT /:id",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "/api/agents/:id"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "POST /:id/toggle",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "/api/agents/:id/toggle"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "POST /:id/toggle",
+    "queryType": "updateMany",
+    "model": "aiAgent",
+    "endpoint": "/api/agents/:id/toggle"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "POST /:id/toggle",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "/api/agents/:id/toggle"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "POST /:id/duplicate",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "/api/agents/:id/duplicate"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "POST /:id/duplicate",
+    "queryType": "create",
+    "model": "aiAgent",
+    "endpoint": "/api/agents/:id/duplicate"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "DELETE /:id",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "/api/agents/:id"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "DELETE /:id",
+    "queryType": "deleteMany",
+    "model": "aiAgent",
+    "endpoint": "/api/agents/:id"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "GET /:id/conversations/:conversationId",
+    "queryType": "findFirst",
+    "model": "agentChatConversation",
+    "endpoint": "/api/agents/:id/conversations/:conversationId"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "GET /:id/token-stats",
+    "queryType": "aggregate",
+    "model": "tokenUsageLog",
+    "endpoint": "/api/agents/:id/token-stats"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "GET /:id/token-stats",
+    "queryType": "count",
+    "model": "tokenUsageLog",
+    "endpoint": "/api/agents/:id/token-stats"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "GET /:id/token-stats",
+    "queryType": "count",
+    "model": "agentChatConversation",
+    "endpoint": "/api/agents/:id/token-stats"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "GET /:id/skills",
+    "queryType": "findMany",
+    "model": "aiSkill",
+    "endpoint": "/api/agents/:id/skills"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "POST /:id/skills",
+    "queryType": "create",
+    "model": "aiSkill",
+    "endpoint": "/api/agents/:id/skills"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "PUT /:id/skills/:skillId",
+    "queryType": "findFirst",
+    "model": "aiSkill",
+    "endpoint": "/api/agents/:id/skills/:skillId"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "PUT /:id/skills/:skillId",
+    "queryType": "update",
+    "model": "aiSkill",
+    "endpoint": "/api/agents/:id/skills/:skillId"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "PATCH /:id/skills/:skillId/publish",
+    "queryType": "findFirst",
+    "model": "aiSkill",
+    "endpoint": "/api/agents/:id/skills/:skillId/publish"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "PATCH /:id/skills/:skillId/publish",
+    "queryType": "update",
+    "model": "aiSkill",
+    "endpoint": "/api/agents/:id/skills/:skillId/publish"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "DELETE /:id/skills/:skillId",
+    "queryType": "findFirst",
+    "model": "aiSkill",
+    "endpoint": "/api/agents/:id/skills/:skillId"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "DELETE /:id/skills/:skillId",
+    "queryType": "delete",
+    "model": "aiSkill",
+    "endpoint": "/api/agents/:id/skills/:skillId"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "GET /:id/knowledge",
+    "queryType": "findMany",
+    "model": "aiAgentKnowledgeItem",
+    "endpoint": "/api/agents/:id/knowledge"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "POST /:id/knowledge",
+    "queryType": "create",
+    "model": "aiAgentKnowledgeItem",
+    "endpoint": "/api/agents/:id/knowledge"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "DELETE /:id/knowledge/:kId",
+    "queryType": "findFirst",
+    "model": "aiAgentKnowledgeItem",
+    "endpoint": "/api/agents/:id/knowledge/:kId"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "DELETE /:id/knowledge/:kId",
+    "queryType": "delete",
+    "model": "aiAgentKnowledgeItem",
+    "endpoint": "/api/agents/:id/knowledge/:kId"
+  },
+  {
+    "file": "routes/agents.ts",
+    "function": "POST /:id/knowledge/reindex",
+    "queryType": "findMany",
+    "model": "aiAgentKnowledgeItem",
+    "endpoint": "/api/agents/:id/knowledge/reindex"
+  },
+  {
+    "file": "routes/analytics.ts",
+    "function": "GET /dashboard",
+    "queryType": "count",
+    "model": "contact",
+    "endpoint": "/api/analytics/dashboard"
+  },
+  {
+    "file": "routes/analytics.ts",
+    "function": "GET /dashboard",
+    "queryType": "count",
+    "model": "journey",
+    "endpoint": "/api/analytics/dashboard"
+  },
+  {
+    "file": "routes/analytics.ts",
+    "function": "GET /dashboard",
+    "queryType": "count",
+    "model": "journey",
+    "endpoint": "/api/analytics/dashboard"
+  },
+  {
+    "file": "routes/analytics.ts",
+    "function": "GET /dashboard",
+    "queryType": "count",
+    "model": "conversation",
+    "endpoint": "/api/analytics/dashboard"
+  },
+  {
+    "file": "routes/analytics.ts",
+    "function": "GET /dashboard",
+    "queryType": "count",
+    "model": "conversation",
+    "endpoint": "/api/analytics/dashboard"
+  },
+  {
+    "file": "routes/analytics.ts",
+    "function": "GET /dashboard",
+    "queryType": "count",
+    "model": "message",
+    "endpoint": "/api/analytics/dashboard"
+  },
+  {
+    "file": "routes/analytics.ts",
+    "function": "GET /messages",
+    "queryType": "findMany",
+    "model": "message",
+    "endpoint": "/api/analytics/messages"
+  },
+  {
+    "file": "routes/analytics.ts",
+    "function": "GET /campaigns",
+    "queryType": "findMany",
+    "model": "campaign",
+    "endpoint": "/api/analytics/campaigns"
+  },
+  {
+    "file": "routes/analytics.ts",
+    "function": "GET /campaigns/upcoming",
+    "queryType": "findMany",
+    "model": "campaign",
+    "endpoint": "/api/analytics/campaigns/upcoming"
+  },
+  {
+    "file": "routes/auth.ts",
+    "function": "POST /register",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "/api/auth/register"
+  },
+  {
+    "file": "routes/auth.ts",
+    "function": "POST /register",
+    "queryType": "create",
+    "model": "workspace",
+    "endpoint": "/api/auth/register"
+  },
+  {
+    "file": "routes/auth.ts",
+    "function": "POST /register",
+    "queryType": "create",
+    "model": "user",
+    "endpoint": "/api/auth/register"
+  },
+  {
+    "file": "routes/auth.ts",
+    "function": "POST /login",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "/api/auth/login"
+  },
+  {
+    "file": "routes/auth.ts",
+    "function": "POST /switch-workspace",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "/api/auth/switch-workspace"
+  },
+  {
+    "file": "routes/auth.ts",
+    "function": "POST /switch-workspace",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/auth/switch-workspace"
+  },
+  {
+    "file": "routes/auth.ts",
+    "function": "POST /workspaces",
+    "queryType": "create",
+    "model": "workspace",
+    "endpoint": "/api/auth/workspaces"
+  },
+  {
+    "file": "routes/auth.ts",
+    "function": "POST /workspaces",
+    "queryType": "create",
+    "model": "workspaceMembership",
+    "endpoint": "/api/auth/workspaces"
+  },
+  {
+    "file": "routes/auth.ts",
+    "function": "POST /workspaces",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "/api/auth/workspaces"
+  },
+  {
+    "file": "routes/auth.ts",
+    "function": "GET /me",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "/api/auth/me"
+  },
+  {
+    "file": "routes/campaigns.ts",
+    "function": "GET /",
+    "queryType": "findMany",
+    "model": "campaign",
+    "endpoint": "/api/campaigns"
+  },
+  {
+    "file": "routes/campaigns.ts",
+    "function": "POST /",
+    "queryType": "create",
+    "model": "campaign",
+    "endpoint": "/api/campaigns"
+  },
+  {
+    "file": "routes/campaigns.ts",
+    "function": "POST /:id/send",
+    "queryType": "findFirst",
+    "model": "campaign",
+    "endpoint": "/api/campaigns/:id/send"
+  },
+  {
+    "file": "routes/canned-responses.ts",
+    "function": "GET /",
+    "queryType": "findMany",
+    "model": "cannedResponse",
+    "endpoint": "/api/canned-responses"
+  },
+  {
+    "file": "routes/canned-responses.ts",
+    "function": "GET /:id",
+    "queryType": "findFirst",
+    "model": "cannedResponse",
+    "endpoint": "/api/canned-responses/:id"
+  },
+  {
+    "file": "routes/canned-responses.ts",
+    "function": "GET /:id/media",
+    "queryType": "findFirst",
+    "model": "cannedResponse",
+    "endpoint": "/api/canned-responses/:id/media"
+  },
+  {
+    "file": "routes/canned-responses.ts",
+    "function": "POST /",
+    "queryType": "create",
+    "model": "cannedResponse",
+    "endpoint": "/api/canned-responses"
+  },
+  {
+    "file": "routes/canned-responses.ts",
+    "function": "POST /",
+    "queryType": "update",
+    "model": "cannedResponse",
+    "endpoint": "/api/canned-responses"
+  },
+  {
+    "file": "routes/canned-responses.ts",
+    "function": "POST /",
+    "queryType": "create",
+    "model": "cannedResponse",
+    "endpoint": "/api/canned-responses"
+  },
+  {
+    "file": "routes/canned-responses.ts",
+    "function": "PUT /:id",
+    "queryType": "findFirst",
+    "model": "cannedResponse",
+    "endpoint": "/api/canned-responses/:id"
+  },
+  {
+    "file": "routes/canned-responses.ts",
+    "function": "PUT /:id",
+    "queryType": "update",
+    "model": "cannedResponse",
+    "endpoint": "/api/canned-responses/:id"
+  },
+  {
+    "file": "routes/canned-responses.ts",
+    "function": "PUT /:id",
+    "queryType": "update",
+    "model": "cannedResponse",
+    "endpoint": "/api/canned-responses/:id"
+  },
+  {
+    "file": "routes/canned-responses.ts",
+    "function": "DELETE /:id",
+    "queryType": "findFirst",
+    "model": "cannedResponse",
+    "endpoint": "/api/canned-responses/:id"
+  },
+  {
+    "file": "routes/canned-responses.ts",
+    "function": "DELETE /:id",
+    "queryType": "delete",
+    "model": "cannedResponse",
+    "endpoint": "/api/canned-responses/:id"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "GET /stats",
+    "queryType": "count",
+    "model": "contact",
+    "endpoint": "/api/contacts/stats"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "GET /stats",
+    "queryType": "count",
+    "model": "contact",
+    "endpoint": "/api/contacts/stats"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "GET /stats",
+    "queryType": "count",
+    "model": "contact",
+    "endpoint": "/api/contacts/stats"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "GET /segments",
+    "queryType": "count",
+    "model": "contact",
+    "endpoint": "/api/contacts/segments"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "GET /segments",
+    "queryType": "count",
+    "model": "contact",
+    "endpoint": "/api/contacts/segments"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "GET /segments",
+    "queryType": "count",
+    "model": "contact",
+    "endpoint": "/api/contacts/segments"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "GET /",
+    "queryType": "findMany",
+    "model": "contact",
+    "endpoint": "/api/contacts"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "POST /",
+    "queryType": "create",
+    "model": "contact",
+    "endpoint": "/api/contacts"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "GET /:id",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "/api/contacts/:id"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "GET /:id/insights/latest",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "/api/contacts/:id/insights/latest"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "POST /:id/insights/compute",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "/api/contacts/:id/insights/compute"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "PUT /:id",
+    "queryType": "updateMany",
+    "model": "contact",
+    "endpoint": "/api/contacts/:id"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "PUT /:id",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "/api/contacts/:id"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "DELETE /:id",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "/api/contacts/:id"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "DELETE /:id",
+    "queryType": "findMany",
+    "model": "conversation",
+    "endpoint": "/api/contacts/:id"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "DELETE /:id",
+    "queryType": "deleteMany",
+    "model": "agentFlowSession",
+    "endpoint": "/api/contacts/:id"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "DELETE /:id",
+    "queryType": "deleteMany",
+    "model": "journeyExecution",
+    "endpoint": "/api/contacts/:id"
+  },
+  {
+    "file": "routes/contacts.ts",
+    "function": "DELETE /:id",
+    "queryType": "delete",
+    "model": "contact",
+    "endpoint": "/api/contacts/:id"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "GET /",
+    "queryType": "findMany",
+    "model": "conversation",
+    "endpoint": "/api/conversations"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "GET /:id",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/conversations/:id"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "GET /:id",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "/api/conversations/:id"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /open",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "/api/conversations/open"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /open",
+    "queryType": "findFirst",
+    "model": "instagramAccount",
+    "endpoint": "/api/conversations/open"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /open",
+    "queryType": "findFirst",
+    "model": "messengerAccount",
+    "endpoint": "/api/conversations/open"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /open",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/conversations/open"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /open",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/conversations/open"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "GET /:id/messages",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "GET /:id/messages",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "GET /:id/messages",
+    "queryType": "findMany",
+    "model": "message",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "GET /:id/messages",
+    "queryType": "findFirst",
+    "model": "message",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "GET /:id/messages",
+    "queryType": "findMany",
+    "model": "message",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "GET /:id/messages",
+    "queryType": "count",
+    "model": "message",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "GET /:id/messages",
+    "queryType": "findMany",
+    "model": "message",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "GET /:id/messages",
+    "queryType": "count",
+    "model": "message",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /:id/messages",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /:id/messages",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /:id/messages",
+    "queryType": "findFirst",
+    "model": "message",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /:id/messages",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /:id/messages",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "/api/conversations/:id/messages"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "/api/conversations"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "/api/conversations"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "/api/conversations"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "/api/conversations"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /:id/messages/template",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/conversations/:id/messages/template"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /:id/messages/template",
+    "queryType": "findFirst",
+    "model": "template",
+    "endpoint": "/api/conversations/:id/messages/template"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /:id/messages/template",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "/api/conversations/:id/messages/template"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "/api/conversations"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "/api/conversations"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "GET /messages/:messageId/attachment",
+    "queryType": "findFirst",
+    "model": "message",
+    "endpoint": "/api/conversations/messages/:messageId/attachment"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /:id/messages/media",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/conversations/:id/messages/media"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "POST /:id/messages/media",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "/api/conversations/:id/messages/media"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "/api/conversations"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "message",
+    "endpoint": "/api/conversations"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "/api/conversations"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "DELETE /:id",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/conversations/:id"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "PUT /:id",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/conversations/:id"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "body",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "/api/conversations"
+  },
+  {
+    "file": "routes/conversations.ts",
+    "function": "body",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "/api/conversations"
+  },
+  {
+    "file": "routes/facebook.ts",
+    "function": "POST /connect",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "routes/facebook.ts",
+    "function": "DELETE /disconnect",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "routes/instagram.ts",
+    "function": "POST /connect",
+    "queryType": "findFirst",
+    "model": "instagramAccount",
+    "endpoint": "/api/instagram/connect"
+  },
+  {
+    "file": "routes/messenger.ts",
+    "function": "body",
+    "queryType": "findFirst",
+    "model": "messengerAccount",
+    "endpoint": "/api/messenger"
+  },
+  {
+    "file": "routes/metaAds.ts",
+    "function": "DELETE /disconnect",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "routes/platform/auth.ts",
+    "function": "POST /login",
+    "queryType": "findUnique",
+    "model": "platformAdmin",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "syncTemplatesFromMeta",
+    "queryType": "upsert",
+    "model": "template",
+    "endpoint": "/api/templates"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "GET /",
+    "queryType": "findMany",
+    "model": "template",
+    "endpoint": "/api/templates"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "POST /sync",
+    "queryType": "findMany",
+    "model": "template",
+    "endpoint": "/api/templates/sync"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "GET /:id",
+    "queryType": "findFirst",
+    "model": "template",
+    "endpoint": "/api/templates/:id"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "POST /",
+    "queryType": "findUnique",
+    "model": "template",
+    "endpoint": "/api/templates"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "POST /",
+    "queryType": "create",
+    "model": "template",
+    "endpoint": "/api/templates"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "PUT /:id",
+    "queryType": "findFirst",
+    "model": "template",
+    "endpoint": "/api/templates/:id"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "PUT /:id",
+    "queryType": "update",
+    "model": "template",
+    "endpoint": "/api/templates/:id"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "POST /:id/submit",
+    "queryType": "findFirst",
+    "model": "template",
+    "endpoint": "/api/templates/:id/submit"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "POST /:id/submit",
+    "queryType": "update",
+    "model": "template",
+    "endpoint": "/api/templates/:id/submit"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "POST /:id/submit",
+    "queryType": "update",
+    "model": "template",
+    "endpoint": "/api/templates/:id/submit"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "DELETE /:id",
+    "queryType": "findFirst",
+    "model": "template",
+    "endpoint": "/api/templates/:id"
+  },
+  {
+    "file": "routes/templates.ts",
+    "function": "DELETE /:id",
+    "queryType": "delete",
+    "model": "template",
+    "endpoint": "/api/templates/:id"
+  },
+  {
+    "file": "routes/webhooks.ts",
+    "function": "POST /whatsapp",
+    "queryType": "findFirst",
+    "model": "message",
+    "endpoint": "/api/webhook/whatsapp"
+  },
+  {
+    "file": "routes/webhooks.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "/api/webhook"
+  },
+  {
+    "file": "routes/webhooks.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "message",
+    "endpoint": "/api/webhook"
+  },
+  {
+    "file": "routes/webhooks.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "/api/webhook"
+  },
+  {
+    "file": "routes/webhooks.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "message",
+    "endpoint": "/api/webhook"
+  },
+  {
+    "file": "routes/webhooks.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "message",
+    "endpoint": "/api/webhook"
+  },
+  {
+    "file": "routes/whatsapp.ts",
+    "function": "GET /status",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/whatsapp/status"
+  },
+  {
+    "file": "routes/whatsapp.ts",
+    "function": "body",
+    "queryType": "deleteMany",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "/api/whatsapp"
+  },
+  {
+    "file": "routes/whatsapp.ts",
+    "function": "body",
+    "queryType": "findMany",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "/api/whatsapp"
+  },
+  {
+    "file": "routes/whatsapp.ts",
+    "function": "body",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/whatsapp"
+  },
+  {
+    "file": "routes/whatsapp.ts",
+    "function": "body",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/whatsapp"
+  },
+  {
+    "file": "routes/whatsapp.ts",
+    "function": "body",
+    "queryType": "deleteMany",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "/api/whatsapp"
+  },
+  {
+    "file": "routes/whatsapp.ts",
+    "function": "body",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/whatsapp"
+  },
+  {
+    "file": "routes/workspace.ts",
+    "function": "GET /subscription",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/workspace/subscription"
+  },
+  {
+    "file": "routes/workspace.ts",
+    "function": "POST /subscription/quote",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/workspace/subscription/quote"
+  },
+  {
+    "file": "routes/workspace.ts",
+    "function": "GET /company",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "/api/workspace/company"
+  },
+  {
+    "file": "routes/workspace.ts",
+    "function": "PATCH /company",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "/api/workspace/company"
+  },
+  {
+    "file": "scripts/sync-razorpay-plans.ts",
+    "function": "main",
+    "queryType": "findMany",
+    "model": "subscriptionPlan",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "seed.ts",
+    "function": "main",
+    "queryType": "upsert",
+    "model": "platformAdmin",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/agent-test.service.ts",
+    "function": "testAgentChat",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-inbound.service.ts",
+    "function": "processAiAgentInbound",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-inbound.service.ts",
+    "function": "processAiAgentInbound",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-inbound.service.ts",
+    "function": "processAiAgentInbound",
+    "queryType": "findFirst",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-inbound.service.ts",
+    "function": "processAiAgentInbound",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-inbound.service.ts",
+    "function": "processAiAgentInbound",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-respond-stream.service.ts",
+    "function": "heuristicIntent",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-respond-stream.service.ts",
+    "function": "heuristicIntent",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-respond-stream.service.ts",
+    "function": "heuristicIntent",
+    "queryType": "findFirst",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-respond-stream.service.ts",
+    "function": "heuristicIntent",
+    "queryType": "create",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-respond-stream.service.ts",
+    "function": "persistTurn",
+    "queryType": "create",
+    "model": "agentChatMessage",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-respond-stream.service.ts",
+    "function": "persistTurn",
+    "queryType": "create",
+    "model": "agentChatMessage",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-respond-stream.service.ts",
+    "function": "persistTurn",
+    "queryType": "update",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-respond.service.ts",
+    "function": "respondAiAgentTurn",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-respond.service.ts",
+    "function": "respondAiAgentTurn",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-agent-respond.service.ts",
+    "function": "respondAiAgentTurn",
+    "queryType": "findFirst",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-inbound.service.ts",
+    "function": "processAiInbound",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-inbound.service.ts",
+    "function": "processAiInbound",
+    "queryType": "findUnique",
+    "model": "aiKnowledgeConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-inbound.service.ts",
+    "function": "processAiInbound",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ai-inbound.service.ts",
+    "function": "processAiInbound",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignAudience.service.ts",
+    "function": "getWorkspaceTags",
+    "queryType": "findMany",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignAudience.service.ts",
+    "function": "countCampaignAudience",
+    "queryType": "count",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignAudience.service.ts",
+    "function": "getCampaignAudienceContacts",
+    "queryType": "findMany",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignAudience.service.ts",
+    "function": "listCampaignAudienceContacts",
+    "queryType": "count",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignAudience.service.ts",
+    "function": "listCampaignAudienceContacts",
+    "queryType": "findMany",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignBroadcast.service.ts",
+    "function": "executeWhatsAppCampaignBroadcast",
+    "queryType": "findFirst",
+    "model": "template",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignBroadcast.service.ts",
+    "function": "executeWhatsAppCampaignBroadcast",
+    "queryType": "update",
+    "model": "campaign",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignBroadcast.service.ts",
+    "function": "executeWhatsAppCampaignBroadcast",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignBroadcast.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignBroadcast.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "campaign",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignBroadcast.service.ts",
+    "function": "executeEmailCampaignBroadcast",
+    "queryType": "findFirst",
+    "model": "emailTemplate",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignBroadcast.service.ts",
+    "function": "executeEmailCampaignBroadcast",
+    "queryType": "update",
+    "model": "campaign",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignBroadcast.service.ts",
+    "function": "executeEmailCampaignBroadcast",
+    "queryType": "update",
+    "model": "campaign",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignBroadcast.service.ts",
+    "function": "executeCampaignBroadcast",
+    "queryType": "findFirst",
+    "model": "campaign",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignInsights.service.ts",
+    "function": "findEmailLogsForCampaign",
+    "queryType": "findMany",
+    "model": "emailLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignInsights.service.ts",
+    "function": "findEmailLogsForCampaign",
+    "queryType": "findMany",
+    "model": "emailLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignInsights.service.ts",
+    "function": "meta",
+    "queryType": "update",
+    "model": "emailLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignInsights.service.ts",
+    "function": "getWhatsAppCampaignInsights",
+    "queryType": "findFirst",
+    "model": "template",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignInsights.service.ts",
+    "function": "getWhatsAppCampaignInsights",
+    "queryType": "findMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignInsights.service.ts",
+    "function": "getEmailCampaignInsights",
+    "queryType": "findFirst",
+    "model": "emailTemplate",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/campaignInsights.service.ts",
+    "function": "getCampaignInsights",
+    "queryType": "findFirst",
+    "model": "campaign",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "countRemainingChannelAccounts",
+    "queryType": "count",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "countRemainingChannelAccounts",
+    "queryType": "count",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "countRemainingChannelAccounts",
+    "queryType": "count",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeChannelAccountData",
+    "queryType": "findMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeChannelAccountData",
+    "queryType": "deleteMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeChannelAccountData",
+    "queryType": "deleteMany",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeChannelAccountData",
+    "queryType": "deleteMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeJourneyDataForContact",
+    "queryType": "findMany",
+    "model": "journeyExecution",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeJourneyDataForContact",
+    "queryType": "deleteMany",
+    "model": "journeyExecutionLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeJourneyDataForContact",
+    "queryType": "deleteMany",
+    "model": "journeyExecution",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeJourneyDataForContact",
+    "queryType": "deleteMany",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeJourneyDataForContact",
+    "queryType": "count",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeJourneyDataForContact",
+    "queryType": "deleteMany",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeJourneyDataForContact",
+    "queryType": "findMany",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeJourneyDataForContact",
+    "queryType": "deleteMany",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeJourneyDataForContact",
+    "queryType": "deleteMany",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeJourneyDataForContact",
+    "queryType": "findMany",
+    "model": "campaign",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "purgeJourneyDataForContact",
+    "queryType": "deleteMany",
+    "model": "campaign",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "disconnectInstagramAccounts",
+    "queryType": "findMany",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "disconnectInstagramAccounts",
+    "queryType": "deleteMany",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "disconnectInstagramAccounts",
+    "queryType": "deleteMany",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "disconnectMessengerAccounts",
+    "queryType": "findMany",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/channelDisconnectCleanup.service.ts",
+    "function": "disconnectMessengerAccounts",
+    "queryType": "deleteMany",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/contact-audit.service.ts",
+    "function": "getContactAudits",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/contact-audit.service.ts",
+    "function": "conversationIds",
+    "queryType": "findMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/contact-audit.service.ts",
+    "function": "conversationIds",
+    "queryType": "findMany",
+    "model": "journeyExecution",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/contact-audit.service.ts",
+    "function": "conversationIds",
+    "queryType": "findMany",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/contact-audit.service.ts",
+    "function": "conversationIds",
+    "queryType": "findMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/contact-audit.service.ts",
+    "function": "conversationIds",
+    "queryType": "findMany",
+    "model": "campaign",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversation-assignee.service.ts",
+    "function": "applyConversationAssignee",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversation-assignee.service.ts",
+    "function": "applyConversationAssignee",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversation-assignee.service.ts",
+    "function": "applyConversationAssignee",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversation-assignee.service.ts",
+    "function": "applyConversationAssignee",
+    "queryType": "findFirst",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversation-assignee.service.ts",
+    "function": "applyConversationAssignee",
+    "queryType": "findUnique",
+    "model": "aiKnowledgeConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversation-assignee.service.ts",
+    "function": "applyConversationAssignee",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversation-assignee.service.ts",
+    "function": "applyConversationAssignee",
+    "queryType": "deleteMany",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversation-delete.service.ts",
+    "function": "deleteConversationThread",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversation-delete.service.ts",
+    "function": "deleteConversationThread",
+    "queryType": "deleteMany",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversation-delete.service.ts",
+    "function": "deleteConversationThread",
+    "queryType": "deleteMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversation-delete.service.ts",
+    "function": "deleteConversationThread",
+    "queryType": "delete",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversation-inbound-router.service.ts",
+    "function": "routeInboundWhatsApp",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "clearFlowSessionForConversation",
+    "queryType": "deleteMany",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "onConversationResolved",
+    "queryType": "findUnique",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "findOrReopenConversationForInbound",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "findOrReopenConversationForInbound",
+    "queryType": "update",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "findOrReopenConversationForInbound",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "findOrReopenConversationForInbound",
+    "queryType": "update",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "findOrReopenConversationForInbound",
+    "queryType": "create",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "mergeConversationInto",
+    "queryType": "deleteMany",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "mergeConversationInto",
+    "queryType": "updateMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "mergeConversationInto",
+    "queryType": "delete",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "consolidateWorkspaceWhatsAppDuplicates",
+    "queryType": "findMany",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "consolidateWorkspaceWhatsAppDuplicates",
+    "queryType": "count",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "consolidateWorkspaceWhatsAppDuplicates",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "consolidateWorkspaceWhatsAppDuplicates",
+    "queryType": "updateMany",
+    "model": "journeyExecution",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "consolidateWorkspaceWhatsAppDuplicates",
+    "queryType": "updateMany",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "consolidateWorkspaceWhatsAppDuplicates",
+    "queryType": "delete",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "consolidateWorkspaceWhatsAppDuplicates",
+    "queryType": "update",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "consolidateWorkspaceWhatsAppDuplicates",
+    "queryType": "findMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "consolidateWorkspaceWhatsAppDuplicates",
+    "queryType": "deleteMany",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "consolidateWorkspaceWhatsAppDuplicates",
+    "queryType": "deleteMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "consolidateWorkspaceWhatsAppDuplicates",
+    "queryType": "delete",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/conversationThread.service.ts",
+    "function": "consolidateWorkspaceWhatsAppDuplicates",
+    "queryType": "findMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/facebookConnect.ts",
+    "function": "connectWorkspaceFacebook",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/facebookConnect.ts",
+    "function": "getConnectedFacebookPage",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/facebookCredentials.ts",
+    "function": "getWorkspaceFacebookPageCredentials",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/facebookCredentials.ts",
+    "function": "getWorkspaceMetaUserToken",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/inboxScope.ts",
+    "function": "validateInboxScopeForWorkspace",
+    "queryType": "findMany",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/inboxScope.ts",
+    "function": "validateInboxScopeForWorkspace",
+    "queryType": "findMany",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/inboxScope.ts",
+    "function": "validateInboxScopeForWorkspace",
+    "queryType": "findMany",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramConnect.ts",
+    "function": "markAlreadyConnectedCandidates",
+    "queryType": "findMany",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramConnect.ts",
+    "function": "completeInstagramConnect",
+    "queryType": "findUnique",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramConnect.ts",
+    "function": "completeInstagramConnect",
+    "queryType": "upsert",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramConnect.ts",
+    "function": "listInstagramAccounts",
+    "queryType": "findMany",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramContactProfile.ts",
+    "function": "existing",
+    "queryType": "update",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramCredentials.ts",
+    "function": "getWorkspaceInstagramCredentials",
+    "queryType": "findFirst",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramCredentials.ts",
+    "function": "getWorkspaceInstagramCredentials",
+    "queryType": "findFirst",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramSync.ts",
+    "function": "upsertSyncedThread",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramSync.ts",
+    "function": "upsertSyncedThread",
+    "queryType": "create",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramSync.ts",
+    "function": "upsertSyncedThread",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramSync.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramSync.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramSync.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramSync.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramSync.ts",
+    "function": "syncInstagramConversationsForWorkspace",
+    "queryType": "findMany",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramWebhookHandler.ts",
+    "function": "upsertInstagramInboundMessage",
+    "queryType": "findFirst",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramWebhookHandler.ts",
+    "function": "upsertInstagramInboundMessage",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramWebhookHandler.ts",
+    "function": "upsertInstagramInboundMessage",
+    "queryType": "create",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramWebhookHandler.ts",
+    "function": "upsertInstagramInboundMessage",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramWebhookHandler.ts",
+    "function": "upsertInstagramInboundMessage",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramWebhookHandler.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/instagramWebhookHandler.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messagingReadReceipt.service.ts",
+    "function": "applyMessagingReadReceipt",
+    "queryType": "findFirst",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messagingReadReceipt.service.ts",
+    "function": "applyMessagingReadReceipt",
+    "queryType": "findMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messagingReadReceipt.service.ts",
+    "function": "applyMessagingReadReceipt",
+    "queryType": "findMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messagingReadReceipt.service.ts",
+    "function": "applyMessagingReadReceipt",
+    "queryType": "updateMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerConnect.ts",
+    "function": "connectMessengerFromInstagramAccounts",
+    "queryType": "findMany",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerConnect.ts",
+    "function": "connectMessengerFromInstagramAccounts",
+    "queryType": "findMany",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerConnect.ts",
+    "function": "connectMessengerFromInstagramAccounts",
+    "queryType": "upsert",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerConnect.ts",
+    "function": "listMessengerAccounts",
+    "queryType": "findMany",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerCredentials.ts",
+    "function": "getWorkspaceMessengerCredentials",
+    "queryType": "findFirst",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerCredentials.ts",
+    "function": "getWorkspaceMessengerCredentials",
+    "queryType": "findFirst",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerSync.ts",
+    "function": "upsertSyncedThread",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerSync.ts",
+    "function": "upsertSyncedThread",
+    "queryType": "create",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerSync.ts",
+    "function": "upsertSyncedThread",
+    "queryType": "update",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerSync.ts",
+    "function": "upsertSyncedThread",
+    "queryType": "findMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerSync.ts",
+    "function": "upsertSyncedThread",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerSync.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerSync.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerSync.ts",
+    "function": "syncMessengerConversationsForWorkspace",
+    "queryType": "findMany",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerWebhookHandler.ts",
+    "function": "upsertMessengerInboundMessage",
+    "queryType": "findFirst",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerWebhookHandler.ts",
+    "function": "upsertMessengerInboundMessage",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerWebhookHandler.ts",
+    "function": "upsertMessengerInboundMessage",
+    "queryType": "create",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerWebhookHandler.ts",
+    "function": "upsertMessengerInboundMessage",
+    "queryType": "update",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerWebhookHandler.ts",
+    "function": "upsertMessengerInboundMessage",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerWebhookHandler.ts",
+    "function": "upsertMessengerInboundMessage",
+    "queryType": "update",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerWebhookHandler.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerWebhookHandler.ts",
+    "function": "handleMessengerWebhookBody",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/messengerWebhookHandler.ts",
+    "function": "handleMessengerWebhookBody",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaAdsConnect.ts",
+    "function": "connectWorkspaceMetaAds",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaAdsConnect.ts",
+    "function": "connectWorkspaceMetaAds",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaAdsConnect.ts",
+    "function": "listWorkspaceMetaAdAccounts",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaAdsConnect.ts",
+    "function": "selectWorkspaceMetaAdAccount",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaAdsConnect.ts",
+    "function": "selectWorkspaceMetaAdAccount",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaAdsConnect.ts",
+    "function": "getConnectedMetaAdsAccount",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaAdsConnect.ts",
+    "function": "fetchMetaAdCampaigns",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaAdsConnect.ts",
+    "function": "setCampaignStatus",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaAdsConnect.ts",
+    "function": "createCTWACampaign",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaDeauth.service.ts",
+    "function": "purgeMetaUserChannelData",
+    "queryType": "findMany",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaDeauth.service.ts",
+    "function": "purgeMetaUserChannelData",
+    "queryType": "findMany",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaDeauth.service.ts",
+    "function": "purgeMetaUserChannelData",
+    "queryType": "findMany",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaDeauth.service.ts",
+    "function": "purgeMetaUserChannelData",
+    "queryType": "findFirst",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaDeauth.service.ts",
+    "function": "purgeMetaUserChannelData",
+    "queryType": "deleteMany",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaDeauth.service.ts",
+    "function": "purgeMetaUserChannelData",
+    "queryType": "findMany",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaDeauth.service.ts",
+    "function": "purgeMetaUserChannelData",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/metaDeauth.service.ts",
+    "function": "purgeMetaUserChannelData",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/onboarding.ts",
+    "function": "ensureSuperAdminOnboardingComplete",
+    "queryType": "updateMany",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/onboarding.ts",
+    "function": "getOnboardingState",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/onboarding.ts",
+    "function": "getOnboardingState",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/onboarding.ts",
+    "function": "saveOnboardingStep",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/onboarding.ts",
+    "function": "saveOnboardingStep",
+    "queryType": "$transaction",
+    "model": "$transaction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/onboarding.ts",
+    "function": "saveOnboardingStep",
+    "queryType": "update",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/onboarding.ts",
+    "function": "saveOnboardingStep",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/onboarding.ts",
+    "function": "completeOnboarding",
+    "queryType": "update",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/planUsageGuards.ts",
+    "function": "getLimitSnapshot",
+    "queryType": "findUnique",
+    "model": "workspaceUsageLimits",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/planUsageGuards.ts",
+    "function": "countConnectedChannels",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/planUsageGuards.ts",
+    "function": "countConnectedChannels",
+    "queryType": "count",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/planUsageGuards.ts",
+    "function": "countConnectedChannels",
+    "queryType": "count",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/planUsageGuards.ts",
+    "function": "countConnectedChannels",
+    "queryType": "count",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/planUsageGuards.ts",
+    "function": "assertAiAgentCreateAllowed",
+    "queryType": "count",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/planUsageGuards.ts",
+    "function": "countSentEmailsThisMonth",
+    "queryType": "count",
+    "model": "emailLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizationAdmin.ts",
+    "function": "suspendWorkspace",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizationAdmin.ts",
+    "function": "suspendWorkspace",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizationAdmin.ts",
+    "function": "reactivateWorkspace",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizationAdmin.ts",
+    "function": "updateWorkspaceLimits",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizationAdmin.ts",
+    "function": "updateWorkspaceLimits",
+    "queryType": "upsert",
+    "model": "workspaceUsageLimits",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizationAdmin.ts",
+    "function": "setWorkspaceAgentEnabled",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizationAdmin.ts",
+    "function": "setWorkspaceAgentEnabled",
+    "queryType": "update",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizationAdmin.ts",
+    "function": "getWorkspaceAuditTrail",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizationAdmin.ts",
+    "function": "getWorkspaceAuditTrail",
+    "queryType": "findMany",
+    "model": "trialExtensionLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizationAdmin.ts",
+    "function": "createWorkspaceImpersonationSession",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizationAdmin.ts",
+    "function": "createWorkspaceImpersonationSession",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadLatestCustomPlanInvoices",
+    "queryType": "findMany",
+    "model": "billingInvoice",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "getPlatformOrganizationStats",
+    "queryType": "count",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "getPlatformOrganizationStats",
+    "queryType": "findMany",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "getPlatformOrganizationStats",
+    "queryType": "findMany",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "getPlatformOrganizationById",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadWorkspaceOperations",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadWorkspaceOperations",
+    "queryType": "findMany",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadWorkspaceOperations",
+    "queryType": "findMany",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadWorkspaceOperations",
+    "queryType": "findMany",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadWorkspaceOperations",
+    "queryType": "findMany",
+    "model": "googleConnection",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadWorkspaceOperations",
+    "queryType": "findMany",
+    "model": "template",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadWorkspaceOperations",
+    "queryType": "findMany",
+    "model": "campaign",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "(module)",
+    "queryType": "findMany",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "template",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "(module)",
+    "queryType": "count",
+    "model": "template",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "(module)",
+    "queryType": "groupBy",
+    "model": "campaign",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "(module)",
+    "queryType": "groupBy",
+    "model": "journey",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "(module)",
+    "queryType": "findUnique",
+    "model": "workspaceUsageLimits",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadOrganizationDetail",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadOrganizationDetail",
+    "queryType": "findMany",
+    "model": "billingInvoice",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadOrganizationDetail",
+    "queryType": "findUnique",
+    "model": "workspaceUsageLimits",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadOrganizationDetail",
+    "queryType": "findMany",
+    "model": "trialExtensionLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadOrganizationDetail",
+    "queryType": "findFirst",
+    "model": "billingSubscription",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "loadOrganizationDetail",
+    "queryType": "findMany",
+    "model": "campaign",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "getPlatformOrganizationUsageCost",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "getPlatformOrganizationUsageCost",
+    "queryType": "findFirst",
+    "model": "billingSubscription",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "listPlatformOrganizations",
+    "queryType": "count",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformOrganizations.ts",
+    "function": "listPlatformOrganizations",
+    "queryType": "findMany",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformSettings.service.ts",
+    "function": "getPlatformConfig",
+    "queryType": "findUnique",
+    "model": "platformConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformSettings.service.ts",
+    "function": "getPlatformConfig",
+    "queryType": "create",
+    "model": "platformConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformSettings.service.ts",
+    "function": "updatePlatformConfig",
+    "queryType": "upsert",
+    "model": "platformConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformSettings.service.ts",
+    "function": "listPlatformMessageTemplates",
+    "queryType": "findMany",
+    "model": "platformMessageTemplate",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformSettings.service.ts",
+    "function": "createPlatformMessageTemplate",
+    "queryType": "create",
+    "model": "platformMessageTemplate",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformSettings.service.ts",
+    "function": "updatePlatformMessageTemplate",
+    "queryType": "update",
+    "model": "platformMessageTemplate",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/platformSettings.service.ts",
+    "function": "deletePlatformMessageTemplate",
+    "queryType": "delete",
+    "model": "platformMessageTemplate",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/razorpayCustomer.service.ts",
+    "function": "getWorkspaceRazorpayContact",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/razorpayCustomer.service.ts",
+    "function": "ensureRazorpayCustomer",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/razorpayCustomer.service.ts",
+    "function": "saveWalletPaymentCredentials",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/razorpayCustomer.service.ts",
+    "function": "saveWalletPaymentCredentials",
+    "queryType": "upsert",
+    "model": "workspaceWallet",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/razorpayCustomer.service.ts",
+    "function": "syncRazorpayTokenForWorkspace",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/razorpayCustomer.service.ts",
+    "function": "enableWalletAutoRecharge",
+    "queryType": "upsert",
+    "model": "workspaceWallet",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/razorpayPlanSync.ts",
+    "function": "syncRazorpayPlanIds",
+    "queryType": "findMany",
+    "model": "subscriptionPlan",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/razorpayPlanSync.ts",
+    "function": "syncRazorpayPlanIds",
+    "queryType": "update",
+    "model": "subscriptionPlan",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "persistOutboundMessage",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "persistOutboundMessage",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "applyAddTags",
+    "queryType": "update",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "runFlowFromIndex",
+    "queryType": "findUnique",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "runFlowFromIndex",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "findMatchingAgent",
+    "queryType": "findMany",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "loadForcedAgent",
+    "queryType": "findFirst",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "processRuleBasedFlowInbound",
+    "queryType": "findFirst",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "processRuleBasedFlowInbound",
+    "queryType": "findUnique",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "processRuleBasedFlowInbound",
+    "queryType": "update",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "processRuleBasedFlowInbound",
+    "queryType": "update",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "agentFlowSession",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/ruleBasedFlowEngine.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/subscriptionPlans.ts",
+    "function": "seedSubscriptionPlans",
+    "queryType": "upsert",
+    "model": "subscriptionPlan",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/subscriptionPlans.ts",
+    "function": "detachPlansFromTrialWorkspaces",
+    "queryType": "updateMany",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/subscriptionPlans.ts",
+    "function": "listSubscriptionPlans",
+    "queryType": "findMany",
+    "model": "subscriptionPlan",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/subscriptionPlans.ts",
+    "function": "getSubscriptionPlanBySlug",
+    "queryType": "findUnique",
+    "model": "subscriptionPlan",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/subscriptionPlans.ts",
+    "function": "backfillWorkspaceUsageLimitsFromPlans",
+    "queryType": "findMany",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/subscriptionPlans.ts",
+    "function": "backfillWorkspaceUsageLimitsFromPlans",
+    "queryType": "upsert",
+    "model": "workspaceUsageLimits",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/superAdminWorkspace.ts",
+    "function": "getSuperAdminWorkspaceSnapshot",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/trial.ts",
+    "function": "expireTrialIfNeeded",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/trial.ts",
+    "function": "expireTrialIfNeeded",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/trial.ts",
+    "function": "expireDueTrials",
+    "queryType": "updateMany",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/trial.ts",
+    "function": "extendWorkspaceTrial",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/trial.ts",
+    "function": "extendWorkspaceTrial",
+    "queryType": "$transaction",
+    "model": "$transaction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/trial.ts",
+    "function": "extendWorkspaceTrial",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/trial.ts",
+    "function": "extendWorkspaceTrial",
+    "queryType": "create",
+    "model": "trialExtensionLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/trial.ts",
+    "function": "activateWorkspaceSubscription",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/trial.ts",
+    "function": "activateWorkspaceSubscription",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/trial.ts",
+    "function": "backfillWorkspaceTrials",
+    "queryType": "findMany",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/trial.ts",
+    "function": "backfillWorkspaceTrials",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/url-fetch.service.ts",
+    "function": "fetchUrlKnowledge",
+    "queryType": "create",
+    "model": "aiAgentKnowledgeItem",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/url-fetch.service.ts",
+    "function": "fetchUrlKnowledge",
+    "queryType": "findFirst",
+    "model": "aiAgentKnowledgeItem",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/url-fetch.service.ts",
+    "function": "fetchUrlKnowledge",
+    "queryType": "create",
+    "model": "aiAgentKnowledgeItem",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/usageCost.service.ts",
+    "function": "getWorkspaceUsageCost",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/usageCost.service.ts",
+    "function": "getWorkspaceUsageCost",
+    "queryType": "findMany",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/usageCost.service.ts",
+    "function": "getWorkspaceUsageCost",
+    "queryType": "count",
+    "model": "emailLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/usageCost.service.ts",
+    "function": "getWorkspaceUsageCost",
+    "queryType": "findMany",
+    "model": "template",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/usageCost.service.ts",
+    "function": "getWorkspaceUsageCost",
+    "queryType": "findMany",
+    "model": "aiAgent",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/userProfile.ts",
+    "function": "updateUserProfile",
+    "queryType": "update",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/userProfile.ts",
+    "function": "updateUserAvatar",
+    "queryType": "update",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/userProfile.ts",
+    "function": "changeUserPassword",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/userProfile.ts",
+    "function": "changeUserPassword",
+    "queryType": "update",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/userSecurity.ts",
+    "function": "ensureUserSecurityState",
+    "queryType": "upsert",
+    "model": "userSecurityState",
+    "endpoint": "(auth tokenVersion)"
+  },
+  {
+    "file": "services/userSecurity.ts",
+    "function": "bumpTokenVersion",
+    "queryType": "update",
+    "model": "userSecurityState",
+    "endpoint": "(auth tokenVersion)"
+  },
+  {
+    "file": "services/wallet.service.ts",
+    "function": "getWalletMonthSpentPaise",
+    "queryType": "aggregate",
+    "model": "walletTransaction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/wallet.service.ts",
+    "function": "updateWalletSettings",
+    "queryType": "findUnique",
+    "model": "workspaceWallet",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/wallet.service.ts",
+    "function": "updateWalletSettings",
+    "queryType": "update",
+    "model": "workspaceWallet",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/wallet.service.ts",
+    "function": "run",
+    "queryType": "$transaction",
+    "model": "$transaction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/wallet.service.ts",
+    "function": "run",
+    "queryType": "$transaction",
+    "model": "$transaction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/wallet.service.ts",
+    "function": "listWalletTransactions",
+    "queryType": "findMany",
+    "model": "walletTransaction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "scheduleWalletAutoRecharge",
+    "queryType": "findUnique",
+    "model": "workspaceWallet",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "processWalletAutoRecharge",
+    "queryType": "update",
+    "model": "workspaceWallet",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "processWalletAutoRecharge",
+    "queryType": "updateMany",
+    "model": "workspaceWallet",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "processWalletAutoRecharge",
+    "queryType": "create",
+    "model": "billingInvoice",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "processWalletAutoRecharge",
+    "queryType": "$transaction",
+    "model": "$transaction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "processWalletAutoRecharge",
+    "queryType": "update",
+    "model": "billingInvoice",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "processWalletAutoRecharge",
+    "queryType": "update",
+    "model": "workspaceWallet",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspaceWallet",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspaceWallet",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "scanLowBalanceAutoRechargeWallets",
+    "queryType": "findMany",
+    "model": "workspaceWallet",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "completeWalletAutoRechargeFromWebhook",
+    "queryType": "$transaction",
+    "model": "$transaction",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "completeWalletAutoRechargeFromWebhook",
+    "queryType": "findFirst",
+    "model": "billingInvoice",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "completeWalletAutoRechargeFromWebhook",
+    "queryType": "update",
+    "model": "billingInvoice",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/walletAutoRecharge.service.ts",
+    "function": "completeWalletAutoRechargeFromWebhook",
+    "queryType": "update",
+    "model": "workspaceWallet",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappAccounts.ts",
+    "function": "ensureWhatsAppAccountsMigrated",
+    "queryType": "count",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappAccounts.ts",
+    "function": "ensureWhatsAppAccountsMigrated",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappAccounts.ts",
+    "function": "ensureWhatsAppAccountsMigrated",
+    "queryType": "create",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappAccounts.ts",
+    "function": "listWhatsAppAccounts",
+    "queryType": "findMany",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappCoexistenceWebhook.ts",
+    "function": "handleSmbMessageEchoes",
+    "queryType": "findFirst",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappCoexistenceWebhook.ts",
+    "function": "handleSmbMessageEchoes",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappCoexistenceWebhook.ts",
+    "function": "handleSmbMessageEchoes",
+    "queryType": "update",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappCoexistenceWebhook.ts",
+    "function": "(module)",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappConnect.ts",
+    "function": "connectWorkspaceWhatsApp",
+    "queryType": "deleteMany",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappConnect.ts",
+    "function": "connectWorkspaceWhatsApp",
+    "queryType": "findUnique",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappConnect.ts",
+    "function": "(module)",
+    "queryType": "upsert",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappConnect.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappCredentials.ts",
+    "function": "getWorkspaceWhatsAppCredentials",
+    "queryType": "findUnique",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappCredentials.ts",
+    "function": "getWorkspaceWhatsAppCredentials",
+    "queryType": "findFirst",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappCredentials.ts",
+    "function": "getWorkspaceWhatsAppCredentials",
+    "queryType": "findFirst",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappDisconnectCleanup.service.ts",
+    "function": "purgeWhatsAppPhoneAccountData",
+    "queryType": "count",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "templateButtonUrlParameter",
+    "queryType": "findMany",
+    "model": "whatsAppPaymentRequest",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "templateButtonUrlParameter",
+    "queryType": "findMany",
+    "model": "whatsAppPaymentRequest",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "templateButtonUrlParameter",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "template",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "whatsAppPaymentRequest",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "whatsAppPaymentRequest",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "template",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "contact",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "whatsAppPaymentRequest",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "create",
+    "model": "message",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "whatsAppPaymentRequest",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "whatsAppPaymentRequest",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "whatsAppPaymentRequest",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "findFirst",
+    "model": "whatsAppPaymentRequest",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "(module)",
+    "queryType": "update",
+    "model": "whatsAppPaymentRequest",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "entity",
+    "queryType": "findFirst",
+    "model": "whatsAppPaymentRequest",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/whatsappPay.service.ts",
+    "function": "paymentEntity",
+    "queryType": "update",
+    "model": "whatsAppPaymentRequest",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "resolveMembershipAccess",
+    "queryType": "findUnique",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "assertTeamSeatAvailable",
+    "queryType": "count",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "countWorkspaceAdmins",
+    "queryType": "count",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "getWorkspaceOwnerUserId",
+    "queryType": "findFirst",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "listWorkspaceMembersFormatted",
+    "queryType": "findMany",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "addWorkspaceMember",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "addWorkspaceMember",
+    "queryType": "findUnique",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "addWorkspaceMember",
+    "queryType": "create",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "addWorkspaceMember",
+    "queryType": "create",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "updateWorkspaceMember",
+    "queryType": "findFirst",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "updateWorkspaceMember",
+    "queryType": "update",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "updateWorkspaceMember",
+    "queryType": "update",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "removeWorkspaceMember",
+    "queryType": "findFirst",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "removeWorkspaceMember",
+    "queryType": "count",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "removeWorkspaceMember",
+    "queryType": "updateMany",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMemberAdmin.ts",
+    "function": "removeWorkspaceMember",
+    "queryType": "delete",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMembers.ts",
+    "function": "listWorkspaceMemberUsers",
+    "queryType": "findMany",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMembers.ts",
+    "function": "listWorkspaceMemberUsers",
+    "queryType": "count",
+    "model": "conversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMembers.ts",
+    "function": "isWorkspaceMember",
+    "queryType": "findUnique",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMembership.ts",
+    "function": "ensureUserMemberships",
+    "queryType": "findUnique",
+    "model": "user",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMembership.ts",
+    "function": "ensureUserMemberships",
+    "queryType": "count",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMembership.ts",
+    "function": "ensureUserMemberships",
+    "queryType": "create",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMembership.ts",
+    "function": "listUserWorkspaces",
+    "queryType": "findMany",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceMembership.ts",
+    "function": "userHasWorkspaceAccess",
+    "queryType": "findUnique",
+    "model": "workspaceMembership",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceResolve.ts",
+    "function": "resolveWorkspaceByPhoneNumberId",
+    "queryType": "findMany",
+    "model": "whatsAppPhoneAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceResolve.ts",
+    "function": "resolveWorkspaceByPhoneNumberId",
+    "queryType": "findFirst",
+    "model": "workspace",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceResolve.ts",
+    "function": "findInstagramAccountByEntryId",
+    "queryType": "findFirst",
+    "model": "instagramAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceResolve.ts",
+    "function": "findMessengerAccountByPageId",
+    "queryType": "findFirst",
+    "model": "messengerAccount",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceTokenUsage.ts",
+    "function": "resolveWorkspaceBillingMode",
+    "queryType": "findUnique",
+    "model": "workspaceAiProviderConfig",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceTokenUsage.ts",
+    "function": "recordWorkspaceTokenUsage",
+    "queryType": "create",
+    "model": "tokenUsageLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceTokenUsage.ts",
+    "function": "recordWorkspaceTokenUsage",
+    "queryType": "findUnique",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceTokenUsage.ts",
+    "function": "recordWorkspaceTokenUsage",
+    "queryType": "update",
+    "model": "agentChatConversation",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceTokenUsage.ts",
+    "function": "getWorkspaceTokenUsageBreakdown",
+    "queryType": "findMany",
+    "model": "tokenUsageLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  },
+  {
+    "file": "services/workspaceTokenUsage.ts",
+    "function": "getWorkspaceMonthlyTokenUsage",
+    "queryType": "aggregate",
+    "model": "tokenUsageLog",
+    "endpoint": "(service/worker — no direct HTTP)"
+  }
+]

@@ -222,11 +222,13 @@ export async function connectWorkspaceWhatsApp(
       wabaId,
       phoneNumber,
       displayName,
+      connectionMode: input.connectionMode || 'business_api',
     },
     update: {
       wabaId,
       phoneNumber,
       displayName,
+      ...(input.connectionMode ? { connectionMode: input.connectionMode } : {}),
     },
   });
 

@@ -109,11 +109,23 @@ export default async function internalRoutes(fastify: FastifyInstance) {
     if (!assertInternalAuth(request, reply)) return;
 
     const { callSessionId } = request.params as { callSessionId: string };
+    const latencySchema = z
+      .object({
+        sttMs: z.number().int().nonnegative().optional(),
+        llmMs: z.number().int().nonnegative().optional(),
+        ttsMs: z.number().int().nonnegative().optional(),
+        totalMs: z.number().int().nonnegative().optional(),
+      })
+      .optional();
+
     const parsed = z
       .object({
         role: z.enum(['customer', 'agent', 'user', 'assistant']),
         text: z.string().min(1),
         at: z.string().optional(),
+        turnId: z.string().optional(),
+        latency: latencySchema,
+        patch: z.boolean().optional(),
       })
       .safeParse(request.body);
     if (!parsed.success) {
@@ -129,6 +141,9 @@ export default async function internalRoutes(fastify: FastifyInstance) {
         role: parsed.data.role === 'user' ? 'customer' : parsed.data.role === 'assistant' ? 'agent' : parsed.data.role,
         text: parsed.data.text,
         at: parsed.data.at,
+        turnId: parsed.data.turnId,
+        latency: parsed.data.latency,
+        patch: parsed.data.patch,
       });
       return { ok: true };
     } catch (err) {

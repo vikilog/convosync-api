@@ -1,6 +1,9 @@
 import axios, { AxiosError } from 'axios';
 import OpenAI from 'openai';
+import { SpanStatusCode } from '@opentelemetry/api';
 import { config } from '../../../config.js';
+import { recordLlmUsage } from '../../../lib/otel-metrics.js';
+import { otelTracer } from '../../../lib/otel.js';
 import type { ResolvedAiProvider } from '../types/ai-provider.types.js';
 
 export type LlmMessage = {
@@ -38,16 +41,51 @@ export class LlmClient {
 
   async complete(
     messages: LlmMessage[],
-    options?: { maxTokens?: number; temperature?: number; jsonMode?: boolean }
+    options?: {
+      maxTokens?: number;
+      temperature?: number;
+      jsonMode?: boolean;
+      workspaceId?: string;
+    }
   ): Promise<{ content: string; usage: LlmCompletionUsage }> {
     const maxTokens = options?.maxTokens ?? this.resolved.maxOutputTokens;
     const temperature = options?.temperature ?? this.resolved.temperature;
 
-    if (this.resolved.provider === 'anthropic') {
-      return this.completeAnthropic(messages, maxTokens, temperature);
-    }
+    return otelTracer.startActiveSpan('llm.generate', async (span) => {
+      span.setAttribute('llm.model', this.resolved.model);
+      span.setAttribute('llm.provider', this.resolved.provider);
+      if (options?.workspaceId) span.setAttribute('workspaceId', options.workspaceId);
+      const t0 = Date.now();
 
-    return this.completeOpenAiCompatible(messages, maxTokens, temperature, options?.jsonMode);
+      try {
+        const result =
+          this.resolved.provider === 'anthropic'
+            ? await this.completeAnthropic(messages, maxTokens, temperature)
+            : await this.completeOpenAiCompatible(
+                messages,
+                maxTokens,
+                temperature,
+                options?.jsonMode
+              );
+
+        span.setAttribute('promptTokens', result.usage.promptTokens);
+        span.setAttribute('completionTokens', result.usage.completionTokens);
+        recordLlmUsage({
+          model: this.resolved.model,
+          promptTokens: result.usage.promptTokens,
+          completionTokens: result.usage.completionTokens,
+          durationMs: Date.now() - t0,
+          workspaceId: options?.workspaceId,
+        });
+        return result;
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : new Error(String(err)));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
   }
 
   /**
@@ -57,7 +95,12 @@ export class LlmClient {
   async completeJsonSchema(
     messages: LlmMessage[],
     jsonSchema: Record<string, unknown>,
-    options?: { name?: string; maxTokens?: number; temperature?: number }
+    options?: {
+      name?: string;
+      maxTokens?: number;
+      temperature?: number;
+      workspaceId?: string;
+    }
   ): Promise<{ content: string; usage: LlmCompletionUsage }> {
     if (this.resolved.provider === 'anthropic') {
       throw new LlmClientError(
@@ -71,46 +114,67 @@ export class LlmClient {
     const temperature = options?.temperature ?? this.resolved.temperature;
     const schemaName = options?.name || 'response';
 
-    const baseURL = this.resolved.baseUrl?.replace(/\/$/, '') || undefined;
-    const client = new OpenAI({
-      apiKey: this.resolved.apiKey,
-      baseURL: baseURL ? `${baseURL}/v1` : undefined,
-      timeout: config.openai.timeoutMs,
-    });
+    return otelTracer.startActiveSpan('llm.generate', async (span) => {
+      span.setAttribute('llm.model', this.resolved.model);
+      span.setAttribute('llm.provider', this.resolved.provider);
+      if (options?.workspaceId) span.setAttribute('workspaceId', options.workspaceId);
+      const t0 = Date.now();
 
-    try {
-      const response = await client.chat.completions.create({
-        model: this.resolved.model,
-        messages,
-        max_tokens: maxTokens,
-        temperature,
-        response_format: {
-          type: 'json_schema',
-          json_schema: {
-            name: schemaName,
-            strict: true,
-            schema: jsonSchema,
-          },
-        },
+      const baseURL = this.resolved.baseUrl?.replace(/\/$/, '') || undefined;
+      const client = new OpenAI({
+        apiKey: this.resolved.apiKey,
+        baseURL: baseURL ? `${baseURL}/v1` : undefined,
+        timeout: config.openai.timeoutMs,
       });
 
-      const content = response.choices[0]?.message?.content?.trim();
-      if (!content) {
-        throw new LlmClientError('Empty response from AI provider', 'LLM_EMPTY_RESPONSE', 502);
-      }
+      try {
+        const response = await client.chat.completions.create({
+          model: this.resolved.model,
+          messages,
+          max_tokens: maxTokens,
+          temperature,
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              name: schemaName,
+              strict: true,
+              schema: jsonSchema,
+            },
+          },
+        });
 
-      const usage = response.usage;
-      return {
-        content,
-        usage: {
-          promptTokens: usage?.prompt_tokens ?? 0,
-          completionTokens: usage?.completion_tokens ?? 0,
-          totalTokens: usage?.total_tokens ?? 0,
-        },
-      };
-    } catch (err) {
-      throw mapClientError(err);
-    }
+        const content = response.choices[0]?.message?.content?.trim();
+        if (!content) {
+          throw new LlmClientError('Empty response from AI provider', 'LLM_EMPTY_RESPONSE', 502);
+        }
+
+        const usage = response.usage;
+        const result = {
+          content,
+          usage: {
+            promptTokens: usage?.prompt_tokens ?? 0,
+            completionTokens: usage?.completion_tokens ?? 0,
+            totalTokens: usage?.total_tokens ?? 0,
+          },
+        };
+        span.setAttribute('promptTokens', result.usage.promptTokens);
+        span.setAttribute('completionTokens', result.usage.completionTokens);
+        recordLlmUsage({
+          model: this.resolved.model,
+          promptTokens: result.usage.promptTokens,
+          completionTokens: result.usage.completionTokens,
+          durationMs: Date.now() - t0,
+          workspaceId: options?.workspaceId,
+        });
+        return result;
+      } catch (err) {
+        span.recordException(err instanceof Error ? err : new Error(String(err)));
+        span.setStatus({ code: SpanStatusCode.ERROR });
+        throw mapClientError(err);
+      } finally {
+        span.end();
+      }
+    });
   }
 
   private async completeOpenAiCompatible(

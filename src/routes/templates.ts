@@ -356,7 +356,8 @@ export default async function templateRoutes(fastify: FastifyInstance) {
     }
 
     const body = templateBodySchema.partial().parse(request.body);
-    const { submitToMeta: _s, variableSamples: _v, ...rest } = body;
+    // Meta-only fields — not on Template model
+    const { submitToMeta: _s, variableSamples: _v, buttonUrlSample: _b, ...rest } = body;
     const data = scopedUpdateData(rest as Record<string, unknown>);
 
     if (typeof rest.name === 'string') {
@@ -372,6 +373,42 @@ export default async function templateRoutes(fastify: FastifyInstance) {
       data,
     });
     return template;
+  });
+
+  fastify.post('/:id/refresh-status', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const existing = await prisma.template.findFirst({ where: { id, workspaceId } });
+    if (!existing) return reply.code(404).send({ error: 'Template not found' });
+
+    try {
+      const creds = await getWorkspaceWhatsAppCredentials(workspaceId);
+      const metaList = await fetchMetaMessageTemplates(creds);
+      const mt = metaList.find((t) => t.name === existing.name);
+      if (!mt) {
+        return {
+          ...existing,
+          metaFound: false,
+          message:
+            existing.status === 'draft'
+              ? 'Not on Meta yet — submit this template first.'
+              : 'No matching template found on Meta for this name.',
+        };
+      }
+      const template = await prisma.template.update({
+        where: { id },
+        data: {
+          status: metaStatusToSystem(mt.status),
+          category: normalizeCategory(mt.category),
+          language: mt.language || existing.language,
+          rejectionReason: mt.rejected_reason ?? null,
+          waTemplateId: mt.id ?? existing.waTemplateId,
+        },
+      });
+      return { ...template, metaFound: true };
+    } catch (err) {
+      return reply.code(400).send({ error: metaErrorMessage(err) });
+    }
   });
 
   fastify.post('/:id/submit', auth, async (request, reply) => {

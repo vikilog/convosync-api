@@ -2,6 +2,7 @@
  * Fire-and-forget trigger for Pipecat voice agent when a call link is created.
  * Only runs if the conversation is assigned to an AiAgent with voiceAgentEnabled.
  */
+import { context, propagation } from '@opentelemetry/api';
 import type { CallSession } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { config } from '../../config.js';
@@ -23,6 +24,8 @@ export type VoiceAgentCandidate = {
   id: string;
   name: string;
   voiceSttProvider: string;
+  voiceTtsProvider: string;
+  voiceTtsVoiceId: string | null;
 };
 
 /** Sync check used at call-create so CallPage gets currentHandler=ai before open. */
@@ -41,13 +44,21 @@ export async function findVoiceAgentForConversation(
       workspaceId,
       voiceAgentEnabled: true,
     },
-    select: { id: true, name: true, voiceSttProvider: true },
+    select: {
+      id: true,
+      name: true,
+      voiceSttProvider: true,
+      voiceTtsProvider: true,
+      voiceTtsVoiceId: true,
+    },
   });
   if (!agent) return null;
   return {
     id: agent.id,
     name: agent.name,
     voiceSttProvider: agent.voiceSttProvider || 'cartesia',
+    voiceTtsProvider: agent.voiceTtsProvider || 'cartesia',
+    voiceTtsVoiceId: agent.voiceTtsVoiceId ?? null,
   };
 }
 
@@ -108,12 +119,16 @@ export async function maybeStartVoiceAgentForCall(
     callSessionId: call.id,
     livekitUrl: config.livekit.url || undefined,
     sttProvider: agent.voiceSttProvider || 'cartesia',
+    ttsProvider: agent.voiceTtsProvider || 'cartesia',
+    ttsVoiceId: agent.voiceTtsVoiceId || undefined,
   };
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (config.voiceAgent.internalSecret) {
     headers['X-ConvoSync-Internal'] = config.voiceAgent.internalSecret;
   }
+  // W3C Trace Context — Python voice-agent continues the same Tempo trace
+  propagation.inject(context.active(), headers);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.voiceAgent.startTimeoutMs);

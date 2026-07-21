@@ -50,12 +50,8 @@ export const sendEmailSchema = z.object({
 );
 
 export const upsertEmailTemplateSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1)
-    .max(120)
-    .regex(/^[a-z0-9_]+$/i, { message: 'Use letters, numbers, and underscores only' }),
+  // Internal label only (not Meta) — spaces/hyphens OK
+  name: z.string().trim().min(1).max(120),
   subject: z.string().min(1).max(998),
   htmlBody: z.string().min(1),
   textBody: z.string().optional(),

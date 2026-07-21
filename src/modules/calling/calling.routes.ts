@@ -16,10 +16,12 @@ import {
   getOrRefreshGuestUrl,
   listCallsForWorkspace,
   markCallConnected,
+  markGuestCallConnected,
   mintAgentCallToken,
   mintGuestCallToken,
   mintListenInCallToken,
   publicCallPayload,
+  publicCallPayloadEnriched,
   resendGuestCallLink,
   resolveGuestShortCode,
   saveCallAnalytics,
@@ -103,11 +105,28 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
+  fastify.post('/calls/guest/connected', async (request, reply) => {
+    try {
+      const body = z.object({ token: z.string().min(10) }).parse(request.body);
+      const call = await markGuestCallConnected(body.token);
+      return { call: await publicCallPayloadEnriched(call) };
+    } catch (err) {
+      if (err instanceof CallingError) {
+        return reply.code(err.statusCode).send({ error: err.message, code: err.code });
+      }
+      if (err instanceof z.ZodError) {
+        return reply.code(400).send({ error: 'Invalid request' });
+      }
+      request.log.error(err);
+      return reply.code(500).send({ error: 'Failed to mark guest connected' });
+    }
+  });
+
   fastify.post('/calls/guest/end', async (request, reply) => {
     try {
       const body = z.object({ token: z.string().min(10) }).parse(request.body);
       const call = await endCallAsGuest(body.token);
-      return { call: publicCallPayload(call) };
+      return { call: await publicCallPayloadEnriched(call) };
     } catch (err) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
@@ -136,7 +155,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
       });
 
       return reply.code(201).send({
-        call: publicCallPayload(call),
+        call: await publicCallPayloadEnriched(call),
         guestUrl,
         callPagePath: `/call/${call.id}`,
       });
@@ -194,7 +213,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
       });
 
       return reply.code(201).send({
-        call: publicCallPayload(call),
+        call: await publicCallPayloadEnriched(call),
         queuedTranscript: true,
       });
     } catch (err) {
@@ -259,7 +278,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
       if (!call) {
         return reply.code(404).send({ error: 'Call not found', code: 'call_not_found' });
       }
-      return { call: publicCallPayload(call) };
+      return { call: await publicCallPayloadEnriched(call) };
     } catch (err) {
       request.log.error(err);
       return reply.code(500).send({ error: 'Failed to get call' });
@@ -276,7 +295,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
         callId,
         userId: ids.userId,
       });
-      return { call: publicCallPayload(call) };
+      return { call: await publicCallPayloadEnriched(call) };
     } catch (err) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
@@ -296,7 +315,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
         callId,
         userId: ids.userId,
       });
-      return { call: publicCallPayload(call) };
+      return { call: await publicCallPayloadEnriched(call) };
     } catch (err) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
@@ -316,7 +335,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
         callId,
         userId: ids.userId,
       });
-      return { call: publicCallPayload(call) };
+      return { call: await publicCallPayloadEnriched(call) };
     } catch (err) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
@@ -336,7 +355,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
         callId,
         userId: ids.userId,
       });
-      return { call: publicCallPayload(call) };
+      return { call: await publicCallPayloadEnriched(call) };
     } catch (err) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
@@ -410,7 +429,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
         userId: ids.userId,
       });
       return {
-        call: publicCallPayload(result.call),
+        call: await publicCallPayloadEnriched(result.call),
         token: result.token,
         url: result.url,
         expiresInSeconds: result.expiresInSeconds,
@@ -454,7 +473,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
         callId,
         analytics: body,
       });
-      return { call: publicCallPayload(call) };
+      return { call: await publicCallPayloadEnriched(call) };
     } catch (err) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
@@ -494,7 +513,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
         workspaceId: ids.workspaceId,
         callId,
       });
-      return { call: publicCallPayload(call) };
+      return { call: await publicCallPayloadEnriched(call) };
     } catch (err) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });

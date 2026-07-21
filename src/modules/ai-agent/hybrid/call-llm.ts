@@ -16,6 +16,7 @@ export type LlmCallResult = {
 /** RAG: Claude/OpenAI with only the matched Pinecone chunks as knowledge. */
 export async function callLlmWithRagContext(params: {
   llm: LlmClient;
+  workspaceId?: string;
   agentName: string;
   toneOfVoice: string;
   brandBackground: string | null;
@@ -49,7 +50,7 @@ RULES:
       ...params.history.slice(-config.ai.maxHistoryMessages),
       { role: 'user', content: params.message },
     ],
-    { maxTokens, temperature: 0.5 }
+    { maxTokens, temperature: 0.5, workspaceId: params.workspaceId }
   );
 
   return {
@@ -89,7 +90,7 @@ export async function callLlmFull(params: {
       ...context.messages,
       { role: 'user', content: params.message },
     ],
-    { maxTokens, temperature: 0.7 }
+    { maxTokens, temperature: 0.7, workspaceId: params.workspaceId }
   );
 
   return {

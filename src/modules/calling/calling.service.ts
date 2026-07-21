@@ -34,6 +34,7 @@ import {
 } from './guest-token.service.js';
 import { putObject, getPresignedGetUrl, isObjectStorageEnabled, deleteObject } from '../../services/objectStorage.js';
 import { enqueueCallTranscript } from '../../queue/call-transcript.queue.js';
+import { recordCallDurationSeconds, recordCallEvent } from '../../lib/otel-metrics.js';
 import { getWorkspaceWhatsAppCredentials } from '../../services/whatsappCredentials.js';
 import { getWorkspaceInstagramCredentials } from '../../services/instagramCredentials.js';
 import { sendWhatsAppMessage } from '../../services/whatsapp.js';
@@ -131,6 +132,128 @@ function publicCallPayload(call: CallSession) {
     takenOverByUserId: call.takenOverByUserId ?? null,
     createdAt: call.createdAt,
   };
+}
+
+export type CallHandlerPresentation = {
+  type: 'ai' | 'human' | 'none';
+  name: string | null;
+  avatarUrl: string | null;
+};
+
+export type CallAgentPresentation = {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+};
+
+export type CallContactPresentation = {
+  id: string;
+  name: string;
+  phone: string;
+  avatarUrl: string | null;
+};
+
+async function resolveCallPresentation(call: CallSession): Promise<{
+  handler: CallHandlerPresentation;
+  aiAgent: CallAgentPresentation | null;
+  humanAgent: CallAgentPresentation | null;
+  contact: CallContactPresentation | null;
+}> {
+  const [conversation, contact, humanUser] = await Promise.all([
+    call.conversationId
+      ? prisma.conversation.findFirst({
+          where: { id: call.conversationId, workspaceId: call.workspaceId },
+          select: { assigneeType: true, assigneeId: true },
+        })
+      : Promise.resolve(null),
+    call.contactId
+      ? prisma.contact.findFirst({
+          where: { id: call.contactId, workspaceId: call.workspaceId },
+          select: { id: true, name: true, phone: true, avatar: true },
+        })
+      : Promise.resolve(null),
+    call.takenOverByUserId
+      ? prisma.user.findFirst({
+          where: { id: call.takenOverByUserId },
+          select: { id: true, name: true, avatar: true },
+        })
+      : Promise.resolve(null),
+  ]);
+
+  let aiAgent: CallAgentPresentation | null = null;
+  if (conversation?.assigneeType === 'ai_agent' && conversation.assigneeId) {
+    const agent = await prisma.aiAgent.findFirst({
+      where: { id: conversation.assigneeId, workspaceId: call.workspaceId },
+      select: { id: true, name: true, avatarUrl: true },
+    });
+    if (agent) {
+      aiAgent = {
+        id: agent.id,
+        name: agent.name,
+        avatarUrl: agent.avatarUrl ?? null,
+      };
+    }
+  }
+
+  const humanAgent: CallAgentPresentation | null = humanUser
+    ? {
+        id: humanUser.id,
+        name: humanUser.name,
+        avatarUrl: humanUser.avatar ?? null,
+      }
+    : null;
+
+  const handlerType = (call.currentHandler || 'none') as 'ai' | 'human' | 'none';
+  let handler: CallHandlerPresentation = { type: 'none', name: null, avatarUrl: null };
+  if (handlerType === 'human' && humanAgent) {
+    handler = {
+      type: 'human',
+      name: humanAgent.name,
+      avatarUrl: humanAgent.avatarUrl,
+    };
+  } else if (handlerType === 'ai' && aiAgent) {
+    handler = {
+      type: 'ai',
+      name: aiAgent.name,
+      avatarUrl: aiAgent.avatarUrl,
+    };
+  }
+
+  return {
+    handler,
+    aiAgent,
+    humanAgent,
+    contact: contact
+      ? {
+          id: contact.id,
+          name: contact.name,
+          phone: contact.phone,
+          avatarUrl: contact.avatar ?? null,
+        }
+      : null,
+  };
+}
+
+/** Call payload for API + Socket.IO, including handler/contact avatars. */
+async function publicCallPayloadEnriched(call: CallSession) {
+  const presentation = await resolveCallPresentation(call);
+  return {
+    ...publicCallPayload(call),
+    handler: presentation.handler,
+    aiAgent: presentation.aiAgent,
+    humanAgent: presentation.humanAgent,
+    contact: presentation.contact,
+  };
+}
+
+async function emitCallSession(
+  workspaceId: string,
+  event: string,
+  call: CallSession,
+  extra?: Record<string, unknown>
+) {
+  const payload = { ...(await publicCallPayloadEnriched(call)), ...extra };
+  emitCall(workspaceId, event, payload);
 }
 
 async function transitionCall(
@@ -309,15 +432,9 @@ export async function createAndRingCall(input: {
     });
   }
 
+  const enriched = await publicCallPayloadEnriched(call);
   const payload = {
-    ...publicCallPayload(call),
-    contact: conversation.contact
-      ? {
-          id: conversation.contact.id,
-          name: conversation.contact.name,
-          phone: conversation.contact.phone,
-        }
-      : null,
+    ...enriched,
     workspaceName: conversation.workspace.name,
     guestUrl,
   };
@@ -338,8 +455,7 @@ export async function createAndRingCall(input: {
       where: { id: call.id },
       data: { currentHandler: 'ai' },
     });
-    emitCall(input.workspaceId, CALL_SOCKET_EVENTS.handlerChanged, {
-      ...publicCallPayload(call),
+    await emitCallSession(input.workspaceId, CALL_SOCKET_EVENTS.handlerChanged, call, {
       previousHandler: 'none',
     });
     void maybeStartVoiceAgentForCall(
@@ -352,6 +468,10 @@ export async function createAndRingCall(input: {
       },
       voiceAgent
     ).catch((err) => console.warn('[calling] voice agent trigger failed', call.id, err));
+    recordCallEvent('ai_joined', {
+      workspaceId: input.workspaceId,
+      direction: input.direction,
+    });
   }
 
   // Auto-send short guest link on the conversation channel (best-effort)
@@ -374,6 +494,10 @@ export async function createAndRingCall(input: {
     }
   }
 
+  recordCallEvent('started', {
+    workspaceId: input.workspaceId,
+    direction: input.direction,
+  });
   return { call, guestUrl, guestToken };
 }
 
@@ -450,7 +574,15 @@ export async function finalizeCall(
           : CALL_SOCKET_EVENTS.ended;
 
   const fresh = (await prisma.callSession.findUnique({ where: { id: updated.id } })) ?? updated;
-  emitCall(fresh.workspaceId, event, publicCallPayload(fresh));
+  void emitCallSession(fresh.workspaceId, event, fresh);
+
+  if (to === 'missed') recordCallEvent('missed', { workspaceId: fresh.workspaceId });
+  else if (to === 'failed') recordCallEvent('failed', { workspaceId: fresh.workspaceId });
+  else recordCallEvent('ended', { workspaceId: fresh.workspaceId });
+  if (durationSeconds != null) {
+    recordCallDurationSeconds(durationSeconds, { workspaceId: fresh.workspaceId });
+  }
+
   return fresh;
 }
 
@@ -634,7 +766,7 @@ export async function acceptCall(input: {
     update: { userId: input.userId },
   });
 
-  emitCall(input.workspaceId, CALL_SOCKET_EVENTS.accepted, publicCallPayload(updated));
+  void emitCallSession(input.workspaceId, CALL_SOCKET_EVENTS.accepted, updated);
   return updated;
 }
 
@@ -692,8 +824,7 @@ export async function declineCall(input: {
     },
   });
 
-  emitCall(input.workspaceId, CALL_SOCKET_EVENTS.declined, {
-    ...publicCallPayload(updated),
+  void emitCallSession(input.workspaceId, CALL_SOCKET_EVENTS.declined, updated, {
     declinedByUserId: input.userId,
     soft: true,
   });
@@ -753,14 +884,15 @@ export async function markCallConnected(input: {
     throw new CallingError('Only the accepting agent can mark connected', 403, 'forbidden');
   }
 
-  const connectedAt = new Date();
+  // ponytail: connectedAt is set when the customer joins LiveKit (markGuestCallConnected),
+  // not when the agent joins — keeps duration in sync across agent + guest clients.
   const updated = await transitionCall(
     call,
     'connected',
-    { connectedAt },
+    {},
     { reason: 'agent_joined_livekit', byUserId: input.userId }
   );
-  emitCall(input.workspaceId, CALL_SOCKET_EVENTS.connected, publicCallPayload(updated));
+  void emitCallSession(input.workspaceId, CALL_SOCKET_EVENTS.connected, updated);
   return updated;
 }
 
@@ -859,10 +991,10 @@ export async function takeOverCall(input: {
     },
   });
 
-  emitCall(input.workspaceId, CALL_SOCKET_EVENTS.handlerChanged, {
-    ...publicCallPayload(updated),
+  void emitCallSession(input.workspaceId, CALL_SOCKET_EVENTS.handlerChanged, updated, {
     previousHandler: 'ai',
   });
+  recordCallEvent('take_over', { workspaceId: input.workspaceId });
 
   // Fire-and-forget LiveKit signal + force-remove (do not block token mint forever)
   void signalAiAgentTakeOver({
@@ -905,7 +1037,7 @@ export async function getGuestCallSession(guestToken: string) {
   }
   if (['ended', 'missed', 'declined', 'failed'].includes(call.status)) {
     return {
-      call: publicCallPayload(call),
+      call: await publicCallPayloadEnriched(call),
       role: 'customer' as const,
       workspaceName: call.workspace.name,
       contactName: call.contact?.name ?? null,
@@ -913,12 +1045,99 @@ export async function getGuestCallSession(guestToken: string) {
     };
   }
   return {
-    call: publicCallPayload(call),
+    call: await publicCallPayloadEnriched(call),
     role: 'customer' as const,
     workspaceName: call.workspace.name,
     contactName: call.contact?.name ?? null,
     ended: false,
   };
+}
+
+/** Customer actually connected to LiveKit — authoritative connectedAt for all clients. */
+export async function markGuestCallConnected(guestToken: string): Promise<CallSession> {
+  const claims = verifyCallGuestToken(guestToken);
+  let call = await prisma.callSession.findFirst({
+    where: { id: claims.callId, workspaceId: claims.workspaceId },
+  });
+  if (!call) throw new CallingError('Call not found', 404, 'call_not_found');
+  if (call.guestTokenJti && call.guestTokenJti !== claims.jti) {
+    throw new CallingError('This call link is no longer valid', 401, 'guest_token_revoked');
+  }
+  if (!['ringing', 'accepted', 'connected'].includes(call.status)) {
+    throw new CallingError('Call is not active', 409, 'call_not_joinable');
+  }
+
+  if (call.connectedAt) return call;
+
+  const connectedAt = new Date();
+  if (!call.guestJoinedAt) {
+    call = await prisma.callSession.update({
+      where: { id: call.id },
+      data: { guestJoinedAt: connectedAt },
+    });
+  }
+
+  if (asStatus(call.status) === 'ringing') {
+    call = await transitionCall(
+      call,
+      'accepted',
+      { acceptedAt: connectedAt },
+      { reason: 'customer_joined' }
+    );
+  }
+  if (asStatus(call.status) === 'accepted') {
+    call = await transitionCall(
+      call,
+      'connected',
+      { connectedAt },
+      { reason: 'customer_joined' }
+    );
+  } else if (asStatus(call.status) === 'connected' && !call.connectedAt) {
+    call = await prisma.callSession.update({
+      where: { id: call.id },
+      data: { connectedAt },
+    });
+  }
+
+  void emitCallSession(call.workspaceId, CALL_SOCKET_EVENTS.participantJoined, call, {
+    role: 'customer' as const,
+    contactId: claims.contactId,
+  });
+  void emitCallSession(call.workspaceId, CALL_SOCKET_EVENTS.connected, call);
+
+  if (config.livekit.enabled && !call.recordingEgressId) {
+    try {
+      const rec = await startCallRecording({
+        roomName: call.roomName,
+        workspaceId: call.workspaceId,
+        callId: call.id,
+      });
+      call = await prisma.callSession.update({
+        where: { id: call.id },
+        data: {
+          recordingStatus: 'recording',
+          recordingEgressId: rec.egressId,
+          recordingStorageKey: rec.storageKey,
+          recordingStartedAt: new Date(),
+          recordingCodec: 'ogg',
+        },
+      });
+      void emitCallSession(call.workspaceId, CALL_SOCKET_EVENTS.connected, call, {
+        recordingStarted: true,
+      });
+    } catch (err) {
+      console.warn('[calling] start recording failed', call.id, err);
+      await prisma.callSession.update({
+        where: { id: call.id },
+        data: {
+          recordingStatus: 'failed',
+          recordingError: err instanceof Error ? err.message : 'recording_start_failed',
+        },
+      });
+    }
+  }
+
+  return call;
 }
 
 export async function mintGuestCallToken(guestToken: string) {
@@ -934,7 +1153,7 @@ export async function mintGuestCallToken(guestToken: string) {
     throw new CallingError('Call is not joinable', 409, 'call_not_joinable');
   }
 
-  // First customer Join Call = call actually starts (connected + sockets)
+  // Guest token mint = intent to join; connectedAt is set after LiveKit room.connect succeeds.
   if (!call.guestJoinedAt) {
     const guestJoinedAt = new Date();
     let current = await prisma.callSession.update({
@@ -949,56 +1168,6 @@ export async function mintGuestCallToken(guestToken: string) {
         { acceptedAt: guestJoinedAt },
         { reason: 'customer_joining' }
       );
-    }
-    if (asStatus(current.status) === 'accepted') {
-      current = await transitionCall(
-        current,
-        'connected',
-        { connectedAt: guestJoinedAt },
-        { reason: 'customer_joined' }
-      );
-    }
-
-    const payload = {
-      ...publicCallPayload(current),
-      role: 'customer' as const,
-      contactId: claims.contactId,
-    };
-    emitCall(current.workspaceId, CALL_SOCKET_EVENTS.participantJoined, payload);
-    emitCall(current.workspaceId, CALL_SOCKET_EVENTS.connected, publicCallPayload(current));
-
-    // Start audio recording once the customer is in (room has both sides shortly after)
-    if (config.livekit.enabled && !current.recordingEgressId) {
-      try {
-        const rec = await startCallRecording({
-          roomName: current.roomName,
-          workspaceId: current.workspaceId,
-          callId: current.id,
-        });
-        current = await prisma.callSession.update({
-          where: { id: current.id },
-          data: {
-            recordingStatus: 'recording',
-            recordingEgressId: rec.egressId,
-            recordingStorageKey: rec.storageKey,
-            recordingStartedAt: new Date(),
-            recordingCodec: 'ogg',
-          },
-        });
-        emitCall(current.workspaceId, CALL_SOCKET_EVENTS.connected, {
-          ...publicCallPayload(current),
-          recordingStarted: true,
-        });
-      } catch (err) {
-        console.warn('[calling] start recording failed', current.id, err);
-        await prisma.callSession.update({
-          where: { id: current.id },
-          data: {
-            recordingStatus: 'failed',
-            recordingError: err instanceof Error ? err.message : 'recording_start_failed',
-          },
-        });
-      }
     }
   }
 
@@ -1513,4 +1682,4 @@ export async function expireStaleCallsForWorkspace(workspaceId?: string): Promis
   return n;
 }
 
-export { publicCallPayload };
+export { publicCallPayload, publicCallPayloadEnriched };

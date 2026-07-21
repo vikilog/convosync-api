@@ -12,6 +12,11 @@ import {
   subscribeWhatsAppWebhooks,
 } from '../services/whatsappWebhookSubscribe.js';
 import { purgeWhatsAppPhoneAccountData } from '../services/whatsappDisconnectCleanup.service.js';
+import {
+  getWhatsAppBusinessProfile,
+  updateWhatsAppBusinessProfile,
+  WHATSAPP_PROFILE_VERTICALS,
+} from '../services/whatsappBusinessProfile.js';
 
 export default async function whatsappRoutes(fastify: FastifyInstance) {
   const auth = companyAuth;
@@ -193,6 +198,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
         wabaId: a.wabaId,
         phoneNumber: a.phoneNumber,
         displayName: a.displayName,
+        connectionMode: a.connectionMode || 'business_api',
         label: a.displayName || 'WhatsApp Business Account',
         status: 'Connected',
         verified: true,
@@ -237,7 +243,9 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
         phoneNumber: a.phoneNumber,
         displayName: a.displayName,
         wabaId: a.wabaId,
+        connectionMode: a.connectionMode || 'business_api',
       })),
+      coexistenceConnected: accounts.some((a) => a.connectionMode === 'app_coexistence'),
       redirectUri: config.meta.embeddedRedirectUri,
       oauthRedirectUri: config.meta.oauthRedirectUri,
       backendCallbackUri: config.meta.oauthBackendCallbackUri,
@@ -292,6 +300,56 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'WhatsApp not connected';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  fastify.get('/accounts/:phoneNumberId/business-profile', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { phoneNumberId } = request.params as { phoneNumberId: string };
+    if (!phoneNumberId?.trim()) {
+      return reply.code(400).send({ error: 'phoneNumberId is required' });
+    }
+    try {
+      const data = await getWhatsAppBusinessProfile(workspaceId, phoneNumberId.trim());
+      return { ...data, verticals: WHATSAPP_PROFILE_VERTICALS };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load business profile';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  fastify.post('/accounts/:phoneNumberId/business-profile', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { phoneNumberId } = request.params as { phoneNumberId: string };
+    const body = (request.body || {}) as {
+      about?: string;
+      address?: string;
+      description?: string;
+      email?: string;
+      websites?: string[];
+      vertical?: string;
+    };
+    if (!phoneNumberId?.trim()) {
+      return reply.code(400).send({ error: 'phoneNumberId is required' });
+    }
+    try {
+      const result = await updateWhatsAppBusinessProfile(workspaceId, phoneNumberId.trim(), body);
+      // Refresh local displayName snapshot when Meta verified name is available after save
+      try {
+        const refreshed = await getWhatsAppBusinessProfile(workspaceId, phoneNumberId.trim());
+        if (refreshed.verifiedName) {
+          await prisma.whatsAppPhoneAccount.updateMany({
+            where: { workspaceId, phoneNumberId: phoneNumberId.trim() },
+            data: { displayName: refreshed.verifiedName },
+          });
+        }
+      } catch {
+        /* non-fatal */
+      }
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update business profile';
       return reply.code(400).send({ error: message });
     }
   });

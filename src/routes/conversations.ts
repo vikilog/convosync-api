@@ -172,7 +172,10 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
   fastify.post('/open', auth, async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
     const access = await resolveMembershipAccess(userId, workspaceId);
-    const { contactId } = request.body as { contactId?: string };
+    const { contactId, phoneNumberId } = request.body as {
+      contactId?: string;
+      phoneNumberId?: string;
+    };
 
     if (!contactId) {
       return reply.code(400).send({ error: 'contactId is required' });
@@ -192,27 +195,38 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
       channel = 'messenger';
     }
 
-    const channelAccountId =
-      channel === 'instagram'
-        ? (
-            await prisma.instagramAccount.findFirst({
-              where: { workspaceId },
-              orderBy: { createdAt: 'desc' },
-            })
-          )?.pageId
-        : channel === 'messenger'
-          ? (
-              await prisma.messengerAccount.findFirst({
-                where: { workspaceId },
-                orderBy: { createdAt: 'desc' },
-              })
-            )?.pageId
-          : (
-              await prisma.workspace.findUnique({
-                where: { id: workspaceId },
-                select: { waNumberId: true },
-              })
-            )?.waNumberId;
+    let channelAccountId: string | null | undefined;
+    if (channel === 'instagram') {
+      channelAccountId = (
+        await prisma.instagramAccount.findFirst({
+          where: { workspaceId },
+          orderBy: { createdAt: 'desc' },
+        })
+      )?.pageId;
+    } else if (channel === 'messenger') {
+      channelAccountId = (
+        await prisma.messengerAccount.findFirst({
+          where: { workspaceId },
+          orderBy: { createdAt: 'desc' },
+        })
+      )?.pageId;
+    } else if (phoneNumberId?.trim()) {
+      const account = await prisma.whatsAppPhoneAccount.findFirst({
+        where: { workspaceId, phoneNumberId: phoneNumberId.trim() },
+        select: { phoneNumberId: true },
+      });
+      if (!account) {
+        return reply.code(400).send({ error: 'WhatsApp number not found for this workspace' });
+      }
+      channelAccountId = account.phoneNumberId;
+    } else {
+      channelAccountId = (
+        await prisma.workspace.findUnique({
+          where: { id: workspaceId },
+          select: { waNumberId: true },
+        })
+      )?.waNumberId;
+    }
 
     if (
       !conversationMatchesInboxScope(

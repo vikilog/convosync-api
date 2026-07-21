@@ -116,35 +116,12 @@ export async function findOrReopenConversationForInbound(
 }
 
 /**
- * Outbound WhatsApp (Pay, campaigns): attach to the contact's active inbox thread when possible,
- * instead of creating a parallel conversation scoped only by phone_number_id.
+ * Outbound WhatsApp (Pay, campaigns): same account-scoped thread as inbound.
+ * Do not steal another connected number's open conversation.
  */
 export async function resolveWhatsAppConversationForOutbound(
   params: FindOrReopenParams
 ): Promise<{ conversation: Conversation; reopened: boolean; created: boolean }> {
-  const channel = params.channel ?? 'whatsapp';
-
-  const open = await prisma.conversation.findFirst({
-    where: {
-      contactId: params.contactId,
-      workspaceId: params.workspaceId,
-      channel,
-      status: { not: 'resolved' },
-    },
-    orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
-  });
-
-  if (open) {
-    if (params.channelAccountId && open.channelAccountId !== params.channelAccountId) {
-      const conversation = await prisma.conversation.update({
-        where: { id: open.id },
-        data: { channelAccountId: params.channelAccountId },
-      });
-      return { conversation, reopened: false, created: false };
-    }
-    return { conversation: open, reopened: false, created: false };
-  }
-
   return findOrReopenConversationForInbound(params);
 }
 
@@ -209,7 +186,7 @@ export function dedupeConversationsByContact<
   });
 }
 
-/** One inbox row per WhatsApp phone (collapses +91… vs local forms). */
+/** One inbox row per customer phone + WhatsApp business number (phone_number_id). */
 export function whatsappInboxDedupeKey(conv: {
   id?: string;
   channel?: string;
@@ -222,8 +199,12 @@ export function whatsappInboxDedupeKey(conv: {
 
   const contactPhone = conv.contact?.phone ?? '';
   if (contactPhone && !contactPhone.startsWith('lid:') && !contactPhone.startsWith('group:')) {
-    const key = whatsappInboxPhoneKey(contactPhone);
-    if (key) return key;
+    const phoneKey = whatsappInboxPhoneKey(contactPhone);
+    if (phoneKey) {
+      const accountId = (conv.channelAccountId || '').trim();
+      // Scope by business number so Cloud API + Coexistence lines stay separate.
+      return accountId ? `${phoneKey}:${accountId}` : phoneKey;
+    }
   }
 
   return conversationInboxKey(conv);

@@ -1,4 +1,5 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
+import { endPhase, enterRequestTiming, startPhase } from '../lib/request-timing.js';
 import { getUserTokenVersion, isJtiBlacklisted } from '../services/userSecurity.js';
 
 export interface JwtUser {
@@ -22,35 +23,41 @@ function isSessionUserToken(user: JwtUser): boolean {
 }
 
 export async function authenticate(request: FastifyRequest, reply: FastifyReply) {
+  if (request.__perfStore) enterRequestTiming(request.__perfStore);
+  startPhase('auth');
   try {
-    await request.jwtVerify();
-  } catch {
-    return reply.code(401).send({ error: 'Unauthorized' });
-  }
-
-  if (reply.sent) return;
-
-  const user = getJwtUser(request);
-  if (!isSessionUserToken(user) || !user.userId) return;
-
-  // Durable gate: tokenVersion (Postgres, Redis-cached 5m)
-  try {
-    const currentVersion = await getUserTokenVersion(user.userId);
-    const claimVersion = user.tokenVersion;
-    if (typeof claimVersion !== 'number' || claimVersion !== currentVersion) {
-      return reply.code(401).send({ error: 'Session invalidated' });
+    try {
+      await request.jwtVerify();
+    } catch {
+      return reply.code(401).send({ error: 'Unauthorized' });
     }
-  } catch (err) {
-    request.log.error({ err }, 'tokenVersion check failed');
-    return reply.code(401).send({ error: 'Unauthorized' });
-  }
 
-  // Soft gate: jti blacklist (fail-open if Redis down)
-  if (user.jti) {
-    const revoked = await isJtiBlacklisted(user.jti);
-    if (revoked) {
-      return reply.code(401).send({ error: 'Token has been revoked' });
+    if (reply.sent) return;
+
+    const user = getJwtUser(request);
+    if (!isSessionUserToken(user) || !user.userId) return;
+
+    // Durable gate: tokenVersion (Postgres, Redis-cached 5m)
+    try {
+      const currentVersion = await getUserTokenVersion(user.userId);
+      const claimVersion = user.tokenVersion;
+      if (typeof claimVersion !== 'number' || claimVersion !== currentVersion) {
+        return reply.code(401).send({ error: 'Session invalidated' });
+      }
+    } catch (err) {
+      request.log.error({ err }, 'tokenVersion check failed');
+      return reply.code(401).send({ error: 'Unauthorized' });
     }
+
+    // Soft gate: jti blacklist (fail-open if Redis down)
+    if (user.jti) {
+      const revoked = await isJtiBlacklisted(user.jti);
+      if (revoked) {
+        return reply.code(401).send({ error: 'Token has been revoked' });
+      }
+    }
+  } finally {
+    endPhase('auth');
   }
 }
 

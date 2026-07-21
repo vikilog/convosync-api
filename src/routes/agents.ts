@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import multipart from '@fastify/multipart';
 import { z } from 'zod';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
@@ -12,6 +13,11 @@ import { invalidateWorkspaceCache } from '../modules/ai-agent/hybrid/redis-cache
 import { getRetrievalStats } from '../modules/ai-agent/hybrid/analytics.js';
 import { DEFAULT_AGENT_ACTIONS } from '../constants/agent-actions.js';
 import { assertAiAgentCreateAllowed } from '../services/planUsageGuards.js';
+import {
+  PreviewSttError,
+  synthesizePreviewSpeech,
+  transcribePreviewAudio,
+} from '../services/preview-stt.service.js';
 
 const AGENT_CATEGORY = z.enum(['ai_agent', 'responsive', 'rule_based']);
 const INTENT_FALLBACK = z.enum(['silent', 'automated_response', 'transfer_human']);
@@ -49,6 +55,8 @@ const profileUpdateSchema = z.object({
   isEnabled: z.boolean().optional(),
   voiceAgentEnabled: z.boolean().optional(),
   voiceSttProvider: z.string().min(1).optional(),
+  voiceTtsProvider: z.string().min(1).optional(),
+  voiceTtsVoiceId: z.string().min(1).nullable().optional(),
   flowDefinition: z.record(z.unknown()).optional(),
 });
 
@@ -88,6 +96,10 @@ const DEFAULT_PROMPTS: Record<z.infer<typeof AGENT_CATEGORY>, string> = {
 
 export default async function agentRoutes(fastify: FastifyInstance) {
   const auth = companyAuth;
+
+  await fastify.register(multipart, {
+    limits: { fileSize: 12 * 1024 * 1024, files: 1 },
+  });
 
   fastify.get('/', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
@@ -223,6 +235,10 @@ export default async function agentRoutes(fastify: FastifyInstance) {
         conversationCloseWaitMins: agent.conversationCloseWaitMins,
         flowDefinition: agent.flowDefinition ?? undefined,
         isEnabled: false,
+        voiceAgentEnabled: agent.voiceAgentEnabled,
+        voiceSttProvider: agent.voiceSttProvider,
+        voiceTtsProvider: agent.voiceTtsProvider,
+        voiceTtsVoiceId: agent.voiceTtsVoiceId,
         flowsCount: agent.flowsCount,
         workspaceId,
       },
@@ -272,6 +288,98 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       const message = error instanceof Error ? error.message : 'Chat failed';
       fastify.log.error(error);
       return reply.status(500).send({ success: false, message });
+    }
+  });
+
+  /** Voice preview: MediaRecorder blob → agent's STT provider → text */
+  fastify.post('/:id/voice-preview/stt', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    if (!workspaceId) {
+      return reply.code(401).send({ success: false, message: 'Workspace required' });
+    }
+    const { id: agentId } = request.params as { id: string };
+    const agent = await getAgentOr404(workspaceId, agentId);
+    if (!agent) return reply.code(404).send({ success: false, message: 'Agent not found' });
+
+    try {
+      let buffer: Buffer | null = null;
+      let mimeType = 'audio/webm';
+      let fileName = 'preview.webm';
+      let language = '';
+
+      for await (const part of request.parts()) {
+        if (part.type === 'file') {
+          buffer = await part.toBuffer();
+          mimeType = part.mimetype || mimeType;
+          fileName = part.filename || fileName;
+        } else if (part.type === 'field' && part.fieldname === 'language') {
+          language = String(part.value || '').trim();
+        }
+      }
+
+      if (!buffer?.length) {
+        return reply.code(400).send({ success: false, message: 'audio file is required' });
+      }
+
+      const result = await transcribePreviewAudio({
+        buffer,
+        mimeType,
+        fileName,
+        language: language || undefined,
+        sttProvider: agent.voiceSttProvider || 'cartesia',
+      });
+
+      return reply.send({ success: true, data: result });
+    } catch (err) {
+      if (err instanceof PreviewSttError) {
+        return reply.code(err.statusCode).send({
+          success: false,
+          message: err.message,
+          code: err.code,
+        });
+      }
+      fastify.log.error(err);
+      return reply.code(500).send({ success: false, message: 'STT failed' });
+    }
+  });
+
+  /** Voice preview: text → agent's TTS provider → audio bytes */
+  fastify.post('/:id/voice-preview/tts', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    if (!workspaceId) {
+      return reply.code(401).send({ success: false, message: 'Workspace required' });
+    }
+    const { id: agentId } = request.params as { id: string };
+    const agent = await getAgentOr404(workspaceId, agentId);
+    if (!agent) return reply.code(404).send({ success: false, message: 'Agent not found' });
+
+    const body = request.body as { text?: string };
+    const text = typeof body?.text === 'string' ? body.text.trim() : '';
+    if (!text) {
+      return reply.code(400).send({ success: false, message: 'text is required' });
+    }
+
+    try {
+      const result = await synthesizePreviewSpeech({
+        text,
+        ttsProvider: agent.voiceTtsProvider || 'cartesia',
+        ttsVoiceId: agent.voiceTtsVoiceId,
+      });
+      return reply
+        .header('X-TTS-Ms', String(result.ttsMs))
+        .header('X-TTS-Provider', result.provider)
+        .type(result.mimeType)
+        .send(result.buffer);
+    } catch (err) {
+      if (err instanceof PreviewSttError) {
+        return reply.code(err.statusCode).send({
+          success: false,
+          message: err.message,
+          code: err.code,
+        });
+      }
+      fastify.log.error(err);
+      return reply.code(500).send({ success: false, message: 'TTS failed' });
     }
   });
 

@@ -355,16 +355,18 @@ model GoogleBusinessSyncLog {
 }
 
 model WhatsAppPhoneAccount {
-  id            String    @id @default(cuid())
-  workspaceId   String
-  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  phoneNumberId String
-  metaUserId    String?
-  wabaId        String
-  phoneNumber   String?
-  displayName   String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  phoneNumberId  String
+  metaUserId     String?
+  wabaId         String
+  phoneNumber    String?
+  displayName    String?
+  /** business_api | app_coexistence */
+  connectionMode String    @default("business_api")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@unique([workspaceId, phoneNumberId])
   @@index([workspaceId])
@@ -845,6 +847,10 @@ model AiAgent {
   voiceAgentEnabled         Boolean   @default(false)
   /// Pipecat STT provider key (e.g. cartesia, deepgram) — UI dropdown options grow over time
   voiceSttProvider          String    @default("cartesia")
+  /// Pipecat TTS provider key (e.g. cartesia, openai)
+  voiceTtsProvider          String    @default("cartesia")
+  /// Cartesia (or other) voice ID; null → service default
+  voiceTtsVoiceId           String?
   conversationsCount        Int       @default(0)
   escalatedCount            Int       @default(0)
   flowsCount                Int       @default(1)
@@ -1438,6 +1444,23 @@ model PlatformAdmin {
   updatedAt DateTime @updatedAt
 
   trialExtensionLogs TrialExtensionLog[]
+}
+
+/// Marketing demo requests from the public landing page.
+model DemoRequest {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  phone     String?
+  message   String?  @db.Text
+  status    String   @default("new") // new | contacted | closed
+  source    String   @default("landing")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([status])
+  @@map("demo_requests")
 }
 
 /// Record of super-admin trial extensions (days + reason).
