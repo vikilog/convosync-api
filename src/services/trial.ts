@@ -14,8 +14,8 @@ export type SubscriptionDisplayStatus =
 
 type WorkspaceTrialFields = Pick<
   Workspace,
-  'subscriptionStatus' | 'trialStartedAt' | 'trialEndsAt' | 'isSuperAdmin'
->;
+  'subscriptionStatus' | 'trialStartedAt' | 'trialEndsAt'
+> & { isSuperAdmin?: boolean };
 
 export function addDays(date: Date, days: number) {
   const next = new Date(date);

@@ -18,6 +18,9 @@ export interface JwtUser {
   exp?: number;
 }
 
+/** Tenant session claims — authenticate() guarantees these for workspace routes. */
+export type TenantJwtUser = JwtUser & { userId: string; workspaceId: string };
+
 function isSessionUserToken(user: JwtUser): boolean {
   return Boolean(user.userId) && user.scope !== 'platform' && !user.purpose;
 }
@@ -61,6 +64,7 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
   }
 }
 
-export function getJwtUser(request: FastifyRequest): JwtUser {
-  return request.user as JwtUser;
+export function getJwtUser(request: FastifyRequest): TenantJwtUser {
+  // ponytail: platform-admin tokens omit these; tenant routes run after authenticate()
+  return request.user as TenantJwtUser;
 }

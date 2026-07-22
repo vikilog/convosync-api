@@ -461,12 +461,10 @@ export class WhatsAppPayService {
   }
 
   async handlePaymentLinkPaid(payload: Record<string, unknown>) {
-    const entity = (payload.payment_link?.entity ?? payload.payment_link) as
-      | {
-          id?: string;
-          notes?: Record<string, string>;
-        }
+    const paymentLink = payload.payment_link as
+      | { entity?: { id?: string; notes?: Record<string, string> }; id?: string; notes?: Record<string, string> }
       | undefined;
+    const entity = paymentLink?.entity ?? paymentLink;
     if (!entity?.id) return;
 
     const notes = entity.notes ?? {};
@@ -481,7 +479,8 @@ export class WhatsAppPayService {
     });
     if (!request || request.status === 'paid') return;
 
-    const paymentEntity = (payload.payment?.entity ?? payload.payment) as { id?: string } | undefined;
+    const payment = payload.payment as { entity?: { id?: string }; id?: string } | undefined;
+    const paymentEntity = payment?.entity ?? payment;
 
     await prisma.whatsAppPaymentRequest.update({
       where: { id: request.id },

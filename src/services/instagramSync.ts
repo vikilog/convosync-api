@@ -386,9 +386,29 @@ async function upsertSyncedThread(
       : [];
   const existingIds = new Set(existingRows.map((row) => row.waMessageId).filter(Boolean));
 
-  let imported = 0;
+  type PendingMedia = {
+    waMessageId: string;
+    url: string;
+    mimeType?: string;
+    fileName?: string;
+    baseMeta?: MessageMediaMetadata;
+  };
+
+  const toCreate: Array<{
+    waMessageId: string;
+    conversationId: string;
+    sender: string;
+    senderName: string;
+    content: string;
+    type: string;
+    metadata?: object;
+    createdAt: Date;
+  }> = [];
+  const pendingMedia: PendingMedia[] = [];
+
   let lastText = conv.lastMessage || '';
   let lastAt = conv.lastMessageAt;
+
   for (const graphMessage of rawMessages) {
     if (!graphMessage.id || existingIds.has(graphMessage.id)) continue;
 
@@ -406,39 +426,64 @@ async function upsertSyncedThread(
       };
     }
 
-    const created = await prisma.message.create({
-      data: {
-        waMessageId: graphMessage.id,
-        conversationId: conv.id,
-        sender: fromPage ? 'agent' : 'contact',
-        senderName: graphMessage.from?.name || (fromPage ? 'Agent' : contactName),
-        content: parsed.content,
-        type: parsed.kind,
-        metadata: metadata ? (metadata as object) : undefined,
-        createdAt,
-      },
+    toCreate.push({
+      waMessageId: graphMessage.id,
+      conversationId: conv.id,
+      sender: fromPage ? 'agent' : 'contact',
+      senderName: graphMessage.from?.name || (fromPage ? 'Agent' : contactName),
+      content: parsed.content,
+      type: parsed.kind,
+      metadata: metadata ? (metadata as object) : undefined,
+      createdAt,
     });
 
     if (parsed.media?.url) {
+      pendingMedia.push({
+        waMessageId: graphMessage.id,
+        url: parsed.media.url,
+        mimeType: parsed.media.mimeType,
+        fileName: parsed.media.fileName,
+        baseMeta: metadata,
+      });
+    }
+
+    lastText = parsed.content;
+    lastAt = createdAt;
+  }
+
+  if (toCreate.length > 0) {
+    await prisma.message.createMany({ data: toCreate });
+  }
+
+  if (pendingMedia.length > 0) {
+    const createdRows = await prisma.message.findMany({
+      where: {
+        conversationId: conv.id,
+        waMessageId: { in: pendingMedia.map((m) => m.waMessageId) },
+      },
+      select: { id: true, waMessageId: true },
+    });
+    const idByWa = new Map(createdRows.map((r) => [r.waMessageId, r.id] as const));
+
+    for (const media of pendingMedia) {
+      const messageId = idByWa.get(media.waMessageId);
+      if (!messageId) continue;
       try {
-        const downloaded = await downloadInstagramMediaUrl(
-          parsed.media.url,
-          account.pageAccessToken
-        );
+        const downloaded = await downloadInstagramMediaUrl(media.url, account.pageAccessToken);
         const storageKey = await saveMessageMediaFile(
           account.workspaceId,
-          created.id,
+          messageId,
           downloaded.buffer,
-          downloaded.mimeType || parsed.media.mimeType || 'application/octet-stream',
-          parsed.media.fileName
+          downloaded.mimeType || media.mimeType || 'application/octet-stream',
+          media.fileName
         );
         await prisma.message.update({
-          where: { id: created.id },
+          where: { id: messageId },
           data: {
             metadata: {
-              ...(metadata ?? {}),
-              mimeType: downloaded.mimeType || parsed.media.mimeType,
-              fileName: parsed.media.fileName,
+              ...(media.baseMeta ?? {}),
+              mimeType: downloaded.mimeType || media.mimeType,
+              fileName: media.fileName,
               storageKey,
             } as object,
           },
@@ -447,11 +492,9 @@ async function upsertSyncedThread(
         // Graph attachment URLs may expire; keep preview text only
       }
     }
-
-    imported += 1;
-    lastText = parsed.content;
-    lastAt = createdAt;
   }
+
+  const imported = toCreate.length;
 
   const threadUpdated = resolvedThread.updated_time ? new Date(resolvedThread.updated_time) : null;
   if (threadUpdated && (!lastAt || threadUpdated > lastAt)) {

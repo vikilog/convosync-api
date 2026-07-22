@@ -82,6 +82,17 @@ export const config = {
     similarityLowThreshold: parseFloat(process.env.SIMILARITY_LOW_THRESHOLD || '0.60'),
     hybridTopK: parseInt(process.env.HYBRID_TOP_K || '3', 10),
     escalateOnLowScore: process.env.AI_ESCALATE_ON_LOW_SCORE === 'true',
+    /** Voice stream: slightly looser low bar than chat (optional override). */
+    voiceSimilarityLowThreshold: parseFloat(
+      process.env.VOICE_SIMILARITY_LOW_THRESHOLD ||
+        process.env.SIMILARITY_LOW_THRESHOLD ||
+        '0.60'
+    ),
+    voiceStreamModel: process.env.VOICE_STREAM_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    voiceMaxOutputTokens: parseInt(
+      process.env.VOICE_MAX_OUTPUT_TOKENS || process.env.AI_MAX_OUTPUT_TOKENS || '500',
+      10
+    ),
   },
   pinecone: {
     apiKey: process.env.PINECONE_API_KEY || '',

@@ -405,7 +405,7 @@ export async function listWorkspaceMetaAdAccounts(workspaceId: string): Promise<
       status: account.account_status === 1 ? ('ACTIVE' as const) : ('DISABLED' as const),
       source: pageBusinessIds.has(account.id) ? ('page_business' as const) : ('personal' as const),
       campaignCount,
-      isSelected: account.id === workspace.metaAdAccountId,
+      isSelected: account.id === workspace!.metaAdAccountId,
     }));
 }
 

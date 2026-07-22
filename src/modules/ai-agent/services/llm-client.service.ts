@@ -177,6 +177,84 @@ export class LlmClient {
     });
   }
 
+  /**
+   * Token stream for voice/chat UIs. Yields `{ text }` chunks; return value is final usage.
+   * Anthropic falls back to a single-shot complete (no native stream here yet).
+   */
+  async *streamComplete(
+    messages: LlmMessage[],
+    options?: {
+      maxTokens?: number;
+      temperature?: number;
+      model?: string;
+      workspaceId?: string;
+    }
+  ): AsyncGenerator<{ text: string }, { content: string; usage: LlmCompletionUsage }, void> {
+    const maxTokens = options?.maxTokens ?? this.resolved.maxOutputTokens;
+    const temperature = options?.temperature ?? this.resolved.temperature;
+    const model = options?.model || this.resolved.model;
+
+    if (this.resolved.provider === 'anthropic') {
+      const result = await this.complete(messages, { maxTokens, temperature, workspaceId: options?.workspaceId });
+      if (result.content) yield { text: result.content };
+      return result;
+    }
+
+    const baseURL = this.resolved.baseUrl?.replace(/\/$/, '') || undefined;
+    const client = new OpenAI({
+      apiKey: this.resolved.apiKey,
+      baseURL: baseURL ? `${baseURL}/v1` : undefined,
+      timeout: config.openai.timeoutMs,
+    });
+
+    const t0 = Date.now();
+    try {
+      const stream = await client.chat.completions.create({
+        model,
+        messages,
+        max_tokens: maxTokens,
+        temperature,
+        stream: true,
+        stream_options: { include_usage: true },
+      });
+
+      let content = '';
+      let promptTokens = 0;
+      let completionTokens = 0;
+
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta?.content;
+        if (delta) {
+          content += delta;
+          yield { text: delta };
+        }
+        if (chunk.usage) {
+          promptTokens = chunk.usage.prompt_tokens ?? promptTokens;
+          completionTokens = chunk.usage.completion_tokens ?? completionTokens;
+        }
+      }
+
+      recordLlmUsage({
+        model,
+        promptTokens,
+        completionTokens,
+        durationMs: Date.now() - t0,
+        workspaceId: options?.workspaceId,
+      });
+
+      return {
+        content: content.trim(),
+        usage: {
+          promptTokens,
+          completionTokens,
+          totalTokens: promptTokens + completionTokens,
+        },
+      };
+    } catch (err) {
+      throw mapClientError(err);
+    }
+  }
+
   private async completeOpenAiCompatible(
     messages: LlmMessage[],
     maxTokens: number,

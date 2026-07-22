@@ -244,12 +244,12 @@ export async function getWorkspaceUsageCost(
     pct: Math.round((a.tokens / agentTotalTokens) * 100),
   }));
 
-  const prevTotal = includeComparison
+  const prevTotal: number = includeComparison
     ? (await getWorkspaceUsageCost(workspaceId, prevRange.month, { includeComparison: false }))
         .summary.totalCostInr
     : 0;
 
-  const costChangePct =
+  const costChangePct: number =
     includeComparison && prevTotal > 0
       ? round2(((totalCostInr - prevTotal) / prevTotal) * 100)
       : includeComparison && totalCostInr > 0

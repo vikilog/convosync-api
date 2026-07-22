@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import type { EmailRepository } from '../repositories/email.repository.js';
 import {
   applyTemplateVariables,
@@ -6,6 +7,12 @@ import {
 } from '../utils/template-variables.js';
 import type { UpsertEmailTemplateDto, UpdateEmailTemplateDto } from '../dto/email.dto.js';
 import { generateEmailTemplateContent } from './email-template-ai.service.js';
+
+function toJsonInput(value: Record<string, unknown> | null | undefined) {
+  if (value === undefined) return undefined;
+  if (value === null) return Prisma.DbNull;
+  return value as Prisma.InputJsonValue;
+}
 
 export class EmailTemplateService {
   constructor(private readonly repo: EmailRepository) {}
@@ -33,7 +40,7 @@ export class EmailTemplateService {
       textBody,
       variables,
       status: input.status ?? 'draft',
-      ...(input.designJson !== undefined ? { designJson: input.designJson } : {}),
+      ...(input.designJson !== undefined ? { designJson: toJsonInput(input.designJson) } : {}),
       workspace: { connect: { id: workspaceId } },
     });
   }
@@ -61,7 +68,7 @@ export class EmailTemplateService {
       textBody,
       variables: extractTemplateVariables(subject, htmlBody),
       ...(input.status !== undefined ? { status: input.status } : {}),
-      ...(input.designJson !== undefined ? { designJson: input.designJson } : {}),
+      ...(input.designJson !== undefined ? { designJson: toJsonInput(input.designJson) } : {}),
     });
   }
 

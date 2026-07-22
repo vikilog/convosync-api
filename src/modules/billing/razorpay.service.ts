@@ -120,6 +120,8 @@ export class RazorpayService {
     if (!params.contact?.trim()) {
       throw new Error('Customer phone is required for auto-recharge. Add it in Company profile.');
     }
+    const email = params.email.trim();
+    const contact = params.contact.replace(/\D/g, '').slice(-10);
 
     const response = await this.call(() =>
       this.client.payments.createRecurringPayment({
@@ -129,8 +131,8 @@ export class RazorpayService {
         customer_id: params.customerId,
         token: params.tokenId,
         recurring: true,
-        email: params.email.trim(),
-        contact: params.contact.replace(/\D/g, '').slice(-10),
+        email,
+        contact,
         ...(params.description ? { description: params.description } : {}),
       })
     );

@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { prisma } from '../index.js';
 import { config } from '../config.js';
 import { decryptSecret } from '../lib/field-encryption.js';
-import { getJwtUser } from '../middleware/auth.js';
+import { getJwtUser, type JwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import {
   completeInstagramConnect,
@@ -76,7 +76,7 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
           workspaceId,
           candidates: sessionCandidates,
           metaUserId,
-        },
+        } as JwtUser & { candidates: unknown; metaUserId?: string },
         { expiresIn: '15m' }
       );
 

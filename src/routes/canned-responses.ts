@@ -1,6 +1,6 @@
 import multipart from '@fastify/multipart';
 import { Prisma } from '@prisma/client';
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
@@ -55,16 +55,7 @@ function isDuplicateTitleError(err: unknown): boolean {
   );
 }
 
-async function parseMultipartBody(request: {
-  parts: () => AsyncIterable<{
-    type: string;
-    fieldname: string;
-    filename?: string;
-    mimetype?: string;
-    value?: unknown;
-    toBuffer: () => Promise<Buffer>;
-  }>;
-}) {
+async function parseMultipartBody(request: FastifyRequest) {
   let title = '';
   let content = '';
   let shortcut: string | null = null;

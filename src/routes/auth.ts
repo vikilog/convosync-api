@@ -27,6 +27,15 @@ import {
 } from '../services/userSecurity.js';
 
 export default async function authRoutes(fastify: FastifyInstance) {
+
+  fastify.get('/test', async (request, reply) => {
+    const start = new Date();
+    const user = await prisma.user.findUnique({ where: { email: 'support@convosync.io' } });
+    const end = new Date();
+    console.log('time', end.getTime() - start.getTime());
+    return { user, timeMs: end.getTime() - start.getTime() };
+  });
+
   fastify.post('/register', async (request, reply) => {
     const schema = z.object({
       name: z.string().min(2),
@@ -322,17 +331,28 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
   fastify.get('/me', { onRequest: [authenticate, requireWorkspaceAccess] }, async (request, reply) => {
     const { userId, workspaceId } = getJwtUser(request);
-    await ensureUserMemberships(userId!);
-    const user = await prisma.user.findUnique({
-      where: { id: userId! },
-      include: {
-        workspace: true,
-        memberships: { include: { workspace: true } },
-      },
-    });
-    const workspaces = await listUserWorkspaces(userId!);
+  
+    await ensureUserMemberships(userId!); // must stay first if it writes memberships
+  
+    // Run independent reads in parallel instead of sequentially
+    const [user, workspaces] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId! },
+        include: {
+          workspace: true,
+          memberships: { include: { workspace: true } },
+        },
+      }),
+      listUserWorkspaces(userId!),
+    ]);
+  
+    if (!user) {
+      return reply.code(404).send({ error: 'User not found' });
+    }
+  
     const activeWorkspace =
-      workspaces.find((w) => w.id === workspaceId) ?? workspaces[0] ?? user?.workspace;
+      workspaces.find((w) => w.id === workspaceId) ?? workspaces[0] ?? user.workspace;
+  
     const access = await resolveMembershipAccess(userId!, activeWorkspace?.id ?? workspaceId!);
 
     if (!user) {

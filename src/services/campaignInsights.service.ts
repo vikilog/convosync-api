@@ -326,7 +326,7 @@ async function getEmailCampaignInsights(
       contactId: contact.id,
       contactName: contact.name,
       phone: contact.phone,
-      email: contact.email,
+      email: contact.email ?? '',
       status: 'sent',
       sentAt: sentAtIso,
       content: template?.subject ?? '',

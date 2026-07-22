@@ -42,25 +42,6 @@ function segmentWhere(segmentId: string): Prisma.ContactWhereInput {
   return {};
 }
 
-async function getWorkspaceTags(workspaceId: string): Promise<string[]> {
-  const contacts = await prisma.contact.findMany({
-    where: { workspaceId },
-    select: { tags: true },
-  });
-
-  const tagSet = new Set<string>();
-  for (const contact of contacts) {
-    for (const tag of contact.tags) {
-      const trimmed = tag.trim();
-      if (trimmed && !EXCLUDED_TAGS.includes(trimmed)) {
-        tagSet.add(trimmed);
-      }
-    }
-  }
-
-  return Array.from(tagSet).sort((a, b) => a.localeCompare(b));
-}
-
 export async function countCampaignAudience(
   workspaceId: string,
   channel: CampaignAudienceChannel,
@@ -75,17 +56,34 @@ export async function countCampaignAudience(
 }
 
 export async function getCampaignAudienceSegments(workspaceId: string, channel: CampaignAudienceChannel) {
-  const tags = await getWorkspaceTags(workspaceId);
-  const allCount = await countCampaignAudience(workspaceId, channel, 'all');
+  // One scan: collect tags + per-tag counts in memory (avoids N count queries).
+  const contacts = await prisma.contact.findMany({
+    where: {
+      ...baseWhere(workspaceId),
+      ...channelWhere(channel),
+    },
+    select: { tags: true },
+  });
 
-  const tagSegments = await Promise.all(
-    tags.map(async (tag) => ({
-      id: `tag:${tag}`,
-      name: tag,
-      icon: 'tag',
-      count: await countCampaignAudience(workspaceId, channel, `tag:${tag}`),
-    }))
-  );
+  const tagCounts = new Map<string, number>();
+  for (const contact of contacts) {
+    const seen = new Set<string>();
+    for (const raw of contact.tags) {
+      const tag = raw.trim();
+      if (!tag || EXCLUDED_TAGS.includes(tag) || seen.has(tag)) continue;
+      seen.add(tag);
+      tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+    }
+  }
+
+  const tags = Array.from(tagCounts.keys()).sort((a, b) => a.localeCompare(b));
+  const allCount = contacts.length;
+  const tagSegments = tags.map((tag) => ({
+    id: `tag:${tag}`,
+    name: tag,
+    icon: 'tag',
+    count: tagCounts.get(tag) ?? 0,
+  }));
 
   return {
     channel,

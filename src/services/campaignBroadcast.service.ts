@@ -83,6 +83,22 @@ async function executeWhatsAppCampaignBroadcast(
     data: { totalRecipients: contacts.length, status: 'running' },
   });
 
+  // Same media header for every recipient — upload once (was N+1 inside the loop).
+  let headerMedia:
+    | {
+        format: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+        waMediaId: string;
+        fileName?: string;
+      }
+    | undefined;
+  if (isTemplateMediaHeaderFormat(template.headerFormat)) {
+    headerMedia = await uploadTemplateHeaderMediaForSend(
+      credentials.accessToken,
+      credentials.phoneNumberId,
+      template
+    );
+  }
+
   let sentCount = 0;
   const errors: string[] = [];
 
@@ -100,22 +116,6 @@ async function executeWhatsAppCampaignBroadcast(
         workspaceId,
         templateCategory: template.category,
       });
-
-      let headerMedia:
-        | {
-            format: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
-            waMediaId: string;
-            fileName?: string;
-          }
-        | undefined;
-
-      if (isTemplateMediaHeaderFormat(template.headerFormat)) {
-        headerMedia = await uploadTemplateHeaderMediaForSend(
-          credentials.accessToken,
-          credentials.phoneNumberId,
-          template
-        );
-      }
 
       const sent = await sendWhatsAppTemplateMessage(
         credentials.accessToken,

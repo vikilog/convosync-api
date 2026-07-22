@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -43,7 +43,7 @@ async function main() {
       subscriptionStatus: 'trial',
       trialStartedAt: null,
       trialEndsAt: null,
-      customPlanSelection: null,
+      customPlanSelection: Prisma.DbNull,
       waNumberId: null,
       waToken: null,
       wabaId: null,
