@@ -144,26 +144,22 @@ export function allocateAiLineCosts(params: {
   };
 }
 
-/** Blended INR/1K tokens (70% input, 30% output) — matches plan included-credit estimates. */
-export function avgTokenCostInrPer1k() {
-  const inputInrPer1k = INPUT_COST_PER_1K * USD_TO_INR;
-  const outputInrPer1k = OUTPUT_COST_PER_1K * USD_TO_INR;
-  return inputInrPer1k * 0.7 + outputInrPer1k * 0.3;
-}
-
+/**
+ * Plan `aiTokensIncluded` is wallet-token credit (same unit as marked-up costInr),
+ * not raw LLM tokens. Credit offsets the final AI charge after markup.
+ */
 export function computeTokenBillingCosts(params: {
-  used: number;
+  /** @deprecated unused — kept so call sites stay stable */
+  used?: number;
   costInr: number;
   includedTokens: number;
 }) {
-  const { used, costInr, includedTokens } = params;
+  const { costInr, includedTokens } = params;
   // Wallet / pay-as-you-go: no included allotment → full cost is billed
   if (includedTokens <= 0) {
     return { costInr, includedCreditInr: 0, billedCostInr: round2(costInr) };
   }
-  const includedCreditInr = round2(
-    (Math.min(includedTokens, used) * avgTokenCostInrPer1k()) / 1000
-  );
+  const includedCreditInr = round2(Math.min(includedTokens, costInr));
   const billedCostInr = round2(Math.max(0, costInr - includedCreditInr));
   return { costInr, includedCreditInr, billedCostInr };
 }

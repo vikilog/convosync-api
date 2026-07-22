@@ -4,7 +4,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mongodb"
   url      = env("DATABASE_URL")
 }
 
@@ -17,7 +17,7 @@ enum Plan {
 }
 
 model Workspace {
-  id          String   @id @default(cuid())
+  id          String   @id @default(cuid()) @map("_id")
   name        String
   slug        String   @unique
   /// Platform-owner workspace — bypasses plan limits and embedded channel signup.
@@ -137,7 +137,7 @@ enum GoogleProductStatus {
 
 /// Organization-level Google account (workspace = org tenancy).
 model GoogleConnection {
-  id              String                 @id @default(cuid())
+  id              String                 @id @default(cuid()) @map("_id")
   workspaceId     String
   workspace       Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   email           String
@@ -160,7 +160,7 @@ model GoogleConnection {
 }
 
 model GoogleProductIntegration {
-  id           String              @id @default(cuid())
+  id           String              @id @default(cuid()) @map("_id")
   workspaceId  String
   workspace    Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   connectionId String
@@ -180,7 +180,7 @@ model GoogleProductIntegration {
 }
 
 model GoogleSyncLog {
-  id           String            @id @default(cuid())
+  id           String            @id @default(cuid()) @map("_id")
   workspaceId  String
   workspace    Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   connectionId String?
@@ -197,7 +197,7 @@ model GoogleSyncLog {
 }
 
 model GoogleWebhookLog {
-  id           String            @id @default(cuid())
+  id           String            @id @default(cuid()) @map("_id")
   workspaceId  String
   workspace    Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   connectionId String?
@@ -231,7 +231,7 @@ enum GoogleBusinessSyncType {
 
 /// Cached Google Business Profile account (from mybusinessaccountmanagement).
 model GoogleBusinessAccount {
-  id                String                   @id @default(cuid())
+  id                String                   @id @default(cuid()) @map("_id")
   workspaceId       String
   workspace         Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   connectionId      String
@@ -255,7 +255,7 @@ model GoogleBusinessAccount {
 
 /// Cached GBP location (from mybusinessbusinessinformation).
 model GoogleBusinessLocation {
-  id                 String                   @id @default(cuid())
+  id                 String                   @id @default(cuid()) @map("_id")
   workspaceId        String
   workspace          Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   connectionId       String
@@ -288,7 +288,7 @@ model GoogleBusinessLocation {
 
 /// Cached GBP review (incremental sync ready).
 model GoogleBusinessReview {
-  id             String                 @id @default(cuid())
+  id             String                 @id @default(cuid()) @map("_id")
   workspaceId    String
   workspace      Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   connectionId   String
@@ -314,7 +314,7 @@ model GoogleBusinessReview {
 
 /// Cached GBP metrics snapshot per location.
 model GoogleBusinessMetric {
-  id           String                 @id @default(cuid())
+  id           String                 @id @default(cuid()) @map("_id")
   workspaceId  String
   workspace    Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   connectionId String
@@ -336,7 +336,7 @@ model GoogleBusinessMetric {
 
 /// GBP-specific sync audit log (quota, duration, request counts).
 model GoogleBusinessSyncLog {
-  id            String                 @id @default(cuid())
+  id            String                 @id @default(cuid()) @map("_id")
   workspaceId   String
   workspace     Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   connectionId  String
@@ -355,7 +355,7 @@ model GoogleBusinessSyncLog {
 }
 
 model WhatsAppPhoneAccount {
-  id             String    @id @default(cuid())
+  id             String    @id @default(cuid()) @map("_id")
   workspaceId    String
   workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   phoneNumberId  String
@@ -374,7 +374,7 @@ model WhatsAppPhoneAccount {
 }
 
 model InstagramAccount {
-  id               String    @id @default(cuid())
+  id               String    @id @default(cuid()) @map("_id")
   workspaceId      String
   workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   instagramUserId  String
@@ -394,7 +394,7 @@ model InstagramAccount {
 }
 
 model MessengerAccount {
-  id              String    @id @default(cuid())
+  id              String    @id @default(cuid()) @map("_id")
   workspaceId     String
   workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   metaUserId      String?
@@ -412,7 +412,7 @@ model MessengerAccount {
 }
 
 model WorkspaceMembership {
-  id          String    @id @default(cuid())
+  id          String    @id @default(cuid()) @map("_id")
   userId      String
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspaceId String
@@ -429,7 +429,7 @@ model WorkspaceMembership {
 }
 
 model User {
-  id          String    @id @default(cuid())
+  id          String    @id @default(cuid()) @map("_id")
   name        String
   email       String    @unique
   password    String
@@ -456,19 +456,19 @@ model User {
 
 /// Session invalidation state (logout-everywhere / password change). Separate from User.
 model UserSecurityState {
-  id            String   @id @default(cuid())
+  id            String   @id @default(cuid()) @map("_id")
   userId        String   @unique
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   tokenVersion  Int      @default(0)
   updatedAt     DateTime @updatedAt
   updatedReason String?
 
-  @@index([userId])
+  // ponytail: @unique already indexes userId; Mongo rejects duplicate index defs
   @@map("user_security_states")
 }
 
 model Contact {
-  id            String    @id @default(cuid())
+  id            String    @id @default(cuid()) @map("_id")
   name          String
   phone         String
   email         String?
@@ -497,7 +497,7 @@ model Contact {
 }
 
 model Conversation {
-  id            String    @id @default(cuid())
+  id            String    @id @default(cuid()) @map("_id")
   status        String    @default("open")
   channel       String    @default("whatsapp")
   channelAccountId String?
@@ -528,7 +528,7 @@ model Conversation {
 
 /// LiveKit 1:1 voice call between customer and agent (media via LiveKit; sockets = signaling only).
 model CallSession {
-  id              String   @id @default(cuid())
+  id              String   @id @default(cuid()) @map("_id")
   workspaceId     String
   workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   conversationId  String?
@@ -591,7 +591,7 @@ model CallSession {
 
   /// Faster-Whisper STT (post-call) — pending | processing | ready | failed | skipped
   transcriptStatus    String?
-  transcriptText      String?  @db.Text
+  transcriptText      String?
   /// [{ start, end, text }]
   transcriptJson      Json?
   transcriptLanguage  String?
@@ -613,7 +613,7 @@ model CallSession {
 
 /// History of customer insights (one row per computation — keep trends).
 model ContactInsight {
-  id                     String   @id @default(cuid())
+  id                     String   @id @default(cuid()) @map("_id")
   workspaceId            String
   workspace              Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   contactId              String
@@ -631,12 +631,12 @@ model ContactInsight {
   /// −100…100 (negative = negative sentiment)
   sentimentScore         Int?
 
-  summary                String   @db.Text
+  summary                String
   /// string[]
   painPoints             Json
   /// string[]
   interests              Json
-  recommendedAction      String?  @db.Text
+  recommendedAction      String?
 
   /// Conversation ids that fed this run
   basedOnConversationIds Json
@@ -655,7 +655,7 @@ model ContactInsight {
 }
 
 model CallParticipant {
-  id            String   @id @default(cuid())
+  id            String   @id @default(cuid()) @map("_id")
   callSessionId String
   callSession   CallSession @relation(fields: [callSessionId], references: [id], onDelete: Cascade)
   /// customer | agent | ai | sip
@@ -676,7 +676,7 @@ model CallParticipant {
 }
 
 model Message {
-  id             String       @id @default(cuid())
+  id             String       @id @default(cuid()) @map("_id")
   waMessageId    String?      @unique
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id])
@@ -690,7 +690,7 @@ model Message {
 }
 
 model Template {
-  id               String    @id @default(cuid())
+  id               String    @id @default(cuid()) @map("_id")
   name             String
   category         String
   status           String    @default("draft")
@@ -721,7 +721,7 @@ model Template {
 }
 
 model Campaign {
-  id              String    @id @default(cuid())
+  id              String    @id @default(cuid()) @map("_id")
   name            String
   status          String    @default("draft")
   templateId      String?
@@ -739,7 +739,7 @@ model Campaign {
 }
 
 model Journey {
-  id          String   @id @default(cuid())
+  id          String   @id @default(cuid()) @map("_id")
   name        String
   status      String   @default("draft") // draft | published
   workspaceId String
@@ -756,7 +756,7 @@ model Journey {
 }
 
 model JourneyNode {
-  id        String  @id @default(cuid())
+  id        String  @id @default(cuid()) @map("_id")
   journeyId String
   journey   Journey @relation(fields: [journeyId], references: [id], onDelete: Cascade)
   type      String
@@ -772,7 +772,7 @@ model JourneyNode {
 }
 
 model JourneyEdge {
-  id             String      @id @default(cuid())
+  id             String      @id @default(cuid()) @map("_id")
   journeyId      String
   journey        Journey     @relation(fields: [journeyId], references: [id], onDelete: Cascade)
   sourceNodeId   String
@@ -787,7 +787,7 @@ model JourneyEdge {
 }
 
 model JourneyExecution {
-  id             String    @id @default(cuid())
+  id             String    @id @default(cuid()) @map("_id")
   journeyId      String
   journey        Journey   @relation(fields: [journeyId], references: [id], onDelete: Cascade)
   contactId      String
@@ -807,7 +807,7 @@ model JourneyExecution {
 }
 
 model JourneyExecutionLog {
-  id          String            @id @default(cuid())
+  id          String            @id @default(cuid()) @map("_id")
   executionId String
   execution   JourneyExecution  @relation(fields: [executionId], references: [id], onDelete: Cascade)
   nodeId      String?
@@ -821,7 +821,7 @@ model JourneyExecutionLog {
 }
 
 model AiAgent {
-  id                        String    @id @default(cuid())
+  id                        String    @id @default(cuid()) @map("_id")
   name                      String
   role                      String
   category                  String    @default("ai_agent")
@@ -832,10 +832,10 @@ model AiAgent {
   intentFallback            String    @default("silent")
   conversationCloseWaitMins Int       @default(10)
   systemPrompt              String?
-  instructions              String?   @db.Text
+  instructions              String?
   toneOfVoice               String    @default("professional")
   fallbackLanguage          String    @default("english")
-  brandBackground           String?   @db.Text
+  brandBackground           String?
   actions                   Json      @default("[]")
   isPublished               Boolean   @default(false)
   publishedAt               DateTime?
@@ -868,7 +868,7 @@ model AiAgent {
 
 /// AI agent preview / automated chat sessions (separate from inbox Conversation).
 model AgentChatConversation {
-  id               String    @id @default(cuid())
+  id               String    @id @default(cuid()) @map("_id")
   workspaceId      String
   agentId          String
   contactId        String?
@@ -896,11 +896,11 @@ model AgentChatConversation {
 }
 
 model AgentChatMessage {
-  id             String                @id @default(cuid())
+  id             String                @id @default(cuid()) @map("_id")
   conversationId String
   conversation   AgentChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           String
-  content        String                @db.Text
+  content        String
   tokensUsed     Int                   @default(0)
   intent         String?
   fromCache      Boolean               @default(false)
@@ -910,7 +910,7 @@ model AgentChatMessage {
 }
 
 model TokenUsageLog {
-  id             String                 @id @default(cuid())
+  id             String                 @id @default(cuid()) @map("_id")
   workspaceId    String
   agentId        String
   conversationId String?
@@ -933,12 +933,12 @@ model TokenUsageLog {
 }
 
 model CachedResponse {
-  id           String    @id @default(cuid())
+  id           String    @id @default(cuid()) @map("_id")
   workspaceId  String
   agentId      String
   questionHash String
-  question     String    @db.Text
-  answer       String    @db.Text
+  question     String
+  answer       String
   intent       String?
   hitCount     Int       @default(0)
   expiresAt    DateTime
@@ -950,7 +950,7 @@ model CachedResponse {
 
 /// Workspace-level AI provider (ConvoSync hosted vs BYOK).
 model WorkspaceAiProviderConfig {
-  workspaceId          String    @id
+  workspaceId          String    @id @map("_id")
   workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   mode                 String    @default("convosync")
   provider             String    @default("openai")
@@ -966,12 +966,12 @@ model WorkspaceAiProviderConfig {
 }
 
 model AiSkill {
-  id           String   @id @default(cuid())
+  id           String   @id @default(cuid()) @map("_id")
   agentId      String
   agent        AiAgent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
   title        String
-  trigger      String   @db.Text
-  instructions String   @db.Text
+  trigger      String
+  instructions String
   status       String   @default("draft")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -980,12 +980,12 @@ model AiSkill {
 }
 
 model AiAgentKnowledgeItem {
-  id        String   @id @default(cuid())
+  id        String   @id @default(cuid()) @map("_id")
   agentId   String
   agent     AiAgent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
   type      String
   title     String
-  content   String?  @db.Text
+  content   String?
   url       String?
   fileUrl   String?
   metadata  Json?
@@ -996,7 +996,7 @@ model AiAgentKnowledgeItem {
 }
 
 model AgentFlowSession {
-  id               String       @id @default(cuid())
+  id               String       @id @default(cuid()) @map("_id")
   agentId          String
   agent            AiAgent      @relation(fields: [agentId], references: [id], onDelete: Cascade)
   conversationId   String       @unique
@@ -1019,7 +1019,7 @@ model AgentFlowSession {
 
 /// Saved connection settings per workspace (for Settings → AI Knowledge UI).
 model AiKnowledgeConfig {
-  id               String    @id @default(cuid())
+  id               String    @id @default(cuid()) @map("_id")
   workspaceId      String    @unique
   workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   venueId          String?
@@ -1029,7 +1029,7 @@ model AiKnowledgeConfig {
 
 /// Normalized salon knowledge snapshot (ready for future embedding pipeline).
 model AiKnowledge {
-  id           String    @id @default(cuid())
+  id           String    @id @default(cuid()) @map("_id")
   workspaceId  String
   workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   venueId      String
@@ -1049,7 +1049,7 @@ model AiKnowledge {
 
 /// Per-workspace incoming webhook endpoint (Developers → Webhooks).
 model DeveloperIncomingWebhook {
-  id               String    @id @default(cuid())
+  id               String    @id @default(cuid()) @map("_id")
   workspaceId      String    @unique
   workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   slug             String    @unique
@@ -1060,13 +1060,13 @@ model DeveloperIncomingWebhook {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  @@index([slug])
+  // ponytail: @unique already indexes slug; Mongo rejects duplicate index defs
   @@map("developer_incoming_webhooks")
 }
 
 /// Outgoing webhook subscriptions (Developers → Webhooks).
 model DeveloperOutgoingWebhook {
-  id               String    @id @default(cuid())
+  id               String    @id @default(cuid()) @map("_id")
   workspaceId      String
   workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   name             String
@@ -1087,7 +1087,7 @@ model DeveloperOutgoingWebhook {
 
 /// Delivery / ingestion logs for developer webhooks.
 model DeveloperWebhookLog {
-  id                  String    @id @default(cuid())
+  id                  String    @id @default(cuid()) @map("_id")
   workspaceId         String
   workspace           Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   direction           String    // incoming | outgoing
@@ -1110,7 +1110,7 @@ model DeveloperWebhookLog {
 
 /// Configurable HTTP actions for AI Agents + Journey Engine.
 model DeveloperAction {
-  id          String    @id @default(cuid())
+  id          String    @id @default(cuid()) @map("_id")
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   actionType  String
@@ -1130,7 +1130,7 @@ model DeveloperAction {
 
 /// Event queue for AI sync and future agent/journey automation.
 model DeveloperSyncEvent {
-  id           String    @id @default(cuid())
+  id           String    @id @default(cuid()) @map("_id")
   workspaceId  String
   workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   eventType    String
@@ -1147,7 +1147,7 @@ model DeveloperSyncEvent {
 
 /// Custom sending domains (Developers → Email → Domains).
 model EmailDomain {
-  id               String    @id @default(cuid())
+  id               String    @id @default(cuid()) @map("_id")
   workspaceId      String
   workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   domain           String
@@ -1171,7 +1171,7 @@ model EmailDomain {
 
 /// Verified or shared sender identities (Developers → Email → Senders).
 model EmailAddress {
-  id          String       @id @default(cuid())
+  id          String       @id @default(cuid()) @map("_id")
   workspaceId String
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   domainId    String?
@@ -1190,7 +1190,7 @@ model EmailAddress {
 
 /// Outbound email delivery log (Developers → Email → Logs).
 model EmailLog {
-  id               String               @id @default(cuid())
+  id               String               @id @default(cuid()) @map("_id")
   workspaceId      String
   workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   sender           String
@@ -1214,7 +1214,7 @@ model EmailLog {
 
 /// BYOP email provider credentials per workspace (encrypted at rest).
 model EmailProviderConfig {
-  id              String    @id @default(cuid())
+  id              String    @id @default(cuid()) @map("_id")
   workspaceId     String
   workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   provider        String // CONVOSYNC_MANAGED | RESEND | AWS_SES | SENDGRID | SMTP
@@ -1234,13 +1234,13 @@ model EmailProviderConfig {
 
 /// Reusable email templates (subject + HTML) for campaigns, journeys, and transactional sends.
 model EmailTemplate {
-  id          String    @id @default(cuid())
+  id          String    @id @default(cuid()) @map("_id")
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   name        String
   subject     String
-  htmlBody    String    @db.Text
-  textBody    String?   @db.Text
+  htmlBody    String
+  textBody    String?
   variables   String[]
   status      String    @default("draft") // draft | active
   designJson  Json?
@@ -1253,11 +1253,11 @@ model EmailTemplate {
 }
 
 model CannedResponse {
-  id              String    @id @default(cuid())
+  id              String    @id @default(cuid()) @map("_id")
   workspaceId     String
   workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   title           String
-  content         String    @db.Text
+  content         String
   shortcut        String?
   mediaStorageKey String?
   mediaMimeType   String?
@@ -1272,7 +1272,7 @@ model CannedResponse {
 
 /// SaaS product tiers (Starter, Growth, Pro, Enterprise).
 model SubscriptionPlan {
-  id              String   @id @default(cuid())
+  id              String   @id @default(cuid()) @map("_id")
   slug            String   @unique
   planCode        String   @unique
   name            String
@@ -1302,7 +1302,7 @@ model SubscriptionPlan {
 
 /// Razorpay recurring subscription for a workspace.
 model BillingSubscription {
-  id                    String   @id @default(cuid())
+  id                    String   @id @default(cuid()) @map("_id")
   workspaceId           String
   workspace             Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   planId                String
@@ -1329,7 +1329,7 @@ model BillingSubscription {
 
 /// Payment invoices (subscription renewals, one-time orders, addons).
 model BillingInvoice {
-  id                    String   @id @default(cuid())
+  id                    String   @id @default(cuid()) @map("_id")
   workspaceId           String
   workspace             Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   subscriptionId        String?
@@ -1356,7 +1356,7 @@ model BillingInvoice {
 
 /// One-time addon purchases (extra contacts, AI tokens, etc.).
 model BillingAddOnPurchase {
-  id                String    @id @default(cuid())
+  id                String    @id @default(cuid()) @map("_id")
   workspaceId       String
   workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   type              String    // contacts | team_members | ai_agents | channels | ai_tokens | campaigns
@@ -1378,7 +1378,7 @@ model BillingAddOnPurchase {
 
 /// Per-workspace usage limits (base plan + addons).
 model WorkspaceUsageLimits {
-  workspaceId       String   @id
+  workspaceId       String   @id @map("_id")
   workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   contactsLimit     Int      @default(1000)
   teamMembersLimit  Int      @default(3)
@@ -1386,7 +1386,7 @@ model WorkspaceUsageLimits {
   channelsLimit     Int      @default(2)
   aiTokensIncluded  Int      @default(0)
   campaignsLimit    Int      @default(3)
-  emailsLimit       Int      @default(1000)
+  emailsLimit       Int      @default(0)
   updatedAt         DateTime @updatedAt
 
   @@map("workspace_usage_limits")
@@ -1394,7 +1394,7 @@ model WorkspaceUsageLimits {
 
 /// Prepaid usage wallet — credits for WhatsApp templates, AI tokens, and other metered features.
 model WorkspaceWallet {
-  workspaceId              String    @id
+  workspaceId              String    @id @map("_id")
   workspace                Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   balancePaise             Int       @default(0)
   lowBalanceThresholdPaise Int       @default(50000)
@@ -1414,7 +1414,7 @@ model WorkspaceWallet {
 
 /// Ledger entries for wallet credits (top-up) and debits (feature usage).
 model WalletTransaction {
-  id                String    @id @default(cuid())
+  id                String    @id @default(cuid()) @map("_id")
   workspaceId       String
   workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   type              String
@@ -1435,7 +1435,7 @@ model WalletTransaction {
 
 /// Platform operators (super admin) — separate from tenant User records.
 model PlatformAdmin {
-  id        String   @id @default(cuid())
+  id        String   @id @default(cuid()) @map("_id")
   name      String
   email     String   @unique
   password  String
@@ -1448,11 +1448,11 @@ model PlatformAdmin {
 
 /// Marketing demo requests from the public landing page.
 model DemoRequest {
-  id        String   @id @default(cuid())
+  id        String   @id @default(cuid()) @map("_id")
   name      String
   email     String
   phone     String?
-  message   String?  @db.Text
+  message   String?
   status    String   @default("new") // new | contacted | closed
   source    String   @default("landing")
   createdAt DateTime @default(now())
@@ -1465,7 +1465,7 @@ model DemoRequest {
 
 /// Record of super-admin trial extensions (days + reason).
 model TrialExtensionLog {
-  id              String         @id @default(cuid())
+  id              String         @id @default(cuid()) @map("_id")
   workspaceId     String
   workspace       Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   platformAdminId String?
@@ -1482,7 +1482,7 @@ model TrialExtensionLog {
 
 /// Singleton platform configuration for super-admin (messaging number, branding).
 model PlatformConfig {
-  id                    String   @id @default("default")
+  id                    String   @id @default("default") @map("_id")
   platformName          String   @default("ConvoSync")
   supportEmail          String?
   platformPhone         String?
@@ -1496,7 +1496,7 @@ model PlatformConfig {
 
 /// WhatsApp templates used by platform ops to message client organizations.
 model PlatformMessageTemplate {
-  id        String   @id @default(cuid())
+  id        String   @id @default(cuid()) @map("_id")
   name      String
   category  String   @default("utility")
   language  String   @default("en")
@@ -1511,7 +1511,7 @@ model PlatformMessageTemplate {
 
 /// In-chat payment requests sent via WhatsApp (Razorpay payment links).
 model WhatsAppPaymentRequest {
-  id                    String    @id @default(cuid())
+  id                    String    @id @default(cuid()) @map("_id")
   workspaceId           String
   workspace             Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   contactId             String?

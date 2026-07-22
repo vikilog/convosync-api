@@ -35,6 +35,41 @@ export const AI_ESTIMATED_CC_PER_REPLY = WALLET_CC_RATES.aiEstimatedReply;
 export const EMAIL_RATE_INR_PER_SEND = WALLET_CC_RATES.emailSend;
 export const EMAIL_RATE_INR_PER_1K = EMAIL_RATE_INR_PER_SEND * 1000;
 
+/** How many of this batch are billable after plan included email credit (1 CC = 1 email). */
+export function emailBillableSends(params: {
+  sentBefore: number;
+  sendCount: number;
+  emailsIncluded: number;
+}): number {
+  const sendCount = Math.max(0, Math.round(params.sendCount));
+  const sentBefore = Math.max(0, Math.round(params.sentBefore));
+  const included = params.emailsIncluded;
+  if (included <= 0) return sendCount;
+  if (included >= Number.MAX_SAFE_INTEGER) return 0;
+  const freeLeft = Math.max(0, included - sentBefore);
+  return Math.max(0, sendCount - freeLeft);
+}
+
+/**
+ * Wallet debit for this charge after monthly included credit (same unit as cost — tokens/CC).
+ * billedAfter - billedBefore so running wallet spend matches month Usage "Final billed".
+ */
+export function incrementalIncludedBillable(params: {
+  mtdGrossBefore: number;
+  thisCharge: number;
+  includedCredit: number;
+}): number {
+  const thisCharge = Math.max(0, params.thisCharge);
+  const mtdBefore = Math.max(0, params.mtdGrossBefore);
+  const included = params.includedCredit;
+  if (thisCharge <= 0) return 0;
+  if (included <= 0) return Math.round(thisCharge * 100) / 100;
+  if (included >= Number.MAX_SAFE_INTEGER) return 0;
+  const billedBefore = Math.max(0, mtdBefore - included);
+  const billedAfter = Math.max(0, mtdBefore + thisCharge - included);
+  return Math.round((billedAfter - billedBefore) * 100) / 100;
+}
+
 /** Instagram DM — 0.01 CC per message. */
 export const INSTAGRAM_MESSAGE_RATE_INR = WALLET_CC_RATES.instagramMessage;
 

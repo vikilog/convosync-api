@@ -60,7 +60,8 @@ export function instagramMessageDebitPaise(): number {
 }
 
 export function emailSendDebitPaise(sendCount = 1): number {
-  const count = Math.max(1, Math.round(sendCount));
+  const count = Math.max(0, Math.round(sendCount));
+  if (count <= 0) return 0;
   return ccToDebitPaise(WALLET_CC_RATES.emailSend * count);
 }
 

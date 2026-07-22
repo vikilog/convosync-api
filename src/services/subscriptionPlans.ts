@@ -303,7 +303,6 @@ export async function backfillWorkspaceUsageLimitsFromPlans() {
   for (const workspace of workspaces) {
     if (!workspace.plan) continue;
     const features = workspace.plan.features as PlanFeatures;
-    const emailsLimit = parseEmailsPerMonthLimit(features.emailsPerMonth, 1000);
 
     await prisma.workspaceUsageLimits.upsert({
       where: { workspaceId: workspace.id },
@@ -313,16 +312,19 @@ export async function backfillWorkspaceUsageLimitsFromPlans() {
         teamMembersLimit: parseFeatureLimitForBackfill(features.teamMembers, 3),
         aiAgentsLimit: parseFeatureLimitForBackfill(features.aiAgents, 1),
         channelsLimit: parseFeatureLimitForBackfill(features.channels, 2),
-        aiTokensIncluded: typeof features.aiReplies === 'number' ? features.aiReplies : 0,
+        aiTokensIncluded: 0,
         campaignsLimit:
           typeof features.campaigns === 'number'
             ? features.campaigns
             : features.campaigns === 'unlimited'
               ? Number.MAX_SAFE_INTEGER
               : 3,
-        emailsLimit,
+        emailsLimit: 0,
       },
-      update: { emailsLimit },
+      update: {
+        aiTokensIncluded: 0,
+        emailsLimit: 0,
+      },
     });
     updated += 1;
   }

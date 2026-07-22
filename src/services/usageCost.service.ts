@@ -2,7 +2,7 @@ import { prisma } from '../index.js';
 import {
   AI_USAGE_MARKUP_MULTIPLIER,
   applyAiUsageMarkup,
-  EMAIL_RATE_INR_PER_1K,
+  EMAIL_RATE_INR_PER_SEND,
   WA_CONVERSATION_RATES_INR,
   WA_SERVICE_FREE_CONVERSATIONS,
   WA_SERVICE_OVERAGE_RATE_INR,
@@ -11,10 +11,10 @@ import {
 } from './usageCost.constants.js';
 import {
   allocateAiLineCosts,
-  computeTokenBillingCosts,
   getWorkspaceTokenUsageBreakdown,
   resolveWorkspaceBillingMode,
 } from './workspaceTokenUsage.js';
+import { getWalletSummary } from './wallet.service.js';
 
 export type UsageMonthRange = {
   start: Date;
@@ -89,17 +89,7 @@ export async function getWorkspaceUsageCost(
   const range = parseUsageMonth(month);
   const prevRange = parseUsageMonth(shiftMonth(range.month, -1));
 
-  const workspace = await prisma.workspace.findUnique({
-    where: { id: workspaceId },
-    select: {
-      usageLimits: { select: { aiTokensIncluded: true, emailsLimit: true } },
-    },
-  });
-
-  const aiTokensIncluded = workspace?.usageLimits?.aiTokensIncluded ?? 0;
-  const emailsIncluded = workspace?.usageLimits?.emailsLimit ?? 1000;
-
-  const [whatsappMessages, emailCount, templates, aiAgents, tokenBreakdown, billingMode] =
+  const [whatsappMessages, emailCount, templates, aiAgents, tokenBreakdown, billingMode, wallet] =
     await Promise.all([
     prisma.message.findMany({
       where: {
@@ -139,6 +129,7 @@ export async function getWorkspaceUsageCost(
     }),
     getWorkspaceTokenUsageBreakdown(workspaceId, range.start, range.end),
     resolveWorkspaceBillingMode(workspaceId),
+    getWalletSummary(workspaceId),
   ]);
 
   const templateCategoryById = new Map(templates.map((t) => [t.id, normalizeTemplateCategory(t.category)]));
@@ -224,17 +215,12 @@ export async function getWorkspaceUsageCost(
     rawCostInr: aiRawCostInr,
   });
   const aiGrossCostInr = round2(applyAiUsageMarkup(aiRawCostInr));
-  const tokenBilling = computeTokenBillingCosts({
-    used: aiTotalTokens,
-    costInr: aiGrossCostInr,
-    includedTokens: aiTokensIncluded,
-  });
-  const includedTokenCostCredit = tokenBilling.includedCreditInr;
-  const aiBilledCostInr = tokenBilling.billedCostInr;
+  // No free included credit — wallet pays full marked-up AI cost.
+  const aiBilledCostInr = aiGrossCostInr;
 
-  const emailGrossCostInr = round2((emailCount / 1000) * EMAIL_RATE_INR_PER_1K);
-  const includedEmailCredit = round2((Math.min(emailsIncluded, emailCount) / 1000) * EMAIL_RATE_INR_PER_1K);
-  const emailBilledCostInr = round2(Math.max(0, emailGrossCostInr - includedEmailCredit));
+  // 1 CC = 1 email — every send bills the wallet (nothing free on plan).
+  const emailGrossCostInr = round2(emailCount * EMAIL_RATE_INR_PER_SEND);
+  const emailBilledCostInr = emailGrossCostInr;
 
   const totalCostInr = round2(whatsappBilledTotal + aiBilledCostInr + emailBilledCostInr);
 
@@ -282,6 +268,12 @@ export async function getWorkspaceUsageCost(
       emailsSent: emailCount,
       emailCostInr: emailBilledCostInr,
     },
+    // Main token balance — WA + AI + email Final billed amounts debit this wallet
+    wallet: {
+      balanceInr: wallet.balanceInr,
+      monthSpentInr: wallet.monthSpentInr,
+      isLowBalance: wallet.isLowBalance,
+    },
     whatsapp: {
       rows: whatsappRows,
       grossCostInr: whatsappGrossCost,
@@ -301,17 +293,22 @@ export async function getWorkspaceUsageCost(
       markupMultiplier: AI_USAGE_MARKUP_MULTIPLIER,
       markupInr: round2(Math.max(0, aiGrossCostInr - aiRawCostInr)),
       grossCostInr: aiGrossCostInr,
-      includedTokens: aiTokensIncluded,
-      includedCreditInr: includedTokenCostCredit,
+      includedTokens: 0,
+      includedCreditInr: 0,
       billedCostInr: aiBilledCostInr,
       dailyTokens,
       agents: agentsWithPct,
-      quotaPct: aiTokensIncluded > 0 ? Math.round((aiTotalTokens / aiTokensIncluded) * 100) : 0,
+      quotaPct: 0,
     },
     email: {
       sent: emailCount,
-      included: emailsIncluded,
+      included: 0,
+      unlimited: false,
+      rateInrPerSend: EMAIL_RATE_INR_PER_SEND,
+      grossCostInr: emailGrossCostInr,
+      includedCreditInr: 0,
       billedCostInr: emailBilledCostInr,
+      quotaPct: 0,
     },
   };
 }

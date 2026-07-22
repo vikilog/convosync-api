@@ -934,7 +934,7 @@ function buildCommercialInsights(input: {
       pct: utilizationPct(operationsStats.teamMembers, operationsStats.teamMembersLimit),
     },
     aiTokens: {
-      used: usageCost.summary.aiTokensUsed,
+      used: usageCost.ai.grossCostInr,
       included: usageCost.ai.includedTokens,
       pct: usageCost.ai.includedTokens > 0 ? usageCost.ai.quotaPct : null,
     },

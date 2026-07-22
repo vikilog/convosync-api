@@ -251,14 +251,15 @@ export class BillingService {
     const aiTokenLimit = limitValue(limits?.aiTokensIncluded, 0);
     const markedUpTokenCostInr = applyAiUsageMarkup(aiTokenUsage.costInr);
     const tokenCosts = computeTokenBillingCosts({
-      used: aiTokenUsage.used,
       costInr: markedUpTokenCostInr,
       includedTokens: aiTokenLimit,
     });
+    // Limit is wallet-token credit; track marked-up charge against it (not raw LLM tokens)
+    const aiCreditUsed = Math.round(markedUpTokenCostInr * 100) / 100;
     const aiTokensSnapshot =
       aiTokenLimit <= 0
         ? {
-            used: aiTokenUsage.used,
+            used: aiCreditUsed,
             limit: Number.MAX_SAFE_INTEGER,
             pending: Number.MAX_SAFE_INTEGER,
             inputTokens: aiTokenUsage.inputTokens,
@@ -268,7 +269,7 @@ export class BillingService {
             billedCostInr: tokenCosts.billedCostInr,
           }
         : {
-            ...toSnapshotItem(aiTokenUsage.used, aiTokenLimit),
+            ...toSnapshotItem(aiCreditUsed, aiTokenLimit),
             inputTokens: aiTokenUsage.inputTokens,
             outputTokens: aiTokenUsage.outputTokens,
             costInr: markedUpTokenCostInr,
@@ -1493,7 +1494,7 @@ export class BillingService {
         channelsLimit: 2,
         aiTokensIncluded: 0,
         campaignsLimit: 3,
-        emailsLimit: 1000,
+        emailsLimit: 0,
       };
       const increment = this.addonIncrement(type, quantity);
       await tx.workspaceUsageLimits.create({
@@ -1566,6 +1567,7 @@ export class BillingService {
     workspaceId: string,
     features: PlanFeatures
   ) {
+    // Wallet bills every AI/email use — do not copy plan “included” amounts as free credit.
     await tx.workspaceUsageLimits.upsert({
       where: { workspaceId },
       create: {
@@ -1574,28 +1576,28 @@ export class BillingService {
         teamMembersLimit: parseFeatureLimit(features.teamMembers, 3),
         aiAgentsLimit: parseFeatureLimit(features.aiAgents, 1),
         channelsLimit: parseFeatureLimit(features.channels, 2),
-        aiTokensIncluded: typeof features.aiReplies === 'number' ? features.aiReplies : 0,
+        aiTokensIncluded: 0,
         campaignsLimit:
           typeof features.campaigns === 'number'
             ? features.campaigns
             : features.campaigns === 'unlimited'
               ? Number.MAX_SAFE_INTEGER
               : 3,
-        emailsLimit: this.parseEmailsLimit(features),
+        emailsLimit: 0,
       },
       update: {
         contactsLimit: parseFeatureLimit(features.contacts, 1000),
         teamMembersLimit: parseFeatureLimit(features.teamMembers, 3),
         aiAgentsLimit: parseFeatureLimit(features.aiAgents, 1),
         channelsLimit: parseFeatureLimit(features.channels, 2),
-        aiTokensIncluded: typeof features.aiReplies === 'number' ? features.aiReplies : 0,
+        aiTokensIncluded: 0,
         campaignsLimit:
           typeof features.campaigns === 'number'
             ? features.campaigns
             : features.campaigns === 'unlimited'
               ? Number.MAX_SAFE_INTEGER
               : 3,
-        emailsLimit: this.parseEmailsLimit(features),
+        emailsLimit: 0,
       },
     });
   }

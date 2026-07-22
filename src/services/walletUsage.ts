@@ -1,5 +1,6 @@
+import { prisma } from '../index.js';
+import { applyAiUsageMarkup, ccToDebitPaise } from './usageCost.constants.js';
 import {
-  aiUsageDebitPaise,
   emailSendDebitPaise,
   instagramMessageDebitPaise,
   journeyTriggerDebitPaise,
@@ -65,18 +66,27 @@ export async function chargeInstagramMessageUsage(params: {
   });
 }
 
+/** Local calendar month — same window as Usage & Cost page billing. */
+function billingMonthRange(reference = new Date()) {
+  const start = new Date(reference.getFullYear(), reference.getMonth(), 1, 0, 0, 0, 0);
+  const end = new Date(reference.getFullYear(), reference.getMonth() + 1, 1, 0, 0, 0, 0);
+  return { start, end };
+}
+
 export async function assertEmailSendAffordable(workspaceId: string, sendCount = 1) {
   const amountPaise = emailSendDebitPaise(sendCount);
   if (amountPaise <= 0) return;
   await assertWalletBalance(workspaceId, amountPaise);
 }
 
+/** 1 email = 1 CC. No free “included” skip — wallet pays for every send. */
 export async function chargeEmailSendUsage(params: {
   workspaceId: string;
   referenceId: string;
   sendCount?: number;
 }) {
-  const amountPaise = emailSendDebitPaise(params.sendCount ?? 1);
+  const sendCount = Math.max(1, Math.round(params.sendCount ?? 1));
+  const amountPaise = emailSendDebitPaise(sendCount);
   if (amountPaise <= 0) return;
 
   await debitWallet({
@@ -112,13 +122,35 @@ export async function chargeJourneyTriggerUsage(params: {
   });
 }
 
+/**
+ * Debit marked-up AI cost for this log row.
+ * Markup on month totals matches Usage page; full slice hits wallet (no free included credit).
+ */
 export async function chargeAiTokenUsage(params: {
   workspaceId: string;
   costInr: number;
   referenceId: string;
   agentId?: string;
 }) {
-  const amountPaise = aiUsageDebitPaise(params.costInr);
+  const rawThis = Math.max(0, params.costInr);
+  if (rawThis <= 0) return;
+
+  const { start, end } = billingMonthRange();
+  const prior = await prisma.tokenUsageLog.aggregate({
+    where: {
+      workspaceId: params.workspaceId,
+      createdAt: { gte: start, lt: end },
+      fromCache: false,
+      NOT: { id: params.referenceId },
+    },
+    _sum: { costInr: true },
+  });
+
+  const rawBefore = prior._sum.costInr ?? 0;
+  const grossBefore = applyAiUsageMarkup(rawBefore);
+  const grossAfter = applyAiUsageMarkup(rawBefore + rawThis);
+  const thisGross = Math.round((grossAfter - grossBefore) * 100) / 100;
+  const amountPaise = thisGross <= 0 ? 0 : ccToDebitPaise(thisGross);
   if (amountPaise <= 0) return;
 
   await debitWallet({

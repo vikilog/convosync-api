@@ -6,6 +6,7 @@ import {
   type CampaignAudienceChannel,
 } from './campaignAudience.service.js';
 import {
+  buildCampaignBodyParams,
   emailVariableRequiresManualValue,
   resolveCampaignEmailVariables,
 } from './campaignEmailVariables.js';
@@ -40,13 +41,6 @@ function resolveSegmentId(audienceType: string, filter: CampaignAudienceFilter):
   return 'all';
 }
 
-function buildBodyParams(
-  variableNames: string[],
-  mappings: Record<string, string>
-): string[] {
-  return variableNames.map((name) => mappings[name]?.trim() ?? '');
-}
-
 async function executeWhatsAppCampaignBroadcast(
   campaignId: string,
   workspaceId: string,
@@ -75,13 +69,14 @@ async function executeWhatsAppCampaignBroadcast(
   const segmentId = resolveSegmentId(campaign.audienceType, filter);
   const contacts = await getCampaignAudienceContacts(workspaceId, 'whatsapp', segmentId);
   const mappings = filter.variableMappings ?? {};
-  const bodyParams = buildBodyParams(template.variables, mappings);
 
-  if (template.variables.length > 0 && bodyParams.some((v) => !v)) {
-    throw new Error('All template variables must be filled in before sending');
+  // Preflight: every variable must have a mapping expression (resolved per contact at send).
+  if (template.variables.length > 0) {
+    const missing = template.variables.filter((name) => !mappings[name]?.trim());
+    if (missing.length > 0) {
+      throw new Error('All template variables must be filled in before sending');
+    }
   }
-
-  const displayContent = renderTemplateBody(template.bodyPattern, bodyParams);
 
   await prisma.campaign.update({
     where: { id: campaignId },
@@ -93,6 +88,14 @@ async function executeWhatsAppCampaignBroadcast(
 
   for (const contact of contacts) {
     try {
+      const bodyParams = buildCampaignBodyParams(template.variables, mappings, contact);
+      if (bodyParams.some((v) => !v.trim())) {
+        errors.push(`${contact.phone}: missing resolved template variable values`);
+        continue;
+      }
+
+      const displayContent = renderTemplateBody(template.bodyPattern, bodyParams);
+
       await assertWhatsAppTemplateAffordable({
         workspaceId,
         templateCategory: template.category,

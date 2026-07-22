@@ -1,4 +1,5 @@
-const VARIABLE_PATTERN = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
+// Allow dotted keys so {{contact.name}} is extracted / replaced (not left literal).
+const VARIABLE_PATTERN = /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g;
 
 export function extractTemplateVariables(...parts: Array<string | null | undefined>): string[] {
   const found = new Set<string>();
