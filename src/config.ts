@@ -78,15 +78,16 @@ export const config = {
     idleTimeoutMinutes: parseInt(process.env.AI_IDLE_TIMEOUT_MINUTES || '15', 10),
     /** Vector similarity >= this → return KB answer with no LLM. */
     similarityHighThreshold: parseFloat(process.env.SIMILARITY_HIGH_THRESHOLD || '0.85'),
-    /** Vector similarity >= this (and < high) → RAG LLM; below → full LLM or escalate. */
-    similarityLowThreshold: parseFloat(process.env.SIMILARITY_LOW_THRESHOLD || '0.60'),
+    /** Vector similarity >= this (and < high) → RAG; below → no KB inject + escalate (default). */
+    similarityLowThreshold: parseFloat(process.env.SIMILARITY_LOW_THRESHOLD || '0.70'),
     hybridTopK: parseInt(process.env.HYBRID_TOP_K || '3', 10),
-    escalateOnLowScore: process.env.AI_ESCALATE_ON_LOW_SCORE === 'true',
+    /** Default true: low/no KB match escalates instead of open-ended full LLM. */
+    escalateOnLowScore: process.env.AI_ESCALATE_ON_LOW_SCORE !== 'false',
     /** Voice stream: slightly looser low bar than chat (optional override). */
     voiceSimilarityLowThreshold: parseFloat(
       process.env.VOICE_SIMILARITY_LOW_THRESHOLD ||
         process.env.SIMILARITY_LOW_THRESHOLD ||
-        '0.60'
+        '0.70'
     ),
     voiceStreamModel: process.env.VOICE_STREAM_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
     voiceMaxOutputTokens: parseInt(

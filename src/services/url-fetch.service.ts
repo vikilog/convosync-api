@@ -1,7 +1,10 @@
 import axios, { AxiosError } from 'axios';
-import * as cheerio from 'cheerio';
 import { prisma } from '../index.js';
-import { indexKnowledgeItemInBackground } from '../modules/ai-agent/knowledge/knowledge-index.service.js';
+import {
+  indexKnowledgeItemInBackground,
+  knowledgeIndexService,
+} from '../modules/ai-agent/knowledge/knowledge-index.service.js';
+import { extractTextFromHtml, wordCountOf } from './html-text-extract.js';
 
 const FETCH_TIMEOUT_MS = 10_000;
 const RATE_LIMIT_MS = 60 * 60 * 1000;
@@ -30,6 +33,8 @@ export function isValidUrl(url: string): boolean {
   }
 }
 
+export { extractTextFromHtml } from './html-text-extract.js';
+
 export async function fetchUrlKnowledge(params: {
   agentId: string;
   workspaceId: string;
@@ -57,18 +62,31 @@ export async function fetchUrlKnowledge(params: {
     },
     orderBy: { createdAt: 'desc' },
   });
-  if (recent) {
+  // Allow retry when the last fetch captured no usable text (e.g. SPA shell before meta fallback).
+  const recentWordCount = Number(
+    (recent?.metadata as { wordCount?: number } | null)?.wordCount ?? -1
+  );
+  if (recent && recentWordCount > 0) {
     throw new UrlFetchError(
       'This URL was fetched recently. Please wait up to an hour before fetching again.',
       'RATE_LIMITED',
       429
     );
   }
+  if (recent && recentWordCount <= 0) {
+    await knowledgeIndexService.deleteItemVectors(params.workspaceId, recent.id);
+    await prisma.aiAgentKnowledgeItem.delete({ where: { id: recent.id } });
+  }
 
   let response;
   try {
     response = await axios.get<string>(normalizedUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ConvoSyncBot/1.0)' },
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
       timeout: FETCH_TIMEOUT_MS,
       maxRedirects: 5,
       responseType: 'text',
@@ -107,32 +125,33 @@ export async function fetchUrlKnowledge(params: {
     );
   }
 
-  const $ = cheerio.load(html);
-  $('script, style, nav, footer, header, .cookie-banner, #cookie-notice').remove();
+  const { title, metaDesc, bodyText, source } = extractTextFromHtml(html);
+  const wordCount = wordCountOf(bodyText);
 
-  const title = $('title').text().trim();
-  const metaDesc = $('meta[name="description"]').attr('content')?.trim() ?? '';
-  const bodyText = $('body')
-    .text()
-    .replace(/\s+/g, ' ')
-    .trim()
-    .substring(0, 5000);
+  if (wordCount === 0) {
+    throw new UrlFetchError(
+      'No readable text found on this page (it may be JavaScript-rendered). Paste the content as a Document or Q&A instead.',
+      'NO_TEXT',
+      422
+    );
+  }
 
-  const wordCount = bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0;
-  const extractedContent = `Title: ${title}\nDescription: ${metaDesc}\nContent: ${bodyText}`;
+  const displayTitle = title || normalizedUrl;
+  const extractedContent = `Title: ${displayTitle}\nDescription: ${metaDesc}\nContent: ${bodyText}`;
   const preview = bodyText.substring(0, 200);
 
   const item = await prisma.aiAgentKnowledgeItem.create({
     data: {
       agentId: params.agentId,
       type: 'online_data',
-      title: title || normalizedUrl,
+      title: displayTitle,
       content: extractedContent,
       url: normalizedUrl,
       metadata: {
         refreshInterval: params.refreshInterval,
         lastFetched: new Date().toISOString(),
         wordCount,
+        extractSource: source,
       },
       status: 'ready',
     },
@@ -142,7 +161,7 @@ export async function fetchUrlKnowledge(params: {
 
   return {
     success: true,
-    title: title || normalizedUrl,
+    title: displayTitle,
     wordCount,
     preview,
     item,

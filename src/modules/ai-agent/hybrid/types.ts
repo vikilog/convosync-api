@@ -3,8 +3,8 @@
  *
  * Score thresholds (env-tunable):
  * - score >= HIGH (default 0.85) → `direct` — return KB answer, no LLM
- * - LOW <= score < HIGH (default 0.60) → `rag` — LLM with matched chunks
- * - score < LOW → `full_llm` (or `escalate` if AI_ESCALATE_ON_LOW_SCORE)
+ * - LOW <= score < HIGH (default 0.70) → `rag` — LLM with matched chunks
+ * - score < LOW → `escalate` by default (AI_ESCALATE_ON_LOW_SCORE=false → full_llm, still KB-gated)
  * - Redis exact hit → `cache`
  */
 export type RetrievalPath = 'cache' | 'direct' | 'rag' | 'full_llm' | 'escalate';

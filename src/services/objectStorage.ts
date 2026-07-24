@@ -37,6 +37,20 @@ export function isObjectStorageEnabled(): boolean {
   return config.aws.enabled;
 }
 
+/** Public (or endpoint-based) HTTPS URL for an object key. Bucket must allow access or use app proxy. */
+export function publicObjectUrl(storageKey: string): string {
+  const key = objectKey(storageKey);
+  const endpoint = config.aws.s3Endpoint;
+  if (endpoint) {
+    // Custom endpoint may already include bucket host (e.g. https://bucket.s3.region.amazonaws.com)
+    if (endpoint.includes(config.aws.bucketName)) {
+      return `${endpoint}/${key}`;
+    }
+    return `${endpoint}/${config.aws.bucketName}/${key}`;
+  }
+  return `https://${config.aws.bucketName}.s3.${config.aws.region}.amazonaws.com/${key}`;
+}
+
 export async function putObject(
   storageKey: string,
   buffer: Buffer,

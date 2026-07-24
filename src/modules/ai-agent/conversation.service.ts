@@ -1,11 +1,23 @@
 import { FastifyInstance } from 'fastify';
-import { classifyIntent, INTENTS } from './intent.service.js';
+import {
+  isMediaCapabilityRefusal,
+  mediaNoMatchReply,
+  mediaSendAck,
+  shouldAutoSendMedia,
+} from './media/media-offer.js';
+import { planAgentMediaAttachment, type MediaPlan } from './media/send-media.service.js';
+import { classifyIntent, INTENTS, looksLikeMediaRequest } from './intent.service.js';
 import { TokenTrackerService } from './token-tracker.service.js';
 import { IdleTimeoutService } from './idle-timeout.service.js';
 import { AiProviderConfigService } from './services/ai-provider-config.service.js';
 import { LlmClient, LlmClientError } from './services/llm-client.service.js';
 import { handleAIAgentQuery } from './hybrid/handle-ai-agent-query.js';
 import type { RetrievalPath } from './hybrid/types.js';
+
+export type ChatMediaAttachment =
+  | { action: 'send'; mediaId: string; title: string; type: string }
+  | { action: 'offer'; mediaId: string; title: string; type: string; offerLine: string }
+  | { action: 'none' };
 
 export class ConversationService {
   private tokenTracker: TokenTrackerService;
@@ -28,6 +40,8 @@ export class ConversationService {
     conversationId?: string;
     message: string;
     channel?: string;
+    /** Inbox Conversation id — used for media dedupe / WhatsApp send planning. */
+    mediaConversationId?: string;
   }): Promise<{
     reply: string;
     conversationId: string;
@@ -39,6 +53,7 @@ export class ConversationService {
     billingMode?: 'convosync' | 'byok';
     retrievalPath?: RetrievalPath;
     topScore?: number | null;
+    mediaAttachment: ChatMediaAttachment;
   }> {
     let llm: LlmClient;
     let billingMode: 'convosync' | 'byok' = 'convosync';
@@ -61,6 +76,7 @@ export class ConversationService {
         intent: 'config_error',
         stage: 'closed',
         billingMode,
+        mediaAttachment: { action: 'none' },
       };
     }
 
@@ -88,7 +104,6 @@ export class ConversationService {
     }
 
     if (params.conversationId) {
-      // Inbox WhatsApp threads must not be killed by preview idle-timeout.
       const isInboxChannel = (params.channel || conversation.channel || '').startsWith('inbox:');
       if (!isInboxChannel) {
         const idleCheck = await this.idleTimeout.checkAndHandleIdle(conversation.id);
@@ -102,6 +117,7 @@ export class ConversationService {
             intent: 'timeout',
             stage: 'closed',
             billingMode,
+            mediaAttachment: { action: 'none' },
           };
         }
       }
@@ -119,6 +135,44 @@ export class ConversationService {
         intent: 'quota_exceeded',
         stage: conversation.stage,
         billingMode,
+        mediaAttachment: { action: 'none' },
+      };
+    }
+
+    const mediaConvId = params.mediaConversationId || conversation.id;
+    const previewChannel = (params.channel || conversation.channel || '') === 'preview';
+
+    // Explicit file/image ask — skip LLM (prevents "capability nahi" / false human escalate).
+    if (looksLikeMediaRequest(params.message)) {
+      const plan = await planAgentMediaAttachment({
+        workspaceId: params.workspaceId,
+        conversationId: mediaConvId,
+        query: params.message,
+        intent: INTENTS.MEDIA_REQUEST,
+        audience: 'customer',
+      });
+      const { reply, mediaAttachment } = this.replyFromMediaPlan(plan, {
+        preview: previewChannel,
+        forceAck: true,
+      });
+      await this.saveMessage(conversation.id, 'user', params.message, 0, INTENTS.MEDIA_REQUEST);
+      await this.saveMessage(conversation.id, 'assistant', reply, 0, INTENTS.MEDIA_REQUEST);
+      await this.prisma.agentChatConversation.update({
+        where: { id: conversation.id },
+        data: { stage: 'intent_identified', detectedIntent: INTENTS.MEDIA_REQUEST },
+      });
+      return {
+        reply,
+        conversationId: conversation.id,
+        fromCache: false,
+        tokensUsed: 0,
+        costInr: 0,
+        intent: INTENTS.MEDIA_REQUEST,
+        stage: 'intent_identified',
+        billingMode,
+        retrievalPath: 'full_llm',
+        topScore: null,
+        mediaAttachment,
       };
     }
 
@@ -127,7 +181,7 @@ export class ConversationService {
       .map((m) => m.content)
       .join(' ');
 
-    const { intent, tokensUsed: intentTokens } = await classifyIntent(
+    let { intent, tokensUsed: intentTokens } = await classifyIntent(
       llm,
       params.message,
       recentContext
@@ -146,7 +200,7 @@ export class ConversationService {
       billingMode,
     });
 
-    if (intent === INTENTS.HUMAN_REQUEST) {
+    if (intent === INTENTS.HUMAN_REQUEST && !looksLikeMediaRequest(params.message)) {
       const reply =
         'Bilkul! Main aapko abhi ek human agent se connect karta hun. Thoda wait karein. 🙏';
       await this.saveMessage(conversation.id, 'user', params.message, 0, intent);
@@ -162,7 +216,11 @@ export class ConversationService {
         billingMode,
         retrievalPath: 'escalate',
         topScore: null,
+        mediaAttachment: { action: 'none' },
       };
+    }
+    if (intent === INTENTS.HUMAN_REQUEST && looksLikeMediaRequest(params.message)) {
+      intent = INTENTS.MEDIA_REQUEST;
     }
 
     const stage = this.determineStage(conversation, intent);
@@ -184,8 +242,36 @@ export class ConversationService {
       },
     });
 
-    const reply =
-      hybrid.reply || 'Sorry, kuch galat hua. Please dobara try karein.';
+    let reply = hybrid.reply || 'Sorry, kuch galat hua. Please dobara try karein.';
+    let mediaAttachment: ChatMediaAttachment = { action: 'none' };
+
+    const skipMedia = new Set<string>([
+      INTENTS.GREETING,
+      INTENTS.FAREWELL,
+      INTENTS.HUMAN_REQUEST,
+    ]);
+    if (!skipMedia.has(intent)) {
+      const plan = await planAgentMediaAttachment({
+        workspaceId: params.workspaceId,
+        conversationId: mediaConvId,
+        query: params.message,
+        intent,
+        audience: 'customer',
+      });
+      const shaped = this.replyFromMediaPlan(plan, {
+        preview: previewChannel,
+        forceAck: false,
+        baseReply: reply,
+      });
+      reply = shaped.reply;
+      mediaAttachment = shaped.mediaAttachment;
+      if (isMediaCapabilityRefusal(reply) && mediaAttachment.action !== 'none') {
+        reply =
+          mediaAttachment.action === 'send'
+            ? mediaSendAck(mediaAttachment.title)
+            : mediaAttachment.offerLine;
+      }
+    }
 
     const { costInr } = await this.tokenTracker.logUsage({
       workspaceId: params.workspaceId,
@@ -226,6 +312,54 @@ export class ConversationService {
       billingMode,
       retrievalPath: hybrid.path,
       topScore: hybrid.topScore,
+      mediaAttachment,
+    };
+  }
+
+  private replyFromMediaPlan(
+    plan: MediaPlan,
+    opts: { preview: boolean; forceAck: boolean; baseReply?: string }
+  ): { reply: string; mediaAttachment: ChatMediaAttachment } {
+    if (plan.kind === 'send') {
+      const title = plan.asset.title;
+      let reply: string;
+      if (opts.preview) {
+        reply = `${opts.baseReply || mediaSendAck(title)}\n\n📎 Will send on WhatsApp: ${title} (${plan.asset.type})`;
+      } else if (opts.forceAck || !opts.baseReply) {
+        reply = mediaSendAck(title);
+      } else {
+        // e.g. pricing Q&A — keep text answer; WhatsApp inbound attaches the file.
+        reply = opts.baseReply;
+      }
+      return {
+        reply,
+        mediaAttachment: {
+          action: 'send',
+          mediaId: plan.asset.id,
+          title,
+          type: plan.asset.type,
+        },
+      };
+    }
+    if (plan.kind === 'offer') {
+      const base = opts.forceAck || !opts.baseReply ? plan.offerLine : `${opts.baseReply}\n\n${plan.offerLine}`;
+      return {
+        reply: base,
+        mediaAttachment: {
+          action: 'offer',
+          mediaId: plan.asset.id,
+          title: plan.asset.title,
+          type: plan.asset.type,
+          offerLine: plan.offerLine,
+        },
+      };
+    }
+    if (opts.forceAck || shouldAutoSendMedia(INTENTS.MEDIA_REQUEST)) {
+      return { reply: mediaNoMatchReply(), mediaAttachment: { action: 'none' } };
+    }
+    return {
+      reply: opts.baseReply || mediaNoMatchReply(),
+      mediaAttachment: { action: 'none' },
     };
   }
 

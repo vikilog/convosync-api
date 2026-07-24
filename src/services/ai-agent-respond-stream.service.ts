@@ -12,6 +12,14 @@ import { searchKnowledgeVectors } from '../modules/ai-agent/hybrid/search-knowle
 import { checkRedisCache, setRedisCache } from '../modules/ai-agent/hybrid/redis-cache.js';
 import { extractDirectAnswer } from '../modules/ai-agent/hybrid/extract-answer.js';
 import { recordRetrievalPath } from '../modules/ai-agent/hybrid/analytics.js';
+import {
+  KB_BOUND_SYSTEM_PREFIX,
+  KB_OUT_OF_SCOPE_REPLY,
+  buildKbOutOfScopeEscalation,
+  filterHitsByMinScore,
+  guardKbBoundReply,
+  isConversationalTurn,
+} from '../modules/ai-agent/hybrid/kb-bound.js';
 import { INTENTS, type Intent } from '../modules/ai-agent/intent.service.js';
 import { AiProviderConfigService } from '../modules/ai-agent/services/ai-provider-config.service.js';
 import { LlmClient, LlmClientError } from '../modules/ai-agent/services/llm-client.service.js';
@@ -21,11 +29,16 @@ function aiAgentRuntime(): FastifyInstance {
   return { prisma, redis: getRedis() } as unknown as FastifyInstance;
 }
 
-const ESCALATE_REPLY =
-  'Bilkul! Main aapko abhi ek human agent se connect karta hun. Thoda wait karein.';
+const ESCALATE_REPLY = KB_OUT_OF_SCOPE_REPLY;
 
 const HUMAN_HEURISTIC =
   /\b(human|agent|person|representative|operator|support team|real person|insaan|insan|aadmi|agent se|baat karna|talk to (a |an )?(human|person|agent))\b/i;
+
+const GREETING_HEURISTIC =
+  /^(hi|hello|hey|hii|helo|namaste|namaskar|good\s*(morning|afternoon|evening)|yo|hola)\b/i;
+
+const FAREWELL_HEURISTIC =
+  /^(bye|goodbye|good\s*bye|see\s*you|take\s*care|thanks?\s*(bye|goodbye)?|thank\s*you|thx|ok\s*bye)\b/i;
 
 export type VoiceStreamEvent =
   | { event: 'meta'; data: { agentId: string; path: RetrievalPath; topScore: number | null } }
@@ -37,7 +50,10 @@ export type VoiceStreamEvent =
   | { event: 'error'; data: { error: string; code: string } };
 
 function heuristicIntent(message: string): Intent {
-  if (HUMAN_HEURISTIC.test(message)) return INTENTS.HUMAN_REQUEST;
+  const text = message.trim();
+  if (HUMAN_HEURISTIC.test(text)) return INTENTS.HUMAN_REQUEST;
+  if (GREETING_HEURISTIC.test(text)) return INTENTS.GREETING;
+  if (FAREWELL_HEURISTIC.test(text)) return INTENTS.FAREWELL;
   return INTENTS.GENERAL;
 }
 
@@ -200,12 +216,24 @@ export async function* respondAiAgentTurnStream(input: {
     query: text,
     topK: config.ai.hybridTopK,
     resolvePath: (s) =>
-      s.ok ? decideRetrievalPath(s.topScore, high, low, escalateOnLow) : 'full_llm',
+      s.ok ? decideRetrievalPath(s.topScore, high, low, escalateOnLow) : 'escalate',
   });
 
-  let path: Exclude<RetrievalPath, 'cache'> = search.ok
-    ? decideRetrievalPath(search.topScore, high, low, escalateOnLow)
-    : 'full_llm';
+  const confidentHits = filterHitsByMinScore(search.hits, low);
+  const stageHint =
+    chat.messageCount === 0 ? 'greeting' : chat.stage || 'intent_identified';
+  const conversational = isConversationalTurn(intent, stageHint);
+  let path: Exclude<RetrievalPath, 'cache'> = conversational
+    ? 'full_llm'
+    : !search.ok
+      ? 'escalate'
+      : decideRetrievalPath(
+          confidentHits[0]?.score ??
+            (search.topScore != null && search.topScore < low ? search.topScore : null),
+          high,
+          low,
+          escalateOnLow
+        );
 
   let reply = '';
   let promptTokens = 0;
@@ -213,39 +241,57 @@ export async function* respondAiAgentTurnStream(input: {
   let kbChunksLoaded = 0;
   let skillsLoaded: string[] = [];
 
-  if (path === 'direct' && search.hits[0]) {
-    reply = extractDirectAnswer(search.hits[0].content, text);
+  if (path === 'direct' && confidentHits[0]) {
+    reply = extractDirectAnswer(confidentHits[0].content, text);
     if (!reply.trim()) {
       path = 'rag';
     } else {
-      kbChunksLoaded = 1;
-      yield { event: 'meta', data: { agentId, path: 'direct', topScore: search.topScore } };
-      yield { event: 'token', data: { text: reply } };
+      const guarded = guardKbBoundReply({
+        reply,
+        kbText: confidentHits[0].content,
+      });
+      reply = guarded.reply;
+      if (guarded.escalate) path = 'escalate';
+      else {
+        kbChunksLoaded = 1;
+        yield { event: 'meta', data: { agentId, path: 'direct', topScore: search.topScore } };
+        yield { event: 'token', data: { text: reply } };
+      }
     }
   }
 
   if (path === 'escalate') {
-    reply = ESCALATE_REPLY;
+    reply = buildKbOutOfScopeEscalation(
+      search.topScore != null && search.topScore < low ? 'low_confidence' : 'no_kb_match'
+    ).reply;
     yield { event: 'meta', data: { agentId, path, topScore: search.topScore } };
     yield { event: 'token', data: { text: reply } };
   }
 
   if (path === 'rag' || path === 'full_llm') {
+    if (path === 'rag' && confidentHits.length === 0) {
+      path = 'escalate';
+      reply = buildKbOutOfScopeEscalation('low_confidence').reply;
+      yield { event: 'meta', data: { agentId, path, topScore: search.topScore } };
+      yield { event: 'token', data: { text: reply } };
+    } else {
     yield {
       event: 'meta',
       data: { agentId, path, topScore: search.topScore },
     };
 
-    let messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+    let messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+    let kbTextForGuard = '';
 
     if (path === 'rag') {
-      const kbBlock = search.hits
+      const kbBlock = confidentHits
         .map(
           (h, i) =>
             `[${i + 1}] (score=${h.score.toFixed(3)}) ${h.title}\n${h.content.slice(0, 1200)}`
         )
         .join('\n\n');
-      const systemPrompt = `You are ${agent.name}, a helpful support assistant.
+      kbTextForGuard = confidentHits.map((h) => `${h.title}\n${h.content}`).join('\n');
+      const systemPrompt = `${KB_BOUND_SYSTEM_PREFIX}You are ${agent.name}, a helpful support assistant.
 Tone: ${agent.toneOfVoice || 'professional'}
 Business: ${agent.brandBackground || 'Help the customer using the knowledge below.'}
 
@@ -255,13 +301,13 @@ ${kbBlock}
 RULES:
 - Rephrase/adapt the knowledge to answer the user's exact question.
 - Keep the reply concise for voice (max 2-3 short sentences).
-- If the knowledge does not cover the question, say you will connect them with a human.`;
+- If the knowledge does not cover the question, reply with the out-of-scope fallback and escalate.`;
       messages = [
         { role: 'system', content: systemPrompt },
         ...history.slice(-config.ai.maxHistoryMessages),
         { role: 'user', content: text },
       ];
-      kbChunksLoaded = search.hits.length;
+      kbChunksLoaded = confidentHits.length;
     } else {
       const builder = new ContextBuilderService(fastify);
       const stage =
@@ -278,38 +324,70 @@ RULES:
         currentMessage: text,
         stage,
       });
-      messages = [
-        { role: 'system', content: context.systemPrompt },
-        ...context.messages,
-        { role: 'user', content: text },
-      ];
-      skillsLoaded = context.skillsLoaded;
-      kbChunksLoaded = context.kbChunksLoaded;
+
+      if (
+        context.kbChunksLoaded === 0 &&
+        stage !== 'greeting' &&
+        intent !== 'greeting' &&
+        intent !== 'farewell'
+      ) {
+        path = 'escalate';
+        reply = buildKbOutOfScopeEscalation('no_kb_match').reply;
+        yield { event: 'token', data: { text: reply } };
+      } else {
+        messages = [
+          { role: 'system', content: context.systemPrompt },
+          ...context.messages,
+          { role: 'user', content: text },
+        ];
+        skillsLoaded = context.skillsLoaded;
+        kbChunksLoaded = context.kbChunksLoaded;
+        kbTextForGuard =
+          context.kbChunksLoaded > 0
+            ? (context.systemPrompt.split('KNOWLEDGE BASE:')[1] ?? '').split('\nRULES:')[0] ??
+              ''
+            : '';
+      }
     }
 
-    try {
-      const gen = llm.streamComplete(messages, {
-        maxTokens,
-        temperature: path === 'rag' ? 0.5 : 0.7,
-        model: voiceModel,
-      });
-      let next = await gen.next();
-      while (!next.done) {
-        const chunk = next.value.text;
-        if (chunk) {
-          reply += chunk;
-          yield { event: 'token', data: { text: chunk } };
+    if (messages.length > 0) {
+      try {
+        const gen = llm.streamComplete(messages, {
+          maxTokens,
+          temperature: path === 'rag' ? 0.5 : 0.7,
+          model: voiceModel,
+        });
+        let next = await gen.next();
+        while (!next.done) {
+          const chunk = next.value.text;
+          if (chunk) {
+            reply += chunk;
+            yield { event: 'token', data: { text: chunk } };
+          }
+          next = await gen.next();
         }
-        next = await gen.next();
+        const final = next.value;
+        reply = final.content || reply;
+        promptTokens = final.usage.promptTokens;
+        completionTokens = final.usage.completionTokens;
+
+        if (kbTextForGuard || kbChunksLoaded === 0) {
+          const guarded = guardKbBoundReply({
+            reply,
+            kbText: kbTextForGuard,
+          });
+          if (guarded.replaced) {
+            // Stream already sent model tokens; replace persisted reply for DB/SSE done.
+            reply = guarded.reply;
+            path = 'escalate';
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'LLM stream failed';
+        yield { event: 'error', data: { error: message, code: 'LLM_STREAM_FAILED' } };
+        return;
       }
-      const final = next.value;
-      reply = final.content || reply;
-      promptTokens = final.usage.promptTokens;
-      completionTokens = final.usage.completionTokens;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'LLM stream failed';
-      yield { event: 'error', data: { error: message, code: 'LLM_STREAM_FAILED' } };
-      return;
+    }
     }
   }
 

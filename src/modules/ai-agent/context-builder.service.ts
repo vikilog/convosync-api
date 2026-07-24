@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { KB_NO_MATCH_SYSTEM_PREFIX } from './hybrid/kb-bound.js';
 import { Intent, INTENT_TO_KB_TAGS, INTENT_TO_SKILLS } from './intent.service.js';
 import { retrieveKnowledgeChunks } from './knowledge/knowledge-retrieval.js';
 
@@ -47,11 +48,19 @@ export class ContextBuilderService {
     if (!agent) throw new Error('Agent not found');
 
     const relevantSkillTitles = INTENT_TO_SKILLS[params.intent] || [];
-    const relevantSkills = agent.skills.filter((skill) =>
-      relevantSkillTitles.some((title) =>
+    const msg = params.currentMessage.toLowerCase();
+    const relevantSkills = agent.skills.filter((skill) => {
+      const byIntent = relevantSkillTitles.some((title) =>
         skill.title.toLowerCase().includes(title.toLowerCase())
-      )
-    );
+      );
+      if (byIntent) return true;
+      // Also load when the user message hits the skill title/trigger keywords.
+      const hay = `${skill.title} ${skill.trigger}`.toLowerCase();
+      return hay
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length >= 5)
+        .some((t) => msg.includes(t));
+    });
 
     const relevantTags = INTENT_TO_KB_TAGS[params.intent] || [];
     let relevantKB = agent.knowledgeItems;
@@ -134,7 +143,33 @@ and inform them that a human agent will be with them shortly.
 Be empathetic. 2 sentences max.`;
     }
 
-    let prompt = `You are ${agent.name}, an AI assistant.
+    if (intent === 'media_request') {
+      let mediaPrompt = `You are ${agent.name}. The user is asking for a file/image.
+Tone: ${agent.toneOfVoice || 'professional'}
+Language: ${agent.fallbackLanguage || 'english'}
+
+CRITICAL:
+- You CAN share images/PDFs — the system attaches them from Media Gallery after your reply.
+- NEVER say you lack capability to share images/files.
+- NEVER escalate to a human for a media/file request.
+- Reply in 1 short sentence confirming you are sending it (or checking the gallery).
+`;
+      if (relevantSkills.length > 0) {
+        mediaPrompt += `\nINSTRUCTIONS FOR THIS QUERY:\n`;
+        relevantSkills.forEach((skill) => {
+          mediaPrompt += `${skill.instructions}\n`;
+        });
+      }
+      return mediaPrompt;
+    }
+
+    let prompt = '';
+
+    if (kbChunks.length === 0) {
+      prompt += KB_NO_MATCH_SYSTEM_PREFIX;
+    }
+
+    prompt += `You are ${agent.name}, an AI assistant.
 
 BUSINESS:
 ${agent.brandBackground || 'We are here to help our customers.'}
@@ -160,9 +195,9 @@ LANGUAGE: ${agent.fallbackLanguage || 'english'}
 
     prompt += `\nRULES:
 - Keep responses concise (max 3-4 sentences)
-- Never make up information not in knowledge base
-- If unsure, say you'll connect them with a human agent
-- Always end with a helpful follow-up question`;
+- Answer ONLY from the knowledge base above — never from general/training knowledge
+- If knowledge base is empty or does not cover the question, use the out-of-scope fallback and escalate
+- Never invent product, pricing, policy, or competitor facts`;
 
     return prompt;
   }

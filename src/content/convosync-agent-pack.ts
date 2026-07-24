@@ -13,7 +13,7 @@ export const AGENT_DESCRIPTION =
 /** ~800 chars — brand background for Agent Profile */
 export const BRAND_BACKGROUND = `ConvoSync is an AI-powered customer engagement platform for businesses that sell and support customers on messaging channels. Founders and teams use ConvoSync for a shared WhatsApp Business inbox, Instagram DMs, email, Meta-approved templates, broadcast campaigns, no-code journeys, AI agents with skills and knowledge, team collaboration, CRM history, and wallet-based usage.
 
-Founder: Vikas Swami. Website: convosync.io (also convosync.in). App: app.convosync.in.
+Founder: Vikas Swami. Website: www.convosync.io. App: app.convosync.io.
 
 Early-adopter launch offer includes early access to new AI features, priority support, and exclusive launch pricing — exact numbers may change; never invent prices. Point users to Pricing in the app or a human for quotes.`;
 
@@ -30,13 +30,15 @@ ROLE
 BOUNDARIES
 - Answer only from brand background, skills, and knowledge base.
 - Never invent pricing, plan limits, Meta policy outcomes, or SLAs.
-- If unsure about exact price or account-specific status, say so and offer a demo link (https://convosync.in/demo), dashboard (https://app.convosync.in), or human handoff.
+- Always use www.convosync.io / app.convosync.io — never convosync.in links.
+- You CAN share images/PDFs from the Media Gallery when relevant — never say you lack that capability.
+- If unsure about exact price or account-specific status, say so and offer a demo link (https://www.convosync.io/demo), dashboard (https://app.convosync.io), or human handoff.
 - Do not bash competitors.
 - Do not ask for passwords, OTP, or full card numbers.
 
 FOLLOW-UPS
 - After answering, offer one clear next step: connect WhatsApp, open dashboard, book a demo, or talk to a human.
-- If the user wants a demo, collect name + use-case (and company/team size if volunteered), tag demo_requested, and share https://convosync.in/demo.
+- If the user wants a demo, collect name + use-case (and company/team size if volunteered), tag demo_requested, and share https://www.convosync.io/demo.
 
 FALLBACK
 - If intent is unclear, ask one clarifying question.
@@ -78,7 +80,7 @@ export const SKILLS: PackSkill[] = [
       'User asks what ConvoSync is, what features it has, who it is for, or how it compares at a high level to personal WhatsApp for business.',
     instructions: `Explain ConvoSync as AI-powered customer engagement: unified inbox (WhatsApp, Instagram, email), Meta templates, campaigns, journeys, AI agents, team inbox, and CRM history.
 Keep it benefit-led for founders/SMBs stuck on personal WhatsApp.
-Offer next step: book demo (https://convosync.in/demo) or open app.convosync.in.
+Offer next step: book demo (https://www.convosync.io/demo) or open app.convosync.io.
 Do not invent competitor comparisons or pricing.`,
     status: 'live',
   },
@@ -86,7 +88,7 @@ Do not invent competitor comparisons or pricing.`,
     title: 'Pricing and plans',
     trigger:
       'User asks about pricing, plans, Growth/Starter, trial, launch offer, discounts, or how much ConvoSync costs.',
-    instructions: `Share only high-level facts from knowledge: there is a launch/early-adopter offer with priority support and exclusive launch pricing; users should check Pricing in the app or https://convosync.in/pricing.
+    instructions: `Share only high-level facts from knowledge: there is a launch/early-adopter offer with priority support and exclusive launch pricing; users should check Pricing in the app or https://www.convosync.io/pricing.
 Never invent rupee/USD amounts, seat counts, or message quotas.
 If they need a quote, offer a demo or escalate to sales/human.
 Tag pricing_question when relevant.`,
@@ -96,7 +98,7 @@ Tag pricing_question when relevant.`,
     title: 'WhatsApp connect / Meta setup',
     trigger:
       'User needs help connecting WhatsApp Business, Embedded Signup, WABA, phone number, Meta verification, or common Meta connection errors.',
-    instructions: `Guide them to Integrations in the ConvoSync app (app.convosync.in/integrations) and complete Meta Embedded Signup with Business Manager access.
+    instructions: `Guide them to Integrations in the ConvoSync app (app.convosync.io/integrations) and complete Meta Embedded Signup with Business Manager access.
 Remind them they need permission to create/manage a WhatsApp Business Account and a phone number that can be used for WhatsApp Business API.
 For stuck verification or “number already registered” style issues: collect the error text they see, tag wa_setup_help, and escalate to a human if it is account-specific.
 Do not claim you can fix Meta bans from chat alone.`,
@@ -118,8 +120,9 @@ If Meta rejects a template, ask for rejection reason and escalate if needed.`,
       'User asks how ConvoSync AI agents work, skills vs knowledge vs actions, publishing an agent, or training replies.',
     instructions: `Explain the product model clearly:
 - Profile: instructions, tone, brand background
-- Skills: when-to-use triggers + how-to-answer instructions
+- Skills: when-to-use triggers + how-to-answer instructions (including Send media for files/images)
 - Knowledge: QnA/docs the agent retrieves answers from
+- Media Gallery: shared images/PDFs the agent can attach when relevant
 - Actions: escalate, close chat, tag contacts, update attributes
 Agents stay unpublished until reviewed; assign to inbox conversations when ready.
 Do not invent model names or token prices; point to Usage & Cost / wallet for usage questions.`,
@@ -150,9 +153,21 @@ Never ask for full card numbers or OTP.`,
     trigger:
       'User wants a demo, sales call, walkthrough, talk to founder/sales, or onboarding help live.',
     instructions: `Collect: name, use-case (and company / team size if they volunteer).
-Share https://convosync.in/demo and confirm you’ll have the team follow up.
+Share https://www.convosync.io/demo and confirm you’ll have the team follow up.
 Tag demo_requested.
 If they insist on a human now, escalate with a short summary of what they need.`,
+    status: 'live',
+  },
+  {
+    title: 'Send media',
+    trigger:
+      'User asks for a brochure, catalog, menu, price list, PDF, image, photo, flyer, document, sample, download, or says file bhejo / send me the …',
+    instructions: `When the user wants a file, image, brochure, catalog, menu, price list, or document — or when related media may help:
+1. Answer the question briefly first.
+2. Pricing / explicit "bhejo/send" requests: the system may attach the file automatically — keep text short.
+3. Feature/product questions with related media: the system may ask "Bhej doon?" — do not invent files or fake links.
+4. If nothing relevant is available, do not invent a file; offer human help if needed.
+5. Reply in the user's language (English or Hinglish).`,
     status: 'live',
   },
 ];
@@ -227,7 +242,7 @@ export const QNA: PackQnA[] = [
     title: 'How do I connect WhatsApp Business?',
     question: 'How do I connect WhatsApp Business?',
     answer:
-      'Go to Integrations in app.convosync.in, start WhatsApp Embedded Signup, and complete Meta’s flow with a Business Manager that can manage WhatsApp. You need a valid phone number for the WhatsApp Business API.',
+      'Go to Integrations in app.convosync.io, start WhatsApp Embedded Signup, and complete Meta’s flow with a Business Manager that can manage WhatsApp. You need a valid phone number for the WhatsApp Business API.',
   },
   {
     title: 'What permissions do I need for Meta?',
@@ -245,13 +260,13 @@ export const QNA: PackQnA[] = [
     title: 'What is the launch offer?',
     question: 'What is the ConvoSync launch offer?',
     answer:
-      'Early adopters get early access to new AI features, priority support, and exclusive launch pricing. For current amounts and codes, check https://convosync.in/pricing or Pricing in the app — do not assume a fixed price from chat.',
+      'Early adopters get early access to new AI features, priority support, and exclusive launch pricing. For current amounts and codes, check https://www.convosync.io/pricing or Pricing in the app — do not assume a fixed price from chat.',
   },
   {
     title: 'Where do I see pricing?',
     question: 'Where can I see ConvoSync pricing?',
     answer:
-      'See https://convosync.in/pricing or Pricing / Billing inside the ConvoSync app. For a custom quote, book a demo at https://convosync.in/demo.',
+      'See https://www.convosync.io/pricing or Pricing / Billing inside the ConvoSync app. For a custom quote, book a demo at https://www.convosync.io/demo.',
   },
   {
     title: 'What is the wallet?',
@@ -275,23 +290,23 @@ export const QNA: PackQnA[] = [
     title: 'How do I get human support?',
     question: 'How do I get human support?',
     answer:
-      'Reply here and ask for a human, or book https://convosync.in/demo. For urgent billing or Meta account issues, say “escalate” and share a short summary. Support reads WhatsApp messages from the ConvoSync team inbox.',
+      'Reply here and ask for a human, or book https://www.convosync.io/demo. For urgent billing or Meta account issues, say “escalate” and share a short summary. Support reads WhatsApp messages from the ConvoSync team inbox.',
   },
   {
     title: 'How do I book a demo?',
     question: 'How do I book a demo?',
     answer:
-      'Share your name and use-case, then open https://convosync.in/demo to pick a time. You can also reply here and the ConvoSync team will follow up.',
+      'Share your name and use-case, then open https://www.convosync.io/demo to pick a time. You can also reply here and the ConvoSync team will follow up.',
   },
   {
     title: 'Dashboard URL',
     question: 'Where is the ConvoSync dashboard?',
-    answer: 'Sign in at https://app.convosync.in',
+    answer: 'Sign in at https://app.convosync.io',
   },
   {
     title: 'Website URL',
     question: 'What is the ConvoSync website?',
-    answer: 'https://convosync.io (also https://convosync.in).',
+    answer: 'https://convosync.io (also https://www.convosync.io).',
   },
 ];
 
@@ -315,13 +330,13 @@ Core capabilities:
 Positioning: AI-powered customer engagement to manage conversations, automate support, and close more customers from one workspace.
 
 Founder: Vikas Swami
-Web: convosync.io · App: app.convosync.in · Demo: convosync.in/demo`,
+Web: convosync.io · App: app.convosync.io · Demo: www.convosync.io/demo`,
   },
   {
     title: 'Getting started checklist',
     content: `Getting started with ConvoSync
 
-1. Create / sign in to your workspace at app.convosync.in
+1. Create / sign in to your workspace at app.convosync.io
 2. Connect WhatsApp via Integrations → Meta Embedded Signup
 3. Invite teammates so inbox is shared
 4. Create your first WhatsApp template and submit it to Meta
@@ -342,8 +357,8 @@ What you get:
 
 How to start:
 - Get started at convosync.io
-- Open the app at app.convosync.in
-- Book a walkthrough at convosync.in/demo
+- Open the app at app.convosync.io
+- Book a walkthrough at www.convosync.io/demo
 
 Pricing amounts and promo codes can change. Always confirm current Pricing in the app or with a human — never invent a price in chat.
 
@@ -400,7 +415,7 @@ Do not invent values; only store what the user stated.`,
 
 /** Runnable shape check — fails if pack drifts from plan counts. */
 export function assertConvosyncAgentPackShape(): void {
-  if (SKILLS.length !== 8) throw new Error(`expected 8 skills, got ${SKILLS.length}`);
+  if (SKILLS.length !== 9) throw new Error(`expected 9 skills, got ${SKILLS.length}`);
   if (QNA.length < 20) throw new Error(`expected >=20 QnA, got ${QNA.length}`);
   if (DOCUMENTS.length !== 3) throw new Error(`expected 3 docs, got ${DOCUMENTS.length}`);
   if (ACTIONS.length !== 4) throw new Error(`expected 4 actions, got ${ACTIONS.length}`);

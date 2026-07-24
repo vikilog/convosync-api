@@ -10,6 +10,7 @@ export const INTENTS = {
   COMPLAINT: 'complaint',
   FAREWELL: 'farewell',
   HUMAN_REQUEST: 'human_request',
+  MEDIA_REQUEST: 'media_request',
   OUT_OF_SCOPE: 'out_of_scope',
   GENERAL: 'general',
 } as const;
@@ -17,18 +18,41 @@ export const INTENTS = {
 export type Intent = (typeof INTENTS)[keyof typeof INTENTS];
 
 export const INTENT_TO_SKILLS: Record<string, string[]> = {
-  pricing: ['Pricing Inquiry'],
-  feature_question: ['Feature Explanation'],
-  technical_support: ['Technical Support'],
-  onboarding: ['Onboarding Assistance'],
-  demo_request: ['Demo Request'],
+  pricing: ['Pricing Inquiry', 'Pricing and plans', 'Send media'],
+  feature_question: ['Feature Explanation', 'Product overview', 'Send media'],
+  technical_support: ['Technical Support', 'WhatsApp connect'],
+  onboarding: ['Onboarding Assistance', 'WhatsApp connect'],
+  demo_request: ['Demo Request', 'Book demo'],
   greeting: [],
   farewell: [],
   complaint: ['Technical Support'],
   human_request: [],
+  media_request: ['Send media'],
   out_of_scope: [],
   general: [],
 };
+
+/** Explicit ask for a human — not "AI agent" product talk or media sends. */
+export function looksLikeHumanRequest(message: string): boolean {
+  return /\b(talk\s+to\s+(a\s+)?human|real\s+person|human\s+agent|live\s+agent|customer\s+care|representative|agent\s+se\s+baat|insan\s+se\s+baat|humano?\s+se\s+baat)\b/i.test(
+    message
+  );
+}
+
+/** User wants a file/image from Media Gallery. */
+export function looksLikeMediaRequest(message: string): boolean {
+  return /\b(image|photo|pdf|brochure|catalog|catalogue|menu|price\s*list|document|flyer|file|download|pic|picture|intro\s*image|bhejo|bhej\s*do|dedo|de\s*do|dikhao?|send\s+(me\s+)?(the\s+)?|share\s+(me\s+)?(the\s+)?)\b/i.test(
+    message
+  );
+}
+
+/** Correct common LLM mislabels (e.g. media ask → human_request). */
+export function refineIntent(intent: Intent, message: string): Intent {
+  if (looksLikeHumanRequest(message)) return INTENTS.HUMAN_REQUEST;
+  if (looksLikeMediaRequest(message)) return INTENTS.MEDIA_REQUEST;
+  if (intent === INTENTS.HUMAN_REQUEST) return INTENTS.GENERAL;
+  return intent;
+}
 
 export const INTENT_TO_KB_TAGS: Record<string, string[]> = {
   pricing: ['pricing', 'plans', 'billing'],
@@ -58,10 +82,11 @@ Rules:
 - feature_question: how does X work, what is X feature
 - technical_support: not working, error, problem, issue, bug
 - onboarding: new user, setup, getting started, kahan se start
-- demo_request: demo, show me, presentation, call schedule
+- demo_request: demo, show me a product walkthrough, presentation, call schedule
 - complaint: frustrated, angry, not happy, worst
 - farewell: bye, thanks, goodbye, done
-- human_request: talk to human, real person, agent chahiye
+- media_request: send/share image, photo, PDF, brochure, catalog, menu, price list, document, file bhejo
+- human_request: ONLY explicit ask for a human/real person/live agent (talk to human, agent se baat). NEVER for send image/PDF/file requests.
 - out_of_scope: completely unrelated to the business
 - general: everything else
 
@@ -85,15 +110,15 @@ Respond with ONLY a JSON object:
 
   try {
     const parsed = JSON.parse(result.content) as { intent?: string; confidence?: number };
-    const intent = Object.values(INTENTS).includes(parsed.intent as Intent)
+    const raw = Object.values(INTENTS).includes(parsed.intent as Intent)
       ? (parsed.intent as Intent)
       : INTENTS.GENERAL;
     return {
-      intent,
+      intent: refineIntent(raw, message),
       confidence: parsed.confidence || 0.8,
       tokensUsed,
     };
   } catch {
-    return { intent: INTENTS.GENERAL, confidence: 0.5, tokensUsed };
+    return { intent: refineIntent(INTENTS.GENERAL, message), confidence: 0.5, tokensUsed };
   }
 }

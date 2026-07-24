@@ -326,7 +326,9 @@ export async function uploadWhatsAppMedia(
   const form = new FormData();
   form.append('messaging_product', 'whatsapp');
   form.append('type', mimeType);
-  const blob = new Blob([buffer], { type: mimeType });
+  // Node fetch/Blob: pass Uint8Array (raw Buffer can fail in some runtimes)
+  const bytes = new Uint8Array(buffer);
+  const blob = new Blob([bytes], { type: mimeType });
   form.append('file', blob, fileName || `upload.${extensionForMime(mimeType, fileName)}`);
 
   const res = await fetch(`${GRAPH}/${phoneNumberId}/media`, {
@@ -356,6 +358,37 @@ export async function sendWhatsAppMediaMessage(
   caption?: string,
   fileName?: string
 ): Promise<SendWhatsAppResult> {
+  return sendWhatsAppMediaPayload(waToken, phoneNumberId, to, kind, {
+    id: waMediaId,
+    caption,
+    filename: fileName,
+  });
+}
+
+/** Send image/document/video by public HTTPS link (fallback when media upload fails). */
+export async function sendWhatsAppMediaByLink(
+  waToken: string,
+  phoneNumberId: string,
+  to: string,
+  kind: Exclude<WhatsAppMessageKind, 'text' | 'location' | 'sticker' | 'audio'>,
+  link: string,
+  caption?: string,
+  fileName?: string
+): Promise<SendWhatsAppResult> {
+  return sendWhatsAppMediaPayload(waToken, phoneNumberId, to, kind, {
+    link,
+    caption,
+    filename: fileName,
+  });
+}
+
+async function sendWhatsAppMediaPayload(
+  waToken: string,
+  phoneNumberId: string,
+  to: string,
+  kind: Exclude<WhatsAppMessageKind, 'text' | 'location' | 'sticker'>,
+  media: { id?: string; link?: string; caption?: string; filename?: string }
+): Promise<SendWhatsAppResult> {
   const recipient = normalizeWhatsAppRecipient(to);
   const payload: Record<string, unknown> = {
     messaging_product: 'whatsapp',
@@ -363,12 +396,14 @@ export async function sendWhatsAppMediaMessage(
     type: kind,
   };
 
-  const mediaPayload: Record<string, unknown> = { id: waMediaId };
-  if (caption?.trim() && (kind === 'image' || kind === 'video' || kind === 'document')) {
-    mediaPayload.caption = caption.trim();
+  const mediaPayload: Record<string, unknown> = {};
+  if (media.id) mediaPayload.id = media.id;
+  if (media.link) mediaPayload.link = media.link;
+  if (media.caption?.trim() && (kind === 'image' || kind === 'video' || kind === 'document')) {
+    mediaPayload.caption = media.caption.trim();
   }
-  if (kind === 'document' && fileName?.trim()) {
-    mediaPayload.filename = fileName.trim();
+  if (kind === 'document' && media.filename?.trim()) {
+    mediaPayload.filename = media.filename.trim();
   }
   payload[kind] = mediaPayload;
 

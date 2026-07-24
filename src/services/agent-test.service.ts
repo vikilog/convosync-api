@@ -83,6 +83,7 @@ export async function testAgentChat(params: {
     agentId: params.agentId,
     query: params.message,
     fallbackItems: readyKnowledge,
+    allowUnscoredDbFallback: true,
   });
 
   const systemPrompt = `You are ${agent.name}, an AI assistant for ${agent.workspace.name}.

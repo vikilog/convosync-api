@@ -18,7 +18,6 @@ import {
   synthesizePreviewSpeech,
   transcribePreviewAudio,
 } from '../services/preview-stt.service.js';
-
 const AGENT_CATEGORY = z.enum(['ai_agent', 'responsive', 'rule_based']);
 const INTENT_FALLBACK = z.enum(['silent', 'automated_response', 'transfer_human']);
 
@@ -82,6 +81,15 @@ const knowledgeCreateSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
+const knowledgeUpdateSchema = z.object({
+  title: z.string().min(1).max(200).optional(),
+  content: z.string().nullable().optional(),
+  url: z.string().url().optional().or(z.literal('')).nullable(),
+  fileUrl: z.string().nullable().optional(),
+  metadata: z.record(z.unknown()).optional(),
+  status: z.enum(['ready', 'processing', 'failed']).optional(),
+});
+
 async function getAgentOr404(workspaceId: string, id: string) {
   return prisma.aiAgent.findFirst({ where: { id, workspaceId } });
 }
@@ -98,7 +106,7 @@ export default async function agentRoutes(fastify: FastifyInstance) {
   const auth = companyAuth;
 
   await fastify.register(multipart, {
-    limits: { fileSize: 12 * 1024 * 1024, files: 1 },
+    limits: { fileSize: 16 * 1024 * 1024, files: 1 },
   });
 
   fastify.get('/', auth, async (request) => {
@@ -636,6 +644,50 @@ export default async function agentRoutes(fastify: FastifyInstance) {
     void indexKnowledgeItemInBackground(workspaceId, item);
     void invalidateWorkspaceCache(fastify, workspaceId);
     return reply.code(201).send(item);
+  });
+
+  fastify.put('/:id/knowledge/:kId', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id, kId } = request.params as { id: string; kId: string };
+    const agent = await getAgentOr404(workspaceId, id);
+    if (!agent) return reply.code(404).send({ error: 'Not found' });
+    const existing = await prisma.aiAgentKnowledgeItem.findFirst({
+      where: { id: kId, agentId: id },
+    });
+    if (!existing) return reply.code(404).send({ error: 'Knowledge item not found' });
+
+    const body = knowledgeUpdateSchema.parse(request.body ?? {});
+    const data: {
+      title?: string;
+      content?: string | null;
+      url?: string | null;
+      fileUrl?: string | null;
+      metadata?: object;
+      status?: string;
+    } = {};
+    if (body.title !== undefined) data.title = body.title;
+    if (body.content !== undefined) data.content = body.content;
+    if (body.url !== undefined) data.url = body.url || null;
+    if (body.fileUrl !== undefined) data.fileUrl = body.fileUrl;
+    if (body.metadata !== undefined) data.metadata = body.metadata as object;
+    if (body.status !== undefined) data.status = body.status;
+
+    const contentChanged =
+      (body.content !== undefined && body.content !== existing.content) ||
+      (body.title !== undefined && body.title !== existing.title) ||
+      (body.url !== undefined && (body.url || null) !== existing.url);
+
+    const item = await prisma.aiAgentKnowledgeItem.update({
+      where: { id: kId },
+      data,
+    });
+
+    if (contentChanged) {
+      await knowledgeIndexService.deleteItemVectors(workspaceId, kId);
+      void indexKnowledgeItemInBackground(workspaceId, item);
+    }
+    void invalidateWorkspaceCache(fastify, workspaceId);
+    return item;
   });
 
   fastify.delete('/:id/knowledge/:kId', auth, async (request, reply) => {

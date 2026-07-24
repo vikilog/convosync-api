@@ -20,6 +20,7 @@ import conversationRoutes from './routes/conversations.js';
 import campaignRoutes from './routes/campaigns.js';
 import journeyRoutes from './modules/journey/routes/journey.routes.js';
 import agentRoutes from './routes/agents.js';
+import mediaGalleryRoutes from './routes/media-gallery.js';
 import templateRoutes from './routes/templates.js';
 import cannedResponseRoutes from './routes/canned-responses.js';
 import webhookRoutes from './routes/webhooks.js';
@@ -110,6 +111,7 @@ async function start() {
   await fastify.register(campaignRoutes, { prefix: '/api/campaigns' });
   await fastify.register(journeyRoutes, { prefix: '/api/journeys' });
   await fastify.register(agentRoutes, { prefix: '/api/agents' });
+  await fastify.register(mediaGalleryRoutes, { prefix: '/api/media-gallery' });
   await fastify.register(templateRoutes, { prefix: '/api/templates' });
   await fastify.register(cannedResponseRoutes, { prefix: '/api/canned-responses' });
   await fastify.register(webhookRoutes, { prefix: '/api/webhook' });

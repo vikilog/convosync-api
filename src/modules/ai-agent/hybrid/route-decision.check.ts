@@ -15,15 +15,15 @@ function decideRetrievalPath(
 }
 
 const HIGH = 0.85;
-const LOW = 0.6;
+const LOW = 0.7;
 
 assert.equal(decideRetrievalPath(0.9, HIGH, LOW, false), 'direct');
 assert.equal(decideRetrievalPath(0.85, HIGH, LOW, false), 'direct');
+assert.equal(decideRetrievalPath(0.75, HIGH, LOW, false), 'rag');
 assert.equal(decideRetrievalPath(0.7, HIGH, LOW, false), 'rag');
-assert.equal(decideRetrievalPath(0.6, HIGH, LOW, false), 'rag');
-assert.equal(decideRetrievalPath(0.59, HIGH, LOW, false), 'full_llm');
+assert.equal(decideRetrievalPath(0.69, HIGH, LOW, false), 'full_llm');
 assert.equal(decideRetrievalPath(null, HIGH, LOW, false), 'full_llm');
 assert.equal(decideRetrievalPath(0.1, HIGH, LOW, true), 'escalate');
-assert.equal(decideRetrievalPath(0.7, HIGH, LOW, true), 'rag');
+assert.equal(decideRetrievalPath(0.75, HIGH, LOW, true), 'rag');
 
 console.log('route-decision.check: ok');

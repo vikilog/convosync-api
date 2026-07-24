@@ -26,6 +26,7 @@ async function previewReply(agentId: string, workspaceId: string, workspaceName:
     agentId,
     query: message,
     fallbackItems: readyKnowledge,
+    allowUnscoredDbFallback: true,
   });
 
   const liveSkills = agent.skills.filter((s) => s.status === 'live');
