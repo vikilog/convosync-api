@@ -29,7 +29,7 @@ export type HybridQueryResult = {
   reply: string;
   path: RetrievalPath;
   fromCache: boolean;
-  /** Top Pinecone score when searched; null on cache hit / pinecone skip. */
+  /** Top vector similarity when searched; null on cache hit / vector skip. */
   topScore: number | null;
   /** True when response was written to Redis (score >= LOW). */
   cacheable: boolean;

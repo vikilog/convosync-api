@@ -10,9 +10,15 @@ import {
   ConversationAssigneeError,
 } from '../services/conversation-assignee.service.js';
 import {
+  listConversationEvents,
+  recordConversationEvent,
+  resolvePriorAiAssignee,
+} from '../services/conversation-event.service.js';
+import {
   isConversationAssigneeType,
   type ConversationAssigneeType,
 } from '../types/conversation-assignee.js';
+import { isAiAssigneeType } from '../types/conversation-event.js';
 import {
   isInstagramPhone,
   isInstagramSource,
@@ -272,12 +278,14 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     const limitRaw = Number(query.limit);
     const before = typeof query.before === 'string' ? query.before.trim() : '';
     const usePagination = Number.isFinite(limitRaw) && limitRaw > 0;
+    const events = await listConversationEvents(id);
 
     if (!usePagination && !before) {
-      return prisma.message.findMany({
+      const messages = await prisma.message.findMany({
         where: { conversationId: id },
         orderBy: { createdAt: 'asc' },
       });
+      return { messages, events };
     }
 
     const limit = Math.min(100, Math.max(1, usePagination ? limitRaw : 20));
@@ -297,6 +305,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
       const total = await prisma.message.count({ where: { conversationId: id } });
       return {
         messages: older.reverse(),
+        events,
         hasMore: older.length === limit,
         total,
       };
@@ -310,9 +319,160 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     const total = await prisma.message.count({ where: { conversationId: id } });
     return {
       messages: latest.reverse(),
+      events,
       hasMore: total > limit,
       total,
     };
+  });
+
+  fastify.get('/:id/events', auth, async (request, reply) => {
+    const { workspaceId, userId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const access = await resolveMembershipAccess(userId, workspaceId);
+    const conv = await prisma.conversation.findFirst({
+      where: { id, workspaceId },
+      select: { channel: true, channelAccountId: true },
+    });
+    if (!conv) return reply.code(404).send({ error: 'Not found' });
+    if (!assertConversationInScope(conv, access.inboxScope, reply)) return;
+    return listConversationEvents(id);
+  });
+
+  fastify.post('/:id/takeover', auth, async (request, reply) => {
+    const { workspaceId, userId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const access = await resolveMembershipAccess(userId, workspaceId);
+    const conv = await prisma.conversation.findFirst({
+      where: { id, workspaceId },
+      select: {
+        channel: true,
+        channelAccountId: true,
+        assigneeType: true,
+        assigneeId: true,
+      },
+    });
+    if (!conv) return reply.code(404).send({ error: 'Not found' });
+    if (!assertConversationInScope(conv, access.inboxScope, reply)) return;
+
+    if (!isAiAssigneeType(conv.assigneeType)) {
+      return reply.code(400).send({ error: 'Conversation is not assigned to AI' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    });
+    const actorName = user?.name?.trim() || 'Agent';
+
+    try {
+      await applyConversationAssignee(
+        workspaceId,
+        id,
+        { assigneeType: 'user', assigneeId: userId },
+        { actorType: 'HUMAN', actorId: userId, actorName }
+      );
+    } catch (err) {
+      if (err instanceof ConversationAssigneeError) {
+        return reply.code(400).send({ error: err.message });
+      }
+      throw err;
+    }
+
+    await recordConversationEvent({
+      conversationId: id,
+      workspaceId,
+      type: 'HUMAN_TAKEOVER',
+      actorType: 'HUMAN',
+      actorId: userId,
+      actorName,
+      metadata: {
+        previousAssigneeType: conv.assigneeType,
+        previousAssigneeId: conv.assigneeId,
+      },
+    });
+
+    getIo().to(workspaceId).emit('conversation_updated', {
+      conversationId: id,
+      assigneeType: 'user',
+      assigneeId: userId,
+      reason: 'takeover',
+    });
+
+    return prisma.conversation.findFirst({
+      where: { id, workspaceId },
+      include: { contact: true, agent: true },
+    });
+  });
+
+  fastify.post('/:id/release-to-ai', auth, async (request, reply) => {
+    const { workspaceId, userId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const access = await resolveMembershipAccess(userId, workspaceId);
+    const conv = await prisma.conversation.findFirst({
+      where: { id, workspaceId },
+      select: {
+        channel: true,
+        channelAccountId: true,
+        assigneeType: true,
+        assigneeId: true,
+      },
+    });
+    if (!conv) return reply.code(404).send({ error: 'Not found' });
+    if (!assertConversationInScope(conv, access.inboxScope, reply)) return;
+
+    if (conv.assigneeType !== 'user') {
+      return reply.code(400).send({ error: 'Conversation is not handled by a human' });
+    }
+
+    const prior = await resolvePriorAiAssignee(id);
+    if (!prior) {
+      return reply.code(400).send({ error: 'No prior AI assignee to restore' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    });
+    const actorName = user?.name?.trim() || 'Agent';
+
+    try {
+      await applyConversationAssignee(
+        workspaceId,
+        id,
+        { assigneeType: prior.assigneeType, assigneeId: prior.assigneeId },
+        { actorType: 'HUMAN', actorId: userId, actorName }
+      );
+    } catch (err) {
+      if (err instanceof ConversationAssigneeError) {
+        return reply.code(400).send({ error: err.message });
+      }
+      throw err;
+    }
+
+    await recordConversationEvent({
+      conversationId: id,
+      workspaceId,
+      type: 'HUMAN_RELEASED_TO_AI',
+      actorType: 'HUMAN',
+      actorId: userId,
+      actorName,
+      metadata: {
+        assigneeType: prior.assigneeType,
+        assigneeId: prior.assigneeId,
+      },
+    });
+
+    getIo().to(workspaceId).emit('conversation_updated', {
+      conversationId: id,
+      assigneeType: prior.assigneeType,
+      assigneeId: prior.assigneeId,
+      reason: 'release_to_ai',
+    });
+
+    return prisma.conversation.findFirst({
+      where: { id, workspaceId },
+      include: { contact: true, agent: true },
+    });
   });
 
   fastify.post('/:id/messages', auth, async (request, reply) => {
@@ -1012,7 +1172,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     const access = await resolveMembershipAccess(userId, workspaceId);
     const existing = await prisma.conversation.findFirst({
       where: { id, workspaceId },
-      select: { channel: true, channelAccountId: true },
+      select: { channel: true, channelAccountId: true, status: true },
     });
     if (!existing) return reply.code(404).send({ error: 'Not found' });
     if (!assertConversationInScope(existing, access.inboxScope, reply)) return;
@@ -1046,11 +1206,25 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         assigneeId = body.assignedTo;
       }
 
+      const actorUser = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true },
+      });
+
       try {
-        await applyConversationAssignee(workspaceId, id, {
-          assigneeType: assigneeType ?? null,
-          assigneeId: assigneeId ?? null,
-        });
+        await applyConversationAssignee(
+          workspaceId,
+          id,
+          {
+            assigneeType: assigneeType ?? null,
+            assigneeId: assigneeId ?? null,
+          },
+          {
+            actorType: 'HUMAN',
+            actorId: userId,
+            actorName: actorUser?.name?.trim() || null,
+          }
+        );
       } catch (err) {
         if (err instanceof ConversationAssigneeError) {
           return reply.code(400).send({ error: err.message });
@@ -1068,6 +1242,18 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
 
     if (data.status === 'resolved') {
       await onConversationResolved(id);
+    } else if (
+      typeof data.status === 'string' &&
+      data.status !== 'resolved' &&
+      existing.status === 'resolved'
+    ) {
+      await recordConversationEvent({
+        conversationId: id,
+        workspaceId,
+        type: 'CONVERSATION_REOPENED',
+        actorType: 'HUMAN',
+        actorId: userId,
+      });
     }
 
     if (Object.keys(data).length > 0) {

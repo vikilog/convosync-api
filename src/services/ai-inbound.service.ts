@@ -6,6 +6,7 @@ import type { AiChatHistoryMessage } from '../modules/ai-chat/types/ai-chat.type
 import { getWorkspaceWhatsAppCredentials } from './whatsappCredentials.js';
 import { formatMetaSendError, sendWhatsAppMessage } from './whatsapp.js';
 import type { InboundWhatsAppContext } from './ruleBasedFlowEngine.js';
+import { ensureAiHandlingStarted } from './conversation-event.service.js';
 
 function logAi(label: string, payload?: unknown) {
   const prefix = '[AiInbound]';
@@ -123,6 +124,13 @@ export async function processAiInbound(ctx: InboundWhatsAppContext): Promise<voi
     });
     getIo().to(ctx.workspaceId).emit('conversation_updated', {
       conversationId: ctx.conversationId,
+    });
+
+    await ensureAiHandlingStarted({
+      conversationId: ctx.conversationId,
+      workspaceId: ctx.workspaceId,
+      actorName: 'AI Copilot',
+      metadata: { source: 'ai_copilot' },
     });
 
     logAi('reply sent', { intent: result.intent, confidence: result.confidence });

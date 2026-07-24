@@ -22,23 +22,31 @@ export async function retrieveKnowledgeChunks(params: {
   query: string;
   fallbackItems: Pick<AiAgentKnowledgeItem, 'title' | 'content'>[];
   topK?: number;
-}): Promise<{ chunks: RetrievedKnowledgeChunk[]; source: 'pinecone' | 'database' }> {
+}): Promise<{ chunks: RetrievedKnowledgeChunk[]; source: 'pgvector' | 'database' }> {
   if (knowledgeIndexService.isEnabled() && params.query.trim()) {
-    const hits: KnowledgeSearchHit[] = await knowledgeIndexService.search({
-      workspaceId: params.workspaceId,
-      agentId: params.agentId,
-      query: params.query,
-      topK: params.topK,
-    });
+    try {
+      const hits: KnowledgeSearchHit[] = await knowledgeIndexService.search({
+        workspaceId: params.workspaceId,
+        agentId: params.agentId,
+        query: params.query,
+        topK: params.topK,
+      });
 
-    if (hits.length > 0) {
-      return {
-        source: 'pinecone',
-        chunks: hits.map((hit) => ({
-          title: hit.title,
-          content: hit.content,
-        })),
-      };
+      if (hits.length > 0) {
+        return {
+          source: 'pgvector',
+          chunks: hits.map((hit) => ({
+            title: hit.title,
+            content: hit.content,
+          })),
+        };
+      }
+    } catch (err) {
+      // pgvector / embedding failures must not kill the LLM reply — fall back to DB KB.
+      console.warn(
+        '[KnowledgeRetrieval] pgvector search failed, using DB fallback',
+        err instanceof Error ? err.message : err
+      );
     }
   }
 

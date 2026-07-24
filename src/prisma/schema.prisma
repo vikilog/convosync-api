@@ -522,11 +522,29 @@ model Conversation {
   updatedAt     DateTime  @updatedAt
 
   messages          Message[]
+  events            ConversationEvent[]
   agentFlowSession  AgentFlowSession?
   callSessions      CallSession[]
 
   @@index([workspaceId, contactId])
   @@index([workspaceId, channelAccountId])
+}
+
+/// Timeline events for AI ↔ human handover (inbox chat).
+model ConversationEvent {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  /// AI_ASSIGNED | AI_HANDLING_STARTED | HUMAN_TAKEOVER | HUMAN_RELEASED_TO_AI | CONVERSATION_RESOLVED | CONVERSATION_REOPENED
+  type           String
+  /// AI_AGENT | HUMAN | SYSTEM
+  actorType      String
+  actorId        String?
+  actorName      String?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
 }
 
 /// LiveKit 1:1 voice call between customer and agent (media via LiveKit; sockets = signaling only).
@@ -1005,6 +1023,25 @@ model AiAgentKnowledgeItem {
   createdAt DateTime @default(now())
 
   @@index([agentId])
+}
+
+/// Semantic chunks for AI agent KB (pgvector). Embedding written via raw SQL.
+model KnowledgeChunk {
+  id              String                       @id @default(cuid())
+  workspaceId     String
+  agentId         String
+  knowledgeItemId String
+  chunkIndex      Int
+  title           String
+  content         String                       @db.Text
+  embedding       Unsupported("vector")?
+  createdAt       DateTime                     @default(now())
+  updatedAt       DateTime                     @updatedAt
+
+  @@unique([knowledgeItemId, chunkIndex])
+  @@index([workspaceId, agentId])
+  @@index([knowledgeItemId])
+  @@map("knowledge_chunks")
 }
 
 model AgentFlowSession {

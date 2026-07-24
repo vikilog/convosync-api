@@ -1,4 +1,4 @@
-/** Retry with linear backoff for transient Redis/Pinecone failures. */
+/** Retry with linear backoff for transient Redis/pgvector failures. */
 export async function withBackoff<T>(
   fn: () => Promise<T>,
   opts?: { retries?: number; delayMs?: number; label?: string }

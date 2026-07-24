@@ -17,7 +17,8 @@ import {
   updateUserProfile,
 } from '../services/userProfile.js';
 import { onboardingPayloadFromUser } from '../services/onboarding.js';
-import { buildTrialWindow, DEFAULT_TRIAL_DAYS } from '../services/trial.js';
+import { newCustomerTrialFields } from '../services/trial.js';
+import { grantSignupWalletCredit } from '../services/wallet.service.js';
 import {
   blacklistJti,
   bumpTokenVersion,
@@ -50,17 +51,12 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
     const placeholderWorkspaceName = body.workspaceName?.trim() || `${body.name.trim()}'s Workspace`;
     const slug = placeholderWorkspaceName.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now();
-    const startedAt = new Date();
-    const { trialStartedAt, trialEndsAt } = buildTrialWindow(startedAt, DEFAULT_TRIAL_DAYS);
     const workspace = await prisma.workspace.create({
       data: {
         name: placeholderWorkspaceName,
         slug,
         email: body.email,
-        planId: null,
-        subscriptionStatus: 'trial',
-        trialStartedAt,
-        trialEndsAt,
+        ...newCustomerTrialFields(),
       },
     });
 
@@ -82,6 +78,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
         },
       },
     });
+
+    await grantSignupWalletCredit(workspace.id);
 
     const workspaces = await listUserWorkspaces(user.id);
     const token = await signSessionToken(fastify, {
@@ -252,12 +250,18 @@ export default async function authRoutes(fastify: FastifyInstance) {
     const slug = body.name.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now();
 
     const workspace = await prisma.workspace.create({
-      data: { name: body.name, slug },
+      data: {
+        name: body.name,
+        slug,
+        ...newCustomerTrialFields(),
+      },
     });
 
     await prisma.workspaceMembership.create({
       data: { userId: userId!, workspaceId: workspace.id, role: 'admin' },
     });
+
+    await grantSignupWalletCredit(workspace.id);
 
     const workspaces = await listUserWorkspaces(userId!);
     const user = await prisma.user.findUnique({ where: { id: userId! } });

@@ -76,9 +76,9 @@ export const config = {
     maxOutputTokens: parseInt(process.env.AI_MAX_OUTPUT_TOKENS || '500', 10),
     maxHistoryMessages: parseInt(process.env.AI_MAX_HISTORY_MESSAGES || '6', 10),
     idleTimeoutMinutes: parseInt(process.env.AI_IDLE_TIMEOUT_MINUTES || '15', 10),
-    /** Pinecone score >= this → return KB answer with no LLM. */
+    /** Vector similarity >= this → return KB answer with no LLM. */
     similarityHighThreshold: parseFloat(process.env.SIMILARITY_HIGH_THRESHOLD || '0.85'),
-    /** Pinecone score >= this (and < high) → RAG LLM; below → full LLM or escalate. */
+    /** Vector similarity >= this (and < high) → RAG LLM; below → full LLM or escalate. */
     similarityLowThreshold: parseFloat(process.env.SIMILARITY_LOW_THRESHOLD || '0.60'),
     hybridTopK: parseInt(process.env.HYBRID_TOP_K || '3', 10),
     escalateOnLowScore: process.env.AI_ESCALATE_ON_LOW_SCORE === 'true',
@@ -94,24 +94,13 @@ export const config = {
       10
     ),
   },
-  pinecone: {
-    apiKey: process.env.PINECONE_API_KEY || '',
-    indexName: process.env.PINECONE_INDEX || 'text-embedding-3-small',
-    /** Serverless index host URL from Pinecone console (optional if index resolves by name). */
-    host: (process.env.PINECONE_HOST || '').replace(/\/$/, ''),
-    /** pinecone = Pinecone Inference (llama-text-embed-v2). openai = OpenAI embeddings API. */
-    embeddingProvider: (process.env.PINECONE_EMBEDDING_PROVIDER === 'openai'
-      ? 'openai'
-      : 'pinecone') as 'openai' | 'pinecone',
-    embeddingModel:
-      process.env.PINECONE_EMBEDDING_MODEL ||
-      (process.env.PINECONE_EMBEDDING_PROVIDER === 'openai'
-        ? 'text-embedding-3-small'
-        : 'llama-text-embed-v2'),
-    /** Must match Pinecone index dimension. llama-text-embed-v2 defaults to 1024 unless set. */
-    embeddingDimension: parseInt(process.env.PINECONE_EMBEDDING_DIMENSION || '2048', 10),
-    topK: parseInt(process.env.PINECONE_TOP_K || '5', 10),
-    enabled: Boolean(process.env.PINECONE_API_KEY?.trim()),
+  /** OpenAI embeddings + Postgres pgvector (AI agent knowledge base). */
+  embeddings: {
+    model: process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small',
+    /** Must match knowledge_chunks.embedding vector(N). */
+    dimension: parseInt(process.env.EMBEDDING_DIMENSION || '1536', 10),
+    topK: parseInt(process.env.VECTOR_TOP_K || '5', 10),
+    enabled: process.env.VECTOR_STORE_ENABLED !== 'false',
   },
   email: {
     resendApiKey: process.env.RESEND_API_KEY || '',

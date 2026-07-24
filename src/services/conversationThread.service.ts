@@ -30,6 +30,13 @@ export async function onConversationResolved(conversationId: string): Promise<vo
     select: { workspaceId: true, contactId: true },
   });
   if (!conv) return;
+  const { recordConversationEvent } = await import('./conversation-event.service.js');
+  await recordConversationEvent({
+    conversationId,
+    workspaceId: conv.workspaceId,
+    type: 'CONVERSATION_RESOLVED',
+    actorType: 'SYSTEM',
+  }).catch((err) => console.warn('[conversation-event] resolve failed', err));
   const { enqueueContactInsight } = await import('../queue/contact-insight.queue.js');
   void enqueueContactInsight({
     workspaceId: conv.workspaceId,
@@ -97,6 +104,14 @@ export async function findOrReopenConversationForInbound(
         },
       });
       await clearFlowSessionForConversation(latest.id);
+      const { recordConversationEvent } = await import('./conversation-event.service.js');
+      await recordConversationEvent({
+        conversationId: latest.id,
+        workspaceId: params.workspaceId,
+        type: 'CONVERSATION_REOPENED',
+        actorType: 'SYSTEM',
+        metadata: { reason: 'inbound' },
+      }).catch((err) => console.warn('[conversation-event] reopen failed', err));
       getIo().to(params.workspaceId).emit('conversation_updated', { conversationId: latest.id });
       return { conversation, reopened: true, created: false };
     }

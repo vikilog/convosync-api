@@ -88,18 +88,22 @@ export class ConversationService {
     }
 
     if (params.conversationId) {
-      const idleCheck = await this.idleTimeout.checkAndHandleIdle(conversation.id);
-      if (idleCheck.action === 'close') {
-        return {
-          reply: 'Yeh conversation timeout ho gayi. Naya conversation shuru karein.',
-          conversationId: conversation.id,
-          fromCache: false,
-          tokensUsed: 0,
-          costInr: 0,
-          intent: 'timeout',
-          stage: 'closed',
-          billingMode,
-        };
+      // Inbox WhatsApp threads must not be killed by preview idle-timeout.
+      const isInboxChannel = (params.channel || conversation.channel || '').startsWith('inbox:');
+      if (!isInboxChannel) {
+        const idleCheck = await this.idleTimeout.checkAndHandleIdle(conversation.id);
+        if (idleCheck.action === 'close') {
+          return {
+            reply: 'Yeh conversation timeout ho gayi. Naya conversation shuru karein.',
+            conversationId: conversation.id,
+            fromCache: false,
+            tokensUsed: 0,
+            costInr: 0,
+            intent: 'timeout',
+            stage: 'closed',
+            billingMode,
+          };
+        }
       }
     }
 

@@ -1,10 +1,9 @@
 import type { AiAgentKnowledgeItem } from '@prisma/client';
+import { randomBytes } from 'node:crypto';
 import { config } from '../../../config.js';
+import { prisma } from '../../../lib/prisma.js';
 import { buildKnowledgeItemText, chunkText } from './chunk-text.js';
 import { embedQuery, embedTexts, isEmbeddingAvailable } from './embedding.service.js';
-import { getPineconeIndex, isPineconeConfigured } from './pinecone.client.js';
-
-const MAX_METADATA_TEXT = 3500;
 
 export type KnowledgeSearchHit = {
   knowledgeItemId: string;
@@ -13,30 +12,23 @@ export type KnowledgeSearchHit = {
   score: number;
 };
 
-function vectorId(knowledgeItemId: string, chunkIndex: number): string {
-  return `${knowledgeItemId}__${chunkIndex}`;
+function cuidLike(): string {
+  return `ck${randomBytes(12).toString('hex')}`;
 }
 
-function namespaceForWorkspace(workspaceId: string): string {
-  return workspaceId;
-}
-
-function truncateMetadata(text: string): string {
-  if (text.length <= MAX_METADATA_TEXT) return text;
-  return `${text.slice(0, MAX_METADATA_TEXT)}…`;
+/** pgvector text literal: [0.1,0.2,...] */
+function toVectorLiteral(values: number[]): string {
+  return `[${values.join(',')}]`;
 }
 
 export class KnowledgeIndexService {
   isEnabled(): boolean {
-    return isPineconeConfigured() && isEmbeddingAvailable();
+    return isEmbeddingAvailable();
   }
 
   async indexItem(workspaceId: string, item: AiAgentKnowledgeItem): Promise<void> {
     if (!this.isEnabled()) {
-      console.warn(
-        '[KnowledgeIndex] Skipped (Pinecone/embeddings not configured)',
-        item.id
-      );
+      console.warn('[KnowledgeIndex] Skipped (OpenAI embeddings not configured)', item.id);
       return;
     }
 
@@ -46,53 +38,51 @@ export class KnowledgeIndexService {
     const chunks = chunkText(sourceText);
     if (chunks.length === 0) return;
 
-    // Re-index: clear prior vectors first. 404 = empty/missing ns — upsert still proceeds.
     await this.deleteItemVectors(workspaceId, item.id);
 
     const embeddings = await embedTexts(chunks);
-    const index = getPineconeIndex();
-    const ns = namespaceForWorkspace(workspaceId);
-    const records = chunks.map((chunk, chunkIndex) => ({
-      id: vectorId(item.id, chunkIndex),
-      values: embeddings[chunkIndex],
-      metadata: {
-        workspaceId,
-        agentId: item.agentId,
-        knowledgeItemId: item.id,
-        title: item.title,
-        type: item.type,
-        chunkIndex,
-        text: truncateMetadata(chunk),
-      },
-    }));
+    const now = new Date();
 
-    await index.namespace(ns).upsert({ records });
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      const embedding = embeddings[chunkIndex];
+      if (!embedding?.length) continue;
+
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO knowledge_chunks
+          (id, "workspaceId", "agentId", "knowledgeItemId", "chunkIndex", title, content, embedding, "createdAt", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector, $9, $10)`,
+        cuidLike(),
+        workspaceId,
+        item.agentId,
+        item.id,
+        chunkIndex,
+        item.title,
+        chunks[chunkIndex],
+        toVectorLiteral(embedding),
+        now,
+        now
+      );
+    }
+
     console.info(
       '[KnowledgeIndex] Upserted',
-      records.length,
-      'vector(s) for',
+      chunks.length,
+      'chunk(s) for',
       item.id,
-      'ns=',
-      ns,
-      'index=',
-      config.pinecone.indexName
+      'via pgvector'
     );
   }
 
-  async deleteItemVectors(workspaceId: string, knowledgeItemId: string): Promise<void> {
-    if (!isPineconeConfigured()) return;
-
+  async deleteItemVectors(_workspaceId: string, knowledgeItemId: string): Promise<void> {
     try {
-      const index = getPineconeIndex();
-      await index.namespace(namespaceForWorkspace(workspaceId)).deleteMany({
-        filter: { knowledgeItemId: { $eq: knowledgeItemId } },
-      });
+      await prisma.$executeRawUnsafe(
+        `DELETE FROM knowledge_chunks WHERE "knowledgeItemId" = $1`,
+        knowledgeItemId
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // First index / missing namespace / stale host often 404 — ignore so upsert can run.
-      if (/404|not.?found/i.test(msg) || (err as { name?: string })?.name === 'PineconeNotFoundError') {
-        return;
-      }
+      // Table missing before first migration — ignore so upsert/create can proceed later.
+      if (/does not exist|undefined_table/i.test(msg)) return;
       throw err;
     }
   }
@@ -109,42 +99,45 @@ export class KnowledgeIndexService {
     if (!query) return [];
 
     const embedding = await embedQuery(query);
-    const index = getPineconeIndex();
-    const response = await index.namespace(namespaceForWorkspace(params.workspaceId)).query({
-      vector: embedding,
-      topK: params.topK ?? config.pinecone.topK,
-      includeMetadata: true,
-      filter: {
-        agentId: { $eq: params.agentId },
-      },
-    });
+    const topK = params.topK ?? config.embeddings.topK;
+    const vector = toVectorLiteral(embedding);
+
+    type Row = {
+      knowledgeItemId: string;
+      title: string;
+      content: string;
+      score: number;
+    };
+
+    const rows = await prisma.$queryRawUnsafe<Row[]>(
+      `SELECT
+          "knowledgeItemId",
+          title,
+          content,
+          (1 - (embedding <=> $1::vector))::float8 AS score
+       FROM knowledge_chunks
+       WHERE "workspaceId" = $2 AND "agentId" = $3
+       ORDER BY embedding <=> $1::vector
+       LIMIT $4`,
+      vector,
+      params.workspaceId,
+      params.agentId,
+      topK * 4
+    );
 
     const seen = new Set<string>();
     const hits: KnowledgeSearchHit[] = [];
-
-    for (const match of response.matches ?? []) {
-      const metadata = match.metadata as
-        | {
-            knowledgeItemId?: string;
-            title?: string;
-            text?: string;
-          }
-        | undefined;
-
-      const knowledgeItemId = metadata?.knowledgeItemId;
-      const text = metadata?.text;
-      if (!knowledgeItemId || !text) continue;
-      if (seen.has(knowledgeItemId)) continue;
-
-      seen.add(knowledgeItemId);
+    for (const row of rows) {
+      if (seen.has(row.knowledgeItemId)) continue;
+      seen.add(row.knowledgeItemId);
       hits.push({
-        knowledgeItemId,
-        title: metadata?.title ?? 'Knowledge',
-        content: text,
-        score: match.score ?? 0,
+        knowledgeItemId: row.knowledgeItemId,
+        title: row.title,
+        content: row.content,
+        score: row.score,
       });
+      if (hits.length >= topK) break;
     }
-
     return hits;
   }
 }

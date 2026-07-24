@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js';
 import {
   DEFAULT_LOW_BALANCE_THRESHOLD_PAISE,
   MIN_WALLET_TOPUP_PAISE,
+  SIGNUP_WALLET_CREDIT_PAISE,
   type WalletCreditCategory,
   type WalletDebitCategory,
   walletDebitCategoryLabel,
@@ -35,6 +36,20 @@ export async function ensureWallet(workspaceId: string, tx?: TxClient) {
       lowBalanceThresholdPaise: DEFAULT_LOW_BALANCE_THRESHOLD_PAISE,
     },
     update: {},
+  });
+}
+
+/** Idempotent welcome credit for new customer workspaces. */
+export async function grantSignupWalletCredit(workspaceId: string, tx?: TxClient) {
+  return creditWallet({
+    workspaceId,
+    amountPaise: SIGNUP_WALLET_CREDIT_PAISE,
+    category: 'adjustment',
+    description: 'Welcome credit — 100 ConvoCoins',
+    referenceType: 'signup',
+    referenceId: workspaceId,
+    idempotencyKey: `signup-wallet-credit:${workspaceId}`,
+    tx,
   });
 }
 

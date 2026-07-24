@@ -6,7 +6,7 @@ import { recordRetrievalPath } from './analytics.js';
 import { callLlmFull, callLlmWithRagContext } from './call-llm.js';
 import { extractDirectAnswer } from './extract-answer.js';
 import { checkRedisCache, setRedisCache } from './redis-cache.js';
-import { searchPinecone } from './search-pinecone.js';
+import { searchKnowledgeVectors } from './search-knowledge-vectors.js';
 import {
   decideRetrievalPath,
   type HybridQueryInput,
@@ -18,7 +18,7 @@ const ESCALATE_REPLY =
   'Bilkul! Main aapko abhi ek human agent se connect karta hun. Thoda wait karein.';
 
 /**
- * Hybrid orchestrator: Redis exact cache → Pinecone score routing → direct / RAG / full LLM / escalate.
+ * Hybrid orchestrator: Redis exact cache → pgvector score routing → direct / RAG / full LLM / escalate.
  *
  * Thresholds: SIMILARITY_HIGH_THRESHOLD (direct), SIMILARITY_LOW_THRESHOLD (RAG vs full/escalate).
  */
@@ -49,7 +49,7 @@ export async function handleAIAgentQuery(params: {
     };
   }
 
-  const search = await searchPinecone({
+  const search = await searchKnowledgeVectors({
     workspaceId,
     agentId,
     query: message,
@@ -58,7 +58,7 @@ export async function handleAIAgentQuery(params: {
       s.ok ? decideRetrievalPath(s.topScore, high, low, escalateOnLow) : 'full_llm',
   });
 
-  // Pinecone hard failure → full LLM with ContextBuilder / DB fallback
+  // pgvector hard failure → full LLM with ContextBuilder / DB fallback
   let path: Exclude<RetrievalPath, 'cache'> = search.ok
     ? decideRetrievalPath(search.topScore, high, low, escalateOnLow)
     : 'full_llm';

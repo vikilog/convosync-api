@@ -40,12 +40,14 @@ modules/ai-knowledge/
 | POST | `/api/ai-knowledge/sync` | Sync from external MongoDB |
 | GET | `/api/ai-knowledge/:venueId` | Latest normalized snapshot |
 
-## Agent knowledge base (Pinecone)
+## Agent knowledge base (pgvector)
 
-AI agents store knowledge items (documents, Q&A, URLs) in Postgres. When Pinecone is configured,
-items are chunked, embedded with OpenAI, and upserted into a per-workspace namespace.
+AI agents store knowledge items (documents, Q&A, URLs) in Postgres. Chunks are embedded with OpenAI
+(`text-embedding-3-small`) and stored in `knowledge_chunks` via pgvector.
 
-Env: `PINECONE_API_KEY`, `PINECONE_INDEX`, optional `PINECONE_HOST`, `OPENAI_EMBEDDING_MODEL`.
+Env: `OPENAI_API_KEY`, optional `OPENAI_EMBEDDING_MODEL`, `EMBEDDING_DIMENSION`, `VECTOR_TOP_K`.
+
+Requires: `CREATE EXTENSION vector;` (Postgres.app includes pgvector).
 
 Reindex existing items: `POST /api/agents/:id/knowledge/reindex`
 
@@ -53,6 +55,6 @@ Reindex existing items: `POST /api/agents/:id/knowledge/reindex`
 
 1. Call `buildKnowledgeChunks()` after normalize (already invoked in sync).
 2. Implement `EmbeddingProvider.embed()`.
-3. Upsert vectors into Pinecone / pgvector / Atlas Vector Search.
+3. Upsert vectors into pgvector.
 
 External MongoDB is **never written to** — all reads use `MongoClient` with read preference `secondaryPreferred`.

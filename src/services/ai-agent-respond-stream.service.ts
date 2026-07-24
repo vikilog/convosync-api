@@ -8,7 +8,7 @@ import { prisma } from '../lib/prisma.js';
 import { getRedis } from '../lib/redis.js';
 import { ContextBuilderService } from '../modules/ai-agent/context-builder.service.js';
 import { decideRetrievalPath, type RetrievalPath } from '../modules/ai-agent/hybrid/types.js';
-import { searchPinecone } from '../modules/ai-agent/hybrid/search-pinecone.js';
+import { searchKnowledgeVectors } from '../modules/ai-agent/hybrid/search-knowledge-vectors.js';
 import { checkRedisCache, setRedisCache } from '../modules/ai-agent/hybrid/redis-cache.js';
 import { extractDirectAnswer } from '../modules/ai-agent/hybrid/extract-answer.js';
 import { recordRetrievalPath } from '../modules/ai-agent/hybrid/analytics.js';
@@ -194,7 +194,7 @@ export async function* respondAiAgentTurnStream(input: {
   const voiceModel = config.ai.voiceStreamModel;
   const maxTokens = config.ai.voiceMaxOutputTokens;
 
-  const search = await searchPinecone({
+  const search = await searchKnowledgeVectors({
     workspaceId: input.workspaceId,
     agentId,
     query: text,

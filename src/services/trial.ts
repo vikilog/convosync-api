@@ -38,6 +38,17 @@ export function buildTrialWindow(
   };
 }
 
+/** Fields every new customer workspace should get (not super-admin). */
+export function newCustomerTrialFields(startedAt = new Date(), trialDays = DEFAULT_TRIAL_DAYS) {
+  const { trialStartedAt, trialEndsAt } = buildTrialWindow(startedAt, trialDays);
+  return {
+    planId: null as string | null,
+    subscriptionStatus: 'trial' as const,
+    trialStartedAt,
+    trialEndsAt,
+  };
+}
+
 export function isTrialExpired(workspace: WorkspaceTrialFields, now = new Date()) {
   if (workspace.subscriptionStatus !== 'trial') return false;
   if (!workspace.trialEndsAt) return false;

@@ -1,11 +1,16 @@
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { initJourneyModule } from '../modules/journey/container.js';
 import {
   isConversationAssigneeType,
   type ConversationAssigneePatch,
   type ConversationAssigneeType,
 } from '../types/conversation-assignee.js';
+import { isAiAssigneeType } from '../types/conversation-event.js';
 import { isWorkspaceMember } from './workspaceMembers.js';
+import { recordConversationEvent } from './conversation-event.service.js';
+import type { ConversationEventActorType } from '../types/conversation-event.js';
+import { seedAgentChatFromInbox } from './ai-agent-inbox-seed.service.js';
+import { kickAiAgentReplyForLatestContactMessage } from './ai-agent-inbound.service.js';
 
 export class ConversationAssigneeError extends Error {
   constructor(message: string) {
@@ -14,14 +19,21 @@ export class ConversationAssigneeError extends Error {
   }
 }
 
+export type AssigneeActorContext = {
+  actorType: ConversationEventActorType;
+  actorId?: string | null;
+  actorName?: string | null;
+};
+
 export async function applyConversationAssignee(
   workspaceId: string,
   conversationId: string,
-  patch: ConversationAssigneePatch
+  patch: ConversationAssigneePatch,
+  actor?: AssigneeActorContext
 ): Promise<void> {
   const conv = await prisma.conversation.findFirst({
     where: { id: conversationId, workspaceId },
-    select: { id: true, contactId: true },
+    select: { id: true, contactId: true, assigneeType: true, assigneeId: true },
   });
   if (!conv) throw new ConversationAssigneeError('Conversation not found');
 
@@ -78,6 +90,9 @@ export async function applyConversationAssignee(
   }
 
   const assignedTo = assigneeType === 'user' ? assigneeId : null;
+  const changed =
+    conv.assigneeType !== assigneeType ||
+    (assigneeType ? conv.assigneeId !== assigneeId : Boolean(conv.assigneeId));
 
   await prisma.conversation.updateMany({
     where: { id: conversationId, workspaceId },
@@ -87,6 +102,51 @@ export async function applyConversationAssignee(
       assignedTo,
     },
   });
+
+  if (changed && isAiAssigneeType(assigneeType)) {
+    let actorName = actor?.actorName ?? null;
+    if (assigneeType === 'ai_agent' && assigneeId && !actorName) {
+      const agent = await prisma.aiAgent.findFirst({
+        where: { id: assigneeId, workspaceId },
+        select: { name: true },
+      });
+      actorName = agent?.name ?? 'AI Agent';
+    } else if (assigneeType === 'ai' && !actorName) {
+      actorName = 'AI Copilot';
+    }
+
+    await recordConversationEvent({
+      conversationId,
+      workspaceId,
+      type: 'AI_ASSIGNED',
+      actorType: actor?.actorType ?? 'SYSTEM',
+      actorId: actor?.actorId ?? (assigneeType === 'ai_agent' ? assigneeId : null),
+      actorName: actor?.actorName ?? actorName,
+      metadata: {
+        assigneeType,
+        assigneeId,
+      },
+    });
+
+    // Seed hybrid agent chat with inbox history so the next reply has context.
+    if (assigneeType === 'ai_agent' && assigneeId) {
+      await seedAgentChatFromInbox({
+        workspaceId,
+        agentId: assigneeId,
+        inboxConversationId: conversationId,
+      }).catch((err) =>
+        console.warn('[AiAgentSeed] assign-time seed failed', err instanceof Error ? err.message : err)
+      );
+
+      // Reply to the latest customer message immediately (don't wait for a new webhook).
+      void kickAiAgentReplyForLatestContactMessage(workspaceId, conversationId).catch((err) =>
+        console.warn(
+          '[AiAgentInbound] kick after assign failed',
+          err instanceof Error ? err.message : err
+        )
+      );
+    }
+  }
 
   if (assigneeType === 'journey' && assigneeId) {
     const { triggerService } = initJourneyModule(prisma);

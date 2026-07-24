@@ -23,6 +23,10 @@ export const MAX_AUTO_RECHARGE_FAILS = 3;
 /** Minimum wallet top-up (₹100). */
 export const MIN_WALLET_TOPUP_PAISE = 10_000;
 
+/** New-workspace welcome credit (1 CC = ₹1). */
+export const SIGNUP_WALLET_CREDIT_CC = 100;
+export const SIGNUP_WALLET_CREDIT_PAISE = SIGNUP_WALLET_CREDIT_CC * 100;
+
 /** Suggested top-up amounts in INR for the recharge UI. */
 export const WALLET_TOPUP_PRESETS_INR = [500, 1000, 2000, 5000, 10000] as const;
 

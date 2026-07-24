@@ -13,7 +13,7 @@ export type LlmCallResult = {
   kbChunksLoaded: number;
 };
 
-/** RAG: Claude/OpenAI with only the matched Pinecone chunks as knowledge. */
+/** RAG: Claude/OpenAI with only the matched pgvector chunks as knowledge. */
 export async function callLlmWithRagContext(params: {
   llm: LlmClient;
   workspaceId?: string;

@@ -5,18 +5,18 @@ import { knowledgeIndexService } from '../knowledge/knowledge-index.service.js';
 import { withBackoff } from './retry.js';
 import type { HybridHit, RetrievalPath } from './types.js';
 
-export type PineconeSearchResult = {
+export type VectorSearchResult = {
   hits: HybridHit[];
   topScore: number | null;
   ok: boolean;
 };
 
-async function searchPineconeRaw(params: {
+async function searchKnowledgeVectorsRaw(params: {
   workspaceId: string;
   agentId: string;
   query: string;
   topK?: number;
-}): Promise<PineconeSearchResult> {
+}): Promise<VectorSearchResult> {
   if (!knowledgeIndexService.isEnabled()) {
     return { hits: [], topScore: null, ok: true };
   }
@@ -30,7 +30,7 @@ async function searchPineconeRaw(params: {
           query: params.query,
           topK: params.topK ?? config.ai.hybridTopK,
         }),
-      { label: 'pinecone-search' }
+      { label: 'pgvector-search' }
     );
 
     const mapped: HybridHit[] = hits.map((h) => ({
@@ -46,29 +46,29 @@ async function searchPineconeRaw(params: {
       ok: true,
     };
   } catch (err) {
-    console.error('[HybridRetrieval] Pinecone search failed', err);
+    console.error('[HybridRetrieval] pgvector search failed', err);
     return { hits: [], topScore: null, ok: false };
   }
 }
 
 /**
- * Embed + query Pinecone. Optionally attach retrieval `path` after routing
+ * Embed + query pgvector. Optionally attach retrieval `path` after routing
  * (pass `resolvePath`) so the span has score + path + agentId together.
  */
-export async function searchPinecone(params: {
+export async function searchKnowledgeVectors(params: {
   workspaceId: string;
   agentId: string;
   query: string;
   topK?: number;
   /** When provided, called with search result to set `path` on the same span. */
-  resolvePath?: (search: PineconeSearchResult) => RetrievalPath;
-}): Promise<PineconeSearchResult> {
-  return otelTracer.startActiveSpan('retrieval.pinecone', async (span) => {
+  resolvePath?: (search: VectorSearchResult) => RetrievalPath;
+}): Promise<VectorSearchResult> {
+  return otelTracer.startActiveSpan('retrieval.pgvector', async (span) => {
     span.setAttribute('agentId', params.agentId);
     span.setAttribute('workspaceId', params.workspaceId);
 
     try {
-      const result = await searchPineconeRaw(params);
+      const result = await searchKnowledgeVectorsRaw(params);
       if (result.topScore != null) span.setAttribute('score', result.topScore);
       if (params.resolvePath) {
         span.setAttribute('path', params.resolvePath(result));

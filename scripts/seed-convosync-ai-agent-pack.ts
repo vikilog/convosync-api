@@ -192,7 +192,7 @@ async function main() {
   }
   console.log(`  knowledge upserted=${knowledgeUpserted}`);
 
-  // Best-effort vector index (no-op if Pinecone/embeddings unset)
+  // Best-effort vector index (no-op if OpenAI embeddings unset)
   let indexed = 0;
   for (const ref of toIndex) {
     const item = await prisma.aiAgentKnowledgeItem.findUnique({ where: { id: ref.itemId } });

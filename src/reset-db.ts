@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { buildTrialWindow, DEFAULT_TRIAL_DAYS } from './services/trial.js';
 
 const prisma = new PrismaClient();
 
@@ -36,13 +37,18 @@ async function main() {
   }
 
   // Reset workspace operational state while keeping company profile fields.
-  const reset = await prisma.workspace.updateMany({
+  // Super-admin tenants stay active; customer workspaces go back on a fresh 14-day trial.
+  const now = new Date();
+  const { trialStartedAt, trialEndsAt } = buildTrialWindow(now, DEFAULT_TRIAL_DAYS);
+
+  const customerReset = await prisma.workspace.updateMany({
+    where: { isSuperAdmin: false },
     data: {
       planId: null,
       planTier: 'FREE',
       subscriptionStatus: 'trial',
-      trialStartedAt: null,
-      trialEndsAt: null,
+      trialStartedAt,
+      trialEndsAt,
       customPlanSelection: Prisma.DbNull,
       waNumberId: null,
       waToken: null,
@@ -61,7 +67,7 @@ async function main() {
   const workspaces = await prisma.workspace.count();
 
   console.log(`Kept ${users} user(s), ${workspaces} workspace(s), company info intact.`);
-  console.log(`Reset operational fields on ${reset.count} workspace(s).`);
+  console.log(`Reset operational fields on ${customerReset.count} customer workspace(s) → 14-day trial.`);
   console.log('Ready for fresh testing from scratch.');
 }
 

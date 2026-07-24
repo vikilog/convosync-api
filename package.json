@@ -36,7 +36,6 @@
     "@opentelemetry/sdk-metrics": "^2.9.0",
     "@opentelemetry/sdk-node": "^0.220.0",
     "@opentelemetry/semantic-conventions": "^1.43.0",
-    "@pinecone-database/pinecone": "^8.0.0",
     "@prisma/client": "^6.0.0",
     "@sendgrid/mail": "^8.1.6",
     "axios": "^1.7.0",
