@@ -288,6 +288,16 @@ export async function executeCampaignBroadcast(campaignId: string, workspaceId: 
   if (!campaign) {
     throw new Error('Campaign not found');
   }
+  if (campaign.status === 'running') {
+    throw new Error('Campaign is already running');
+  }
+  if (campaign.status === 'completed') {
+    return {
+      sentCount: campaign.sentCount,
+      totalRecipients: campaign.totalRecipients,
+      errors: [] as string[],
+    };
+  }
 
   const filter = parseAudienceFilter(campaign.audienceFilter);
   const channel = filter.channel ?? 'whatsapp';

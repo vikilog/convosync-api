@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
+import {
+  campaignScheduleDelayMs,
+  enqueueCampaignBroadcast,
+} from '../queue/campaign-broadcast.queue.js';
 import { executeCampaignBroadcast } from '../services/campaignBroadcast.service.js';
 import { getCampaignInsights } from '../services/campaignInsights.service.js';
 
@@ -37,16 +41,49 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
       ...(body.audienceFilter ?? {}),
       ...(body.channel ? { channel: body.channel } : {}),
     };
+
+    let scheduledAt: Date | undefined;
+    if (body.scheduledAt) {
+      scheduledAt = new Date(body.scheduledAt);
+      if (Number.isNaN(scheduledAt.getTime())) {
+        return reply.code(400).send({ error: 'Invalid scheduledAt' });
+      }
+    }
+
+    const delayMs = campaignScheduleDelayMs(scheduledAt);
+    const isScheduled = Boolean(scheduledAt) && delayMs > 0;
+
     const campaign = await prisma.campaign.create({
       data: {
         name: body.name,
         templateId: body.templateId,
         audienceType: body.audienceType,
         audienceFilter: Object.keys(audienceFilter).length ? (audienceFilter as object) : undefined,
-        scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : undefined,
+        scheduledAt,
+        status: isScheduled ? 'scheduled' : 'draft',
         workspaceId,
       },
     });
+
+    if (isScheduled) {
+      try {
+        await enqueueCampaignBroadcast(
+          { campaignId: campaign.id, workspaceId },
+          delayMs
+        );
+      } catch (err) {
+        request.log.error({ err, campaignId: campaign.id }, 'Failed to enqueue scheduled campaign');
+        await prisma.campaign.update({
+          where: { id: campaign.id },
+          data: { status: 'failed' },
+        });
+        return reply.code(502).send({
+          error: 'Campaign saved but scheduling queue failed. Try again or send now.',
+          campaignId: campaign.id,
+        });
+      }
+    }
+
     return reply.code(201).send(campaign);
   });
 
@@ -56,7 +93,16 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
     const campaign = await prisma.campaign.findFirst({ where: { id, workspaceId } });
     if (!campaign) return reply.code(404).send({ error: 'Not found' });
 
+    if (campaign.status === 'running') {
+      return reply.code(409).send({ error: 'Campaign is already running' });
+    }
+    if (campaign.status === 'completed') {
+      return reply.code(409).send({ error: 'Campaign already completed' });
+    }
+
     try {
+      // Immediate send stays sync for wizard UX (sentCount in response).
+      // Scheduled jobs use the BullMQ worker (same executeCampaignBroadcast).
       const result = await executeCampaignBroadcast(id, workspaceId);
       return {
         message: 'Campaign broadcast completed',

@@ -1,6 +1,10 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { endPhase, enterRequestTiming, startPhase } from '../lib/request-timing.js';
-import { getUserTokenVersion, isJtiBlacklisted } from '../services/userSecurity.js';
+import {
+  getUserTokenVersion,
+  isJtiBlacklisted,
+  MissingUserSecurityError,
+} from '../services/userSecurity.js';
 
 export interface JwtUser {
   userId?: string;
@@ -48,6 +52,10 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
         return reply.code(401).send({ error: 'Session invalidated' });
       }
     } catch (err) {
+      if (err instanceof MissingUserSecurityError) {
+        request.log.warn({ userId: user.userId }, 'tokenVersion: JWT user missing in DB');
+        return reply.code(401).send({ error: 'Session invalidated' });
+      }
       request.log.error({ err }, 'tokenVersion check failed');
       return reply.code(401).send({ error: 'Unauthorized' });
     }

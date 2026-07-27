@@ -8,12 +8,19 @@ export type AiEmailBlockSuggestion = {
 export async function generateEmailTemplateContent(prompt: string): Promise<{
   subject: string;
   blocks: AiEmailBlockSuggestion[];
+  html?: string;
 }> {
-  const system = `You are an email marketing copywriter. Return ONLY valid JSON (no markdown) with this shape:
-{"subject":"string with optional {{variables}}","blocks":[{"type":"header|text|button|image|divider|spacer|columns|footer","props":{...}}]}
-Use {{first_name}}, {{company_name}} style variables where helpful.
-Block props: header{text,level,align}; text{content,align}; button{label,url,align}; image{src,alt,width,align}; divider{}; spacer{height}; columns{left,right}; footer{text}.
-Keep blocks concise and professional.`;
+  const system = `You are an email marketing copywriter. Return ONLY valid JSON (no markdown) in ONE of these shapes:
+
+1) Structured blocks (preferred):
+{"subject":"string with optional {{variables}}","blocks":[{"type":"header|text|button|image|divider|spacer|columns|footer|html","props":{...}}]}
+
+2) Full HTML body (when the user asks for custom HTML/code):
+{"subject":"string","html":"<div>...email body HTML...</div>"}
+
+Use {{first_name}}, {{company_name}}, {{cta_url}} style variables where helpful.
+Block props: header{text,level,align}; text{content,align}; button{label,url,align}; image{src,alt,width,align}; divider{}; spacer{height}; columns{left,right}; footer{text}; html{rawHtml}.
+Keep blocks concise and professional. Prefer 4–8 blocks for a complete email.`;
 
   const raw = await generateAgentReply(system, prompt);
   try {
@@ -21,10 +28,14 @@ Keep blocks concise and professional.`;
     const parsed = JSON.parse(cleaned) as {
       subject?: string;
       blocks?: AiEmailBlockSuggestion[];
+      html?: string;
     };
     return {
       subject: parsed.subject ?? 'Your update from {{company_name}}',
       blocks: Array.isArray(parsed.blocks) ? parsed.blocks : [],
+      ...(typeof parsed.html === 'string' && parsed.html.trim()
+        ? { html: parsed.html.trim() }
+        : {}),
     };
   } catch {
     return {

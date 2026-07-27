@@ -45,7 +45,8 @@ export async function scheduleWalletAutoRecharge(workspaceId: string): Promise<v
     'charge',
     { workspaceId },
     {
-      jobId: `wallet-auto-recharge:${workspaceId}`,
+      // BullMQ custom jobId cannot contain `:`.
+      jobId: `wallet-auto-recharge-${workspaceId}`,
       removeOnComplete: true,
     }
   );

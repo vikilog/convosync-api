@@ -11,7 +11,7 @@ import {
   readMediaGalleryFile,
   saveMediaGalleryFile,
 } from '../modules/media-gallery/media-storage.js';
-import { isObjectStorageEnabled } from '../services/objectStorage.js';
+import { getPresignedGetUrl, isObjectStorageEnabled } from '../services/objectStorage.js';
 
 const SCOPE = z.enum(['customer', 'partner', 'both']);
 const TYPE = z.enum(['image', 'pdf', 'video', 'document']);
@@ -158,6 +158,37 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
         .send(buffer);
     } catch {
       return reply.code(404).send({ error: 'Media file not found' });
+    }
+  });
+
+  /** Presigned S3 GET — bucket is private so stored `url` alone breaks in <img>. */
+  fastify.get('/:mediaId/signed-url', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { mediaId } = request.params as { mediaId: string };
+    const query = request.query as { expiresIn?: string };
+    // ponytail: S3 sigv4 practical max ~7d; re-pick or re-sign later if needed
+    const expiresIn = Math.min(
+      Math.max(Number(query.expiresIn) || 604_800, 60),
+      604_800
+    );
+
+    const row = await prisma.mediaAsset.findFirst({
+      where: { id: mediaId, workspaceId },
+    });
+    if (!row?.storageKey) return reply.code(404).send({ error: 'No media file' });
+    if (!isObjectStorageEnabled()) {
+      return reply.code(503).send({
+        error: 'S3 is not configured; cannot create a shareable image URL.',
+        code: 'S3_NOT_CONFIGURED',
+      });
+    }
+
+    try {
+      const url = await getPresignedGetUrl(row.storageKey, expiresIn);
+      return { url, expiresIn, mediaId: row.id };
+    } catch (err) {
+      request.log.error({ err, mediaId }, 'Failed to create media signed URL');
+      return reply.code(502).send({ error: 'Failed to create signed URL' });
     }
   });
 

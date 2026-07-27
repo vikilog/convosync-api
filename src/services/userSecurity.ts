@@ -33,13 +33,40 @@ async function withRedisTimeout<T>(op: Promise<T>): Promise<T> {
   }
 }
 
-/** Ensure a UserSecurityState row exists (signup / legacy users). */
+/** JWT / caller referenced a user id that is not in this database. */
+export class MissingUserSecurityError extends Error {
+  constructor(userId: string) {
+    super(`User not found for security state: ${userId}`);
+    this.name = 'MissingUserSecurityError';
+  }
+}
+
+/**
+ * Ensure a UserSecurityState row exists (signup / legacy users).
+ * Never upsert blindly — FK fails when the JWT user was deleted or belongs to another DB.
+ */
 export async function ensureUserSecurityState(userId: string) {
-  return prisma.userSecurityState.upsert({
-    where: { userId },
-    create: { userId, tokenVersion: 0, updatedReason: 'ensure' },
-    update: {},
+  const existing = await prisma.userSecurityState.findUnique({ where: { userId } });
+  if (existing) return existing;
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true },
   });
+  if (!user) {
+    throw new MissingUserSecurityError(userId);
+  }
+
+  try {
+    return await prisma.userSecurityState.create({
+      data: { userId, tokenVersion: 0, updatedReason: 'ensure' },
+    });
+  } catch (err) {
+    // Concurrent ensure — another request may have created the row.
+    const raced = await prisma.userSecurityState.findUnique({ where: { userId } });
+    if (raced) return raced;
+    throw err;
+  }
 }
 
 export async function getUserTokenVersion(userId: string): Promise<number> {
