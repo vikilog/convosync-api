@@ -111,6 +111,8 @@ export interface CreateOrderBody {
   addonType?: AddOnType;
   quantity?: number;
   description?: string;
+  /** Client-supplied key; server generates a short-window key when omitted. */
+  idempotencyKey?: string;
 }
 
 export interface VerifyOrderBody {

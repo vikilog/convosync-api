@@ -27,6 +27,7 @@ const createOrderSchema = z.object({
   quantity: z.number().int().positive().optional(),
   description: z.string().optional(),
   creditAmountPaise: z.number().int().positive().optional(),
+  idempotencyKey: z.string().min(8).max(128).optional(),
 });
 
 const verifyOrderSchema = z.object({

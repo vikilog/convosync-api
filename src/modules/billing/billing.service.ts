@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { config } from '../../config.js';
 import {
@@ -32,10 +32,28 @@ import {
   saveWalletPaymentCredentials,
 } from '../../services/razorpayCustomer.service.js';
 import type { RazorpayService } from './razorpay.service.js';
+import {
+  webhookPaymentEntity,
+  type RazorpayWebhookPayload,
+} from './razorpay-webhook.types.js';
 
 const USD_INR_FALLBACK = 83;
 const FX_CACHE_TTL_MS = 30 * 60 * 1000;
 let usdInrCache: { rate: number; fetchedAtMs: number; source: string } | null = null;
+
+/** Double-click / retry window for server-generated idempotency keys. */
+const IDEMPOTENCY_WINDOW_MS = 120_000;
+
+function isPrismaUniqueViolation(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
+  );
+}
+
+function buildServerIdempotencyKey(workspaceId: string, purposeKey: string): string {
+  const bucket = Math.floor(Date.now() / IDEMPOTENCY_WINDOW_MS);
+  return `${workspaceId}:${purposeKey}:${bucket}`;
+}
 
 function webhookEntity(
   payload: Record<string, unknown>,
@@ -518,51 +536,129 @@ export class BillingService {
       throw new Error('Invalid order amount. Minimum is 100 paise (₹1).');
     }
 
-    const receipt = `convosync_${workspaceId.slice(-8)}_${Date.now()}`;
-    const order = await this.razorpay.createOrder({
-      amountPaise: finalAmount,
-      receipt,
-      notes: {
-        workspaceId,
-        purpose: invoiceType,
-        ...(addonType ? { addonType, quantity: String(quantity ?? 1) } : {}),
-      },
-    });
+    const purposeKey = [
+      invoiceType,
+      addonType ?? '',
+      String(quantity ?? ''),
+      String(finalAmount),
+      String(creditAmountPaise ?? ''),
+    ].join(':');
+    const idempotencyKey =
+      body.idempotencyKey?.trim() || buildServerIdempotencyKey(workspaceId, purposeKey);
 
-    const invoice = await prisma.billingInvoice.create({
-      data: {
-        workspaceId,
-        razorpayOrderId: order.id,
-        type: invoiceType,
-        amountPaise: finalAmount,
-        currency: 'INR',
-        status: 'created',
-        description: description ?? `${invoiceType} payment`,
-        metadata: (walletTopupMeta ??
-          ({ purpose: invoiceType, addonType, quantity } as Prisma.InputJsonValue)),
-      },
-    });
+    const existingCheckout = await this.checkoutFromExistingIntent(idempotencyKey);
+    if (existingCheckout) return existingCheckout;
 
-    if (addonRecord) {
-      await prisma.billingAddOnPurchase.create({
+    let intent;
+    try {
+      intent = await prisma.paymentIntent.create({
         data: {
+          idempotencyKey,
           workspaceId,
-          type: addonRecord.type,
-          quantity: addonRecord.quantity,
-          amountPaise: finalAmount,
-          razorpayOrderId: order.id,
+          amount: finalAmount,
+          currency: 'INR',
           status: 'pending',
         },
       });
+    } catch (err) {
+      if (isPrismaUniqueViolation(err)) {
+        const raced = await this.checkoutFromExistingIntent(idempotencyKey);
+        if (raced) return raced;
+        console.error('[billing.createOrder] P2002 without usable PaymentIntent', {
+          workspaceId,
+          idempotencyKey,
+        });
+        throw new Error('Payment order is already being created. Please retry shortly.');
+      }
+      throw err;
     }
 
-    return {
-      orderId: order.id,
-      amountPaise: finalAmount,
-      currency: 'INR',
-      keyId: this.razorpay.keyId,
-      invoiceId: invoice.id,
-    };
+    let order: { id: string };
+    try {
+      const receipt = `convosync_${workspaceId.slice(-8)}_${Date.now()}`;
+      order = await this.razorpay.createOrder({
+        amountPaise: finalAmount,
+        receipt,
+        notes: {
+          workspaceId,
+          purpose: invoiceType,
+          ...(addonType ? { addonType, quantity: String(quantity ?? 1) } : {}),
+        },
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error('[billing.createOrder] Razorpay createOrder failed', {
+        workspaceId,
+        idempotencyKey,
+        err,
+      });
+      await prisma.paymentIntent.update({
+        where: { id: intent.id },
+        data: { status: 'failed', failureReason: reason.slice(0, 500) },
+      });
+      throw err;
+    }
+
+    try {
+      const invoice = await prisma.$transaction(async (tx) => {
+        const created = await tx.billingInvoice.create({
+          data: {
+            workspaceId,
+            razorpayOrderId: order.id,
+            type: invoiceType,
+            amountPaise: finalAmount,
+            currency: 'INR',
+            status: 'created',
+            description: description ?? `${invoiceType} payment`,
+            metadata: (walletTopupMeta ??
+              ({ purpose: invoiceType, addonType, quantity } as Prisma.InputJsonValue)),
+          },
+        });
+
+        await tx.paymentIntent.update({
+          where: { id: intent.id },
+          data: {
+            razorpayOrderId: order.id,
+            billingInvoiceId: created.id,
+          },
+        });
+
+        if (addonRecord) {
+          await tx.billingAddOnPurchase.create({
+            data: {
+              workspaceId,
+              type: addonRecord.type,
+              quantity: addonRecord.quantity,
+              amountPaise: finalAmount,
+              razorpayOrderId: order.id,
+              status: 'pending',
+            },
+          });
+        }
+
+        return created;
+      });
+
+      return {
+        orderId: order.id,
+        amountPaise: finalAmount,
+        currency: 'INR',
+        keyId: this.razorpay.keyId,
+        invoiceId: invoice.id,
+      };
+    } catch (err) {
+      if (isPrismaUniqueViolation(err)) {
+        const raced = await this.checkoutFromExistingIntent(idempotencyKey);
+        if (raced) return raced;
+      }
+      console.error('[billing.createOrder] DB write after Razorpay order failed', {
+        workspaceId,
+        idempotencyKey,
+        orderId: order.id,
+        err,
+      });
+      throw err;
+    }
   }
 
   async verifyOrder(
@@ -589,81 +685,32 @@ export class BillingService {
     });
     if (!invoice) throw new Error('Invoice not found for this order');
 
+    if (invoice.status === 'paid') {
+      const wallet =
+        invoice.type === 'wallet_topup' ? await getWalletSummary(workspaceId) : undefined;
+      return { ok: true, invoiceId: invoice.id, alreadySettled: true, wallet };
+    }
+
+    const intent = await prisma.paymentIntent.findFirst({
+      where: { razorpayOrderId: params.razorpay_order_id },
+    });
+    if (intent?.status === 'success') {
+      const wallet =
+        invoice.type === 'wallet_topup' ? await getWalletSummary(workspaceId) : undefined;
+      return { ok: true, invoiceId: invoice.id, alreadySettled: true, wallet };
+    }
+
     const payment = await this.razorpay.fetchPayment(params.razorpay_payment_id);
     if (payment.status !== 'captured' && payment.status !== 'authorized') {
       throw new Error(`Payment not successful: ${payment.status}`);
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.billingInvoice.update({
-        where: { id: invoice.id },
-        data: {
-          razorpayPaymentId: params.razorpay_payment_id,
-          status: 'paid',
-          paidAt: new Date(),
-        },
-      });
-
-      const addon = await tx.billingAddOnPurchase.findFirst({
-        where: { workspaceId, razorpayOrderId: params.razorpay_order_id },
-      });
-
-      if (addon) {
-        await tx.billingAddOnPurchase.update({
-          where: { id: addon.id },
-          data: {
-            razorpayPaymentId: params.razorpay_payment_id,
-            status: 'paid',
-            validUntil: this.addonValidUntil(addon.type as AddOnType),
-          },
-        });
-        await this.applyAddonToWorkspace(tx, workspaceId, addon.type as AddOnType, addon.quantity);
-      }
-
-      if (invoice.type === 'custom_plan') {
-        const workspace = await tx.workspace.findUnique({ where: { id: workspaceId } });
-        const saved = readCustomPlanInput(workspace?.customPlanSelection);
-        if (saved) {
-          await this.applyCustomPlanLimits(tx, workspaceId, saved.input);
-        }
-        await tx.workspace.update({
-          where: { id: workspaceId },
-          data: { subscriptionStatus: 'active' },
-        });
-      }
-
-      if (invoice.type === 'plan_purchase') {
-        await this.activatePlanPurchase(tx, workspaceId, invoice.metadata);
-      }
-
-      if (invoice.type === 'wallet_topup') {
-        await creditWallet({
-          workspaceId,
-          amountPaise: walletTopupCreditPaise(invoice),
-          category: 'wallet_topup',
-          description: 'Wallet recharge',
-          referenceType: 'invoice',
-          referenceId: invoice.id,
-          idempotencyKey: `topup:${invoice.id}`,
-          tx,
-        });
-      }
-
-      /* AUTO_RECHARGE_DISABLED — re-enable later
-      if (invoice.type === 'wallet_auto_recharge_setup') {
-        await creditWallet({
-          workspaceId,
-          amountPaise: invoice.amountPaise,
-          category: 'wallet_topup',
-          description: 'Payment method setup',
-          referenceType: 'invoice',
-          referenceId: invoice.id,
-          idempotencyKey: `auto-setup:${invoice.id}`,
-          tx,
-        });
-      }
-      */
-    });
+    const settle = await prisma.$transaction(async (tx) =>
+      this.settlePaidOrder(tx, {
+        invoice,
+        paymentId: params.razorpay_payment_id,
+      })
+    );
 
     if (invoice.type === 'wallet_topup' /* || invoice.type === 'wallet_auto_recharge_setup' */) {
       await persistWalletPaymentMethod(workspaceId, payment, this.razorpay);
@@ -674,7 +721,12 @@ export class BillingService {
         ? await getWalletSummary(workspaceId)
         : undefined;
 
-    return { ok: true, invoiceId: invoice.id, wallet };
+    return {
+      ok: true,
+      invoiceId: invoice.id,
+      alreadySettled: settle.alreadySettled,
+      wallet,
+    };
   }
 
   /* AUTO_RECHARGE_DISABLED — re-enable later
@@ -850,29 +902,104 @@ export class BillingService {
     billingCycle: BillingCycle,
     amountPaise: number
   ) {
-    const receipt = `plan_${plan.slug}_${Date.now()}`;
-    const order = await this.razorpay.createOrder({
-      amountPaise,
-      receipt,
-      notes: {
-        workspaceId,
-        purpose: 'plan_purchase',
-        planId: plan.id,
-        billingCycle,
-      },
-    });
+    const purposeKey = `plan_purchase:${plan.id}:${billingCycle}:${amountPaise}`;
+    const idempotencyKey = buildServerIdempotencyKey(workspaceId, purposeKey);
 
-    await prisma.billingInvoice.create({
-      data: {
-        workspaceId,
-        razorpayOrderId: order.id,
-        type: 'plan_purchase',
+    const existing = await this.checkoutFromExistingIntent(idempotencyKey);
+    if (existing) {
+      return {
+        checkoutMode: 'order' as const,
+        orderId: existing.orderId,
+        amountPaise: existing.amountPaise,
+        currency: 'INR' as const,
+        keyId: this.razorpay.keyId,
+        plan: { id: plan.id, name: plan.name, slug: plan.slug },
+        billingCycle,
+        recurring: false as const,
+      };
+    }
+
+    let intent;
+    try {
+      intent = await prisma.paymentIntent.create({
+        data: {
+          idempotencyKey,
+          workspaceId,
+          amount: amountPaise,
+          currency: 'INR',
+          status: 'pending',
+        },
+      });
+    } catch (err) {
+      if (isPrismaUniqueViolation(err)) {
+        const raced = await this.checkoutFromExistingIntent(idempotencyKey);
+        if (raced) {
+          return {
+            checkoutMode: 'order' as const,
+            orderId: raced.orderId,
+            amountPaise: raced.amountPaise,
+            currency: 'INR' as const,
+            keyId: this.razorpay.keyId,
+            plan: { id: plan.id, name: plan.name, slug: plan.slug },
+            billingCycle,
+            recurring: false as const,
+          };
+        }
+        console.error('[billing.createPlanPurchaseOrder] P2002 without usable PaymentIntent', {
+          workspaceId,
+          idempotencyKey,
+        });
+        throw new Error('Payment order is already being created. Please retry shortly.');
+      }
+      throw err;
+    }
+
+    let order: { id: string };
+    try {
+      order = await this.razorpay.createOrder({
         amountPaise,
-        currency: 'INR',
-        status: 'created',
-        description: `${plan.name} plan (${billingCycle})`,
-        metadata: { planId: plan.id, billingCycle } as Prisma.InputJsonValue,
-      },
+        receipt: `plan_${plan.slug}_${Date.now()}`,
+        notes: {
+          workspaceId,
+          purpose: 'plan_purchase',
+          planId: plan.id,
+          billingCycle,
+        },
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error('[billing.createPlanPurchaseOrder] Razorpay createOrder failed', {
+        workspaceId,
+        idempotencyKey,
+        err,
+      });
+      await prisma.paymentIntent.update({
+        where: { id: intent.id },
+        data: { status: 'failed', failureReason: reason.slice(0, 500) },
+      });
+      throw err;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const invoice = await tx.billingInvoice.create({
+        data: {
+          workspaceId,
+          razorpayOrderId: order.id,
+          type: 'plan_purchase',
+          amountPaise,
+          currency: 'INR',
+          status: 'created',
+          description: `${plan.name} plan (${billingCycle})`,
+          metadata: { planId: plan.id, billingCycle } as Prisma.InputJsonValue,
+        },
+      });
+      await tx.paymentIntent.update({
+        where: { id: intent.id },
+        data: {
+          razorpayOrderId: order.id,
+          billingInvoiceId: invoice.id,
+        },
+      });
     });
 
     return {
@@ -1144,17 +1271,32 @@ export class BillingService {
 
   // --- Webhook handlers ---
 
-  async handlePaymentCaptured(payload: Record<string, unknown>) {
-    const payment = webhookEntity(payload, 'payment');
-    if (!payment?.id) return;
+  async handlePaymentCaptured(payload: RazorpayWebhookPayload | Record<string, unknown>) {
+    const payment = webhookPaymentEntity(payload) ?? webhookEntity(payload, 'payment');
+    if (!payment?.id) {
+      console.error('[billing.handlePaymentCaptured] Missing payment entity', { payload });
+      return;
+    }
 
     const orderId = payment.order_id as string | undefined;
-    if (!orderId) return;
+    if (!orderId) {
+      console.error('[billing.handlePaymentCaptured] Missing order_id', {
+        paymentId: payment.id,
+      });
+      return;
+    }
 
     const invoice = await prisma.billingInvoice.findFirst({
       where: { razorpayOrderId: orderId },
     });
-    if (!invoice || invoice.status === 'paid') return;
+    if (!invoice) {
+      console.error('[billing.handlePaymentCaptured] Invoice not found', {
+        orderId,
+        paymentId: payment.id,
+      });
+      return;
+    }
+    if (invoice.status === 'paid') return;
 
     const workspaceId = invoice.workspaceId;
     const paymentId = payment.id as string;
@@ -1165,119 +1307,202 @@ export class BillingService {
       paymentCreds = extractPaymentCredentials(fetchedPayment);
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.billingInvoice.update({
-        where: { id: invoice.id },
-        data: {
-          razorpayPaymentId: payment.id as string,
-          status: 'paid',
-          paidAt: new Date(),
-        },
-      });
-
-      const addon = await tx.billingAddOnPurchase.findFirst({
-        where: { workspaceId, razorpayOrderId: orderId },
-      });
-
-      if (addon) {
-        await tx.billingAddOnPurchase.update({
-          where: { id: addon.id },
-          data: {
-            razorpayPaymentId: payment.id as string,
-            status: 'paid',
-            validUntil: this.addonValidUntil(addon.type as AddOnType),
-          },
-        });
-        await this.applyAddonToWorkspace(tx, workspaceId, addon.type as AddOnType, addon.quantity);
-      }
-
-      if (invoice.type === 'custom_plan') {
-        const workspace = await tx.workspace.findUnique({ where: { id: workspaceId } });
-        const saved = readCustomPlanInput(workspace?.customPlanSelection);
-        if (saved) {
-          await this.applyCustomPlanLimits(tx, workspaceId, saved.input);
-        }
-        await tx.workspace.update({
-          where: { id: workspaceId },
-          data: { subscriptionStatus: 'active' },
-        });
-      }
-
-      if (invoice.type === 'plan_purchase') {
-        await this.activatePlanPurchase(tx, workspaceId, invoice.metadata);
-      }
-
-      if (invoice.type === 'wallet_topup') {
-        await creditWallet({
-          workspaceId,
-          amountPaise: walletTopupCreditPaise(invoice),
-          category: 'wallet_topup',
-          description: 'Wallet recharge',
-          referenceType: 'invoice',
-          referenceId: invoice.id,
-          idempotencyKey: `topup:${invoice.id}`,
-          tx,
-        });
-      }
-
-      /* AUTO_RECHARGE_DISABLED — re-enable later
-      if (invoice.type === 'wallet_auto_recharge') {
-        await creditWallet({
-          workspaceId,
-          amountPaise: invoice.amountPaise,
-          category: 'wallet_topup',
-          description: 'Auto-recharge',
-          referenceType: 'invoice',
-          referenceId: invoice.id,
-          idempotencyKey: `auto-recharge:${invoice.id}`,
-          tx,
-        });
-        await tx.workspaceWallet.update({
-          where: { workspaceId },
-          data: {
-            autoRechargeStatus: 'idle',
-            autoRechargeFailCount: 0,
-            lastAutoRechargeAt: new Date(),
-            autoRechargeCooldownUntil: new Date(Date.now() + AUTO_RECHARGE_COOLDOWN_MS),
-          },
-        });
-      }
-      */
-
-      /* AUTO_RECHARGE_DISABLED — re-enable later
-      if (invoice.type === 'wallet_auto_recharge_setup') {
-        await creditWallet({
-          workspaceId,
-          amountPaise: invoice.amountPaise,
-          category: 'wallet_topup',
-          description: 'Payment method setup',
-          referenceType: 'invoice',
-          referenceId: invoice.id,
-          idempotencyKey: `auto-setup:${invoice.id}`,
-          tx,
-        });
-      }
-      */
-    });
+    await prisma.$transaction(async (tx) =>
+      this.settlePaidOrder(tx, { invoice, paymentId })
+    );
 
     if (paymentCreds) {
       await saveWalletPaymentCredentials(workspaceId, paymentCreds);
     }
   }
 
-  async handlePaymentFailed(payload: Record<string, unknown>) {
-    const payment = webhookEntity(payload, 'payment');
-    if (!payment?.order_id) return;
+  async handlePaymentFailed(payload: RazorpayWebhookPayload | Record<string, unknown>) {
+    const payment = webhookPaymentEntity(payload) ?? webhookEntity(payload, 'payment');
+    if (!payment?.order_id) {
+      console.error('[billing.handlePaymentFailed] Missing payment.order_id', { payload });
+      return;
+    }
 
-    await prisma.billingInvoice.updateMany({
-      where: { razorpayOrderId: payment.order_id as string },
-      data: { status: 'failed' },
-    });
+    const orderId = payment.order_id as string;
+    const paymentId = typeof payment.id === 'string' ? payment.id : undefined;
+    const failureReason =
+      (typeof payment.error_description === 'string' && payment.error_description) ||
+      (typeof payment.error_reason === 'string' && payment.error_reason) ||
+      (typeof payment.error_code === 'string' && payment.error_code) ||
+      'payment_failed';
 
-    await prisma.billingAddOnPurchase.updateMany({
-      where: { razorpayOrderId: payment.order_id as string },
-      data: { status: 'failed' },
+    await prisma.$transaction(async (tx) => {
+      await tx.paymentIntent.updateMany({
+        where: {
+          razorpayOrderId: orderId,
+          status: 'pending',
+        },
+        data: {
+          status: 'failed',
+          failureReason: failureReason.slice(0, 500),
+          ...(paymentId ? { razorpayPaymentId: paymentId } : {}),
+        },
+      });
+
+      await tx.billingInvoice.updateMany({
+        where: {
+          razorpayOrderId: orderId,
+          status: { notIn: ['paid'] },
+        },
+        data: { status: 'failed' },
+      });
+
+      await tx.billingAddOnPurchase.updateMany({
+        where: {
+          razorpayOrderId: orderId,
+          status: { notIn: ['paid'] },
+        },
+        data: { status: 'failed' },
+      });
     });
+  }
+
+  /**
+   * First caller to transition PaymentIntent pending→success (or invoice→paid when no intent)
+   * applies credits. Subsequent verify/webhook calls return alreadySettled without re-crediting.
+   */
+  private async settlePaidOrder(
+    tx: Prisma.TransactionClient,
+    params: {
+      invoice: {
+        id: string;
+        workspaceId: string;
+        razorpayOrderId: string | null;
+        type: string;
+        metadata: Prisma.JsonValue | null;
+        amountPaise: number;
+        status: string;
+      };
+      paymentId: string;
+    }
+  ): Promise<{ alreadySettled: boolean }> {
+    const { invoice, paymentId } = params;
+    const workspaceId = invoice.workspaceId;
+    const orderId = invoice.razorpayOrderId;
+
+    const intent = orderId
+      ? await tx.paymentIntent.findFirst({ where: { razorpayOrderId: orderId } })
+      : null;
+
+    if (intent?.status === 'success' || invoice.status === 'paid') {
+      return { alreadySettled: true };
+    }
+
+    if (intent) {
+      const claimed = await tx.paymentIntent.updateMany({
+        where: { id: intent.id, status: 'pending' },
+        data: {
+          status: 'success',
+          razorpayPaymentId: paymentId,
+          failureReason: null,
+        },
+      });
+      if (claimed.count === 0) {
+        return { alreadySettled: true };
+      }
+
+      await tx.billingInvoice.update({
+        where: { id: invoice.id },
+        data: {
+          razorpayPaymentId: paymentId,
+          status: 'paid',
+          paidAt: new Date(),
+        },
+      });
+    } else {
+      const claimed = await tx.billingInvoice.updateMany({
+        where: { id: invoice.id, status: { not: 'paid' } },
+        data: {
+          razorpayPaymentId: paymentId,
+          status: 'paid',
+          paidAt: new Date(),
+        },
+      });
+      if (claimed.count === 0) {
+        return { alreadySettled: true };
+      }
+    }
+
+    const addon = orderId
+      ? await tx.billingAddOnPurchase.findFirst({
+          where: { workspaceId, razorpayOrderId: orderId },
+        })
+      : null;
+
+    if (addon && addon.status !== 'paid') {
+      await tx.billingAddOnPurchase.update({
+        where: { id: addon.id },
+        data: {
+          razorpayPaymentId: paymentId,
+          status: 'paid',
+          validUntil: this.addonValidUntil(addon.type as AddOnType),
+        },
+      });
+      await this.applyAddonToWorkspace(tx, workspaceId, addon.type as AddOnType, addon.quantity);
+    }
+
+    if (invoice.type === 'custom_plan') {
+      const workspace = await tx.workspace.findUnique({ where: { id: workspaceId } });
+      const saved = readCustomPlanInput(workspace?.customPlanSelection);
+      if (saved) {
+        await this.applyCustomPlanLimits(tx, workspaceId, saved.input);
+      }
+      await tx.workspace.update({
+        where: { id: workspaceId },
+        data: { subscriptionStatus: 'active' },
+      });
+    }
+
+    if (invoice.type === 'plan_purchase') {
+      await this.activatePlanPurchase(tx, workspaceId, invoice.metadata);
+    }
+
+    if (invoice.type === 'wallet_topup') {
+      await creditWallet({
+        workspaceId,
+        amountPaise: walletTopupCreditPaise(invoice),
+        category: 'wallet_topup',
+        description: 'Wallet recharge',
+        referenceType: 'invoice',
+        referenceId: invoice.id,
+        idempotencyKey: `topup:${invoice.id}`,
+        tx,
+      });
+    }
+
+    /* AUTO_RECHARGE_DISABLED — re-enable later
+    if (invoice.type === 'wallet_auto_recharge') { ... }
+    if (invoice.type === 'wallet_auto_recharge_setup') { ... }
+    */
+
+    return { alreadySettled: false };
+  }
+
+  private async checkoutFromExistingIntent(idempotencyKey: string): Promise<{
+    orderId: string;
+    amountPaise: number;
+    currency: string;
+    keyId: string;
+    invoiceId?: string;
+  } | null> {
+    const existing = await prisma.paymentIntent.findUnique({
+      where: { idempotencyKey },
+    });
+    if (!existing?.razorpayOrderId) return null;
+    if (existing.status === 'failed') return null;
+
+    return {
+      orderId: existing.razorpayOrderId,
+      amountPaise: existing.amount,
+      currency: existing.currency,
+      keyId: this.razorpay.keyId,
+      invoiceId: existing.billingInvoiceId ?? undefined,
+    };
   }
 
   async handleSubscriptionEvent(

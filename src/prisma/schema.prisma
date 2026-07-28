@@ -103,6 +103,7 @@ model Workspace {
   billingSubscriptions BillingSubscription[]
   billingInvoices      BillingInvoice[]
   billingAddOnPurchases BillingAddOnPurchase[]
+  paymentIntents       PaymentIntent[]
   usageLimits          WorkspaceUsageLimits?
   agentChatConversations AgentChatConversation[]
   tokenUsageLogs         TokenUsageLog[]
@@ -1419,11 +1420,46 @@ model BillingInvoice {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
+  paymentIntents PaymentIntent[]
+
   @@index([workspaceId])
   @@index([subscriptionId])
   @@index([razorpayOrderId])
   @@index([razorpayPaymentId])
   @@map("billing_invoices")
+}
+
+/// Idempotent checkout attempts (Razorpay order create / settle).
+model PaymentIntent {
+  id                 String   @id @default(cuid())
+  idempotencyKey     String   @unique
+  workspaceId        String
+  workspace          Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  amount             Int
+  currency           String   @default("INR")
+  status             String   @default("pending") // pending | success | failed
+  razorpayOrderId    String?
+  razorpayPaymentId  String?
+  failureReason      String?
+  billingInvoiceId   String?
+  billingInvoice     BillingInvoice? @relation(fields: [billingInvoiceId], references: [id], onDelete: SetNull)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([razorpayOrderId])
+  @@index([status])
+  @@map("payment_intents")
+}
+
+/// Dedupes Razorpay webhook deliveries (retried events share eventId).
+model RazorpayWebhookLog {
+  id          String   @id @default(cuid())
+  eventId     String   @unique
+  event       String
+  processedAt DateTime @default(now())
+
+  @@map("razorpay_webhook_logs")
 }
 
 /// One-time addon purchases (extra contacts, AI tokens, etc.).
