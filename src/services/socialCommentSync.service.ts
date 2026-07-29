@@ -6,7 +6,7 @@ import {
   mapStatusToReviewStatus,
 } from './socialCommentClassify.service.js';
 
-export type EnrichedListeningComment = InstagramListeningComment & {
+export type EnrichedListeningComment = Omit<InstagramListeningComment, 'replies'> & {
   socialCommentId: string | null;
   intent: string | null;
   intentLabel: 'Interested' | 'Question' | 'Complaint' | 'Spam' | 'Neutral' | null;
@@ -22,6 +22,7 @@ export type EnrichedListeningComment = InstagramListeningComment & {
   dmStatus: string | null;
   dmError: string | null;
   leadId: string | null;
+  replies: EnrichedListeningComment[];
 };
 
 function flattenComments(
