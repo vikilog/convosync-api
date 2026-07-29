@@ -9,6 +9,7 @@ import {
 } from './messenger.js';
 import { findMessengerAccountByPageId } from './workspaceResolve.js';
 import { applyMessagingReadReceipt } from './messagingReadReceipt.service.js';
+import { routeInboundConversation } from './conversation-inbound-router.service.js';
 import {
   downloadInstagramMediaUrl,
   parseInboundInstagramMessage,
@@ -169,6 +170,23 @@ export async function upsertMessengerInboundMessage(params: {
     conversationId: conv.id,
     contactId: contact.id,
   });
+
+  // Same assignee routing as WhatsApp / Instagram (AI Agent / Copilot / rule-based).
+  try {
+    await routeInboundConversation({
+      workspaceId: workspace.id,
+      conversationId: conv.id,
+      contactId: contact.id,
+      contactPhone,
+      text: params.parsed.content,
+      channel: 'messenger',
+    });
+  } catch (routeErr) {
+    logMessengerWebhook(
+      'inbound route failed',
+      routeErr instanceof Error ? routeErr.message : routeErr
+    );
+  }
 }
 
 export type PageMessagingWebhookBody = {

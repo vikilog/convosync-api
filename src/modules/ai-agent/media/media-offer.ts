@@ -1,5 +1,5 @@
 import { getRedis } from '../../../lib/redis.js';
-import { INTENTS } from '../intent.service.js';
+import { INTENTS, looksLikeMediaRequest } from '../intent.service.js';
 
 export type PendingMediaOffer = {
   mediaId: string;
@@ -29,9 +29,18 @@ export function looksLikeMediaAffirmation(message: string): boolean {
   );
 }
 
-/** Explicit ask or pricing → attach without asking. Feature/Q&A → offer first. */
+/** Explicit ask or pricing → attach without asking. Never auto-offer on feature/Q&A. */
 export function shouldAutoSendMedia(intent: string): boolean {
   return intent === INTENTS.MEDIA_REQUEST || intent === INTENTS.PRICING;
+}
+
+/** Only run gallery pick/offer when the user clearly wants a file, or pricing (price-list PDF). */
+export function shouldConsiderMediaAttachment(intent: string, message: string): boolean {
+  return (
+    looksLikeMediaRequest(message) ||
+    intent === INTENTS.MEDIA_REQUEST ||
+    intent === INTENTS.PRICING
+  );
 }
 
 export function buildMediaOfferLine(title: string, type: string): string {
@@ -51,7 +60,7 @@ export function mediaSendAck(title: string): string {
 }
 
 export function mediaNoMatchReply(): string {
-  return 'Gallery me is request se matching image/PDF nahi mili. Thoda specific title batao, ya team se connect karun?';
+  return 'Gallery me is request se matching image/PDF nahi mili. Thoda specific title batao (jaise price list, brochure, intro image).';
 }
 
 export async function getPendingMediaOffer(

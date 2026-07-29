@@ -19,7 +19,7 @@ export type Intent = (typeof INTENTS)[keyof typeof INTENTS];
 
 export const INTENT_TO_SKILLS: Record<string, string[]> = {
   pricing: ['Pricing Inquiry', 'Pricing and plans', 'Send media'],
-  feature_question: ['Feature Explanation', 'Product overview', 'Send media'],
+  feature_question: ['Feature Explanation', 'Product overview'],
   technical_support: ['Technical Support', 'WhatsApp connect'],
   onboarding: ['Onboarding Assistance', 'WhatsApp connect'],
   demo_request: ['Demo Request', 'Book demo'],
@@ -50,6 +50,8 @@ export function looksLikeMediaRequest(message: string): boolean {
 export function refineIntent(intent: Intent, message: string): Intent {
   if (looksLikeHumanRequest(message)) return INTENTS.HUMAN_REQUEST;
   if (looksLikeMediaRequest(message)) return INTENTS.MEDIA_REQUEST;
+  // LLM often labels product/feature Qs as media_request — only keep when text clearly asks for a file.
+  if (intent === INTENTS.MEDIA_REQUEST) return INTENTS.GENERAL;
   if (intent === INTENTS.HUMAN_REQUEST) return INTENTS.GENERAL;
   return intent;
 }

@@ -83,6 +83,8 @@ export const config = {
     hybridTopK: parseInt(process.env.HYBRID_TOP_K || '3', 10),
     /** Default true: low/no KB match escalates instead of open-ended full LLM. */
     escalateOnLowScore: process.env.AI_ESCALATE_ON_LOW_SCORE !== 'false',
+    /** When true, ConversationService.chat() runs the LangGraph orchestrator. */
+    useLangGraph: process.env.AI_AGENT_USE_LANGGRAPH === 'true',
     /** Voice stream: slightly looser low bar than chat (optional override). */
     voiceSimilarityLowThreshold: parseFloat(
       process.env.VOICE_SIMILARITY_LOW_THRESHOLD ||

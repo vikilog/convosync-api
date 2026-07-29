@@ -3,6 +3,12 @@ import { config } from '../../../config.js';
 import { ContextBuilderService } from '../context-builder.service.js';
 import type { Intent } from '../intent.service.js';
 import type { LlmClient } from '../services/llm-client.service.js';
+import type { AgentAction } from '../actions/action-executor.js';
+import {
+  SUGGESTED_ACTIONS_SYSTEM_HINT,
+  composeWithActionsSchema,
+  normalizeSuggestedActions,
+} from '../actions/llm-suggested-actions.js';
 import {
   KB_BOUND_SYSTEM_PREFIX,
   KB_OUT_OF_SCOPE_REPLY,
@@ -20,7 +26,82 @@ export type LlmCallResult = {
   /** True when post-gen guard replaced the model reply. */
   guarded?: boolean;
   escalate?: boolean;
+  /** Populated when withSuggestedActions used a single structured LLM call. */
+  suggestedActions?: AgentAction[];
+  /** How many provider LLM calls this helper made (0|1). */
+  llmCalls?: number;
 };
+
+async function completeReplyMaybeWithActions(params: {
+  llm: LlmClient;
+  workspaceId?: string;
+  systemPrompt: string;
+  history: Array<{ role: 'user' | 'assistant'; content: string }>;
+  message: string;
+  maxTokens: number;
+  temperature: number;
+  withSuggestedActions?: boolean;
+}): Promise<{ content: string; promptTokens: number; completionTokens: number; suggestedActions: AgentAction[]; llmCalls: number }> {
+  const history = params.history.slice(-config.ai.maxHistoryMessages);
+
+  if (params.withSuggestedActions) {
+    try {
+      const system = `${params.systemPrompt}\n\n${SUGGESTED_ACTIONS_SYSTEM_HINT}`;
+      const { content, usage } = await params.llm.completeJsonSchema(
+        [
+          { role: 'system', content: system },
+          ...history,
+          { role: 'user', content: params.message },
+        ],
+        composeWithActionsSchema as unknown as Record<string, unknown>,
+        {
+          name: 'compose_with_actions',
+          maxTokens: Math.max(params.maxTokens, 400),
+          temperature: params.temperature,
+          workspaceId: params.workspaceId,
+        }
+      );
+      const parsed = JSON.parse(content) as { reply?: string; actions?: unknown };
+      const reply = typeof parsed.reply === 'string' ? parsed.reply.trim() : '';
+      const suggestedActions = normalizeSuggestedActions({
+        actions: Array.isArray(parsed.actions) ? (parsed.actions as never) : [],
+      });
+      return {
+        content: reply || content,
+        promptTokens: usage.promptTokens,
+        completionTokens: usage.completionTokens,
+        suggestedActions,
+        llmCalls: 1,
+      };
+    } catch (err) {
+      // Anthropic / schema failures → plain complete, no actions (no second call).
+      console.warn(
+        '[call-llm] compose+actions schema failed, falling back to plain complete',
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  const aiResponse = await params.llm.complete(
+    [
+      { role: 'system', content: params.systemPrompt },
+      ...history,
+      { role: 'user', content: params.message },
+    ],
+    {
+      maxTokens: params.maxTokens,
+      temperature: params.temperature,
+      workspaceId: params.workspaceId,
+    }
+  );
+  return {
+    content: aiResponse.content,
+    promptTokens: aiResponse.usage.promptTokens,
+    completionTokens: aiResponse.usage.completionTokens,
+    suggestedActions: [],
+    llmCalls: 1,
+  };
+}
 
 /** RAG: LLM with only confident matched chunks as knowledge. */
 export async function callLlmWithRagContext(params: {
@@ -33,6 +114,8 @@ export async function callLlmWithRagContext(params: {
   hits: HybridHit[];
   history: Array<{ role: 'user' | 'assistant'; content: string }>;
   minScore?: number;
+  /** LangGraph: fold tag/attribute suggestions into the same structured call. */
+  withSuggestedActions?: boolean;
 }): Promise<LlmCallResult> {
   const minScore = params.minScore ?? config.ai.similarityLowThreshold;
   const hits = filterHitsByMinScore(params.hits, minScore);
@@ -46,6 +129,8 @@ export async function callLlmWithRagContext(params: {
       kbChunksLoaded: 0,
       guarded: true,
       escalate: true,
+      suggestedActions: [],
+      llmCalls: 0,
     };
   }
 
@@ -68,27 +153,30 @@ RULES:
 - Keep the reply concise (max 3-4 sentences).
 - If the knowledge does not cover the question, reply exactly with the out-of-scope fallback and escalate.`;
 
-  const maxTokens = config.ai.maxOutputTokens;
-  const aiResponse = await params.llm.complete(
-    [
-      { role: 'system', content: systemPrompt },
-      ...params.history.slice(-config.ai.maxHistoryMessages),
-      { role: 'user', content: params.message },
-    ],
-    { maxTokens, temperature: 0.5, workspaceId: params.workspaceId }
-  );
+  const aiResponse = await completeReplyMaybeWithActions({
+    llm: params.llm,
+    workspaceId: params.workspaceId,
+    systemPrompt,
+    history: params.history,
+    message: params.message,
+    maxTokens: config.ai.maxOutputTokens,
+    temperature: 0.5,
+    withSuggestedActions: params.withSuggestedActions,
+  });
 
   const kbText = hits.map((h) => `${h.title}\n${h.content}`).join('\n');
   const guarded = guardKbBoundReply({ reply: aiResponse.content, kbText });
 
   return {
     content: guarded.reply,
-    promptTokens: aiResponse.usage.promptTokens,
-    completionTokens: aiResponse.usage.completionTokens,
+    promptTokens: aiResponse.promptTokens,
+    completionTokens: aiResponse.completionTokens,
     skillsLoaded: [],
     kbChunksLoaded: hits.length,
     guarded: guarded.replaced,
     escalate: guarded.escalate,
+    suggestedActions: guarded.escalate ? [] : aiResponse.suggestedActions,
+    llmCalls: aiResponse.llmCalls,
   };
 }
 
@@ -102,6 +190,7 @@ export async function callLlmFull(params: {
   stage: string;
   message: string;
   history: Array<{ role: 'user' | 'assistant'; content: string }>;
+  withSuggestedActions?: boolean;
 }): Promise<LlmCallResult> {
   const builder = new ContextBuilderService(params.fastify);
   const context = await builder.buildContext({
@@ -113,8 +202,6 @@ export async function callLlmFull(params: {
     stage: params.stage,
   });
 
-  // No confident KB → do not call the model with open-ended knowledge
-  // (media_request uses Send media skill; no KB required)
   if (
     context.kbChunksLoaded === 0 &&
     params.stage !== 'greeting' &&
@@ -131,20 +218,22 @@ export async function callLlmFull(params: {
       kbChunksLoaded: 0,
       guarded: true,
       escalate: true,
+      suggestedActions: [],
+      llmCalls: 0,
     };
   }
 
-  const maxTokens = config.ai.maxOutputTokens;
-  const aiResponse = await params.llm.complete(
-    [
-      { role: 'system', content: context.systemPrompt },
-      ...context.messages,
-      { role: 'user', content: params.message },
-    ],
-    { maxTokens, temperature: 0.7, workspaceId: params.workspaceId }
-  );
+  const aiResponse = await completeReplyMaybeWithActions({
+    llm: params.llm,
+    workspaceId: params.workspaceId,
+    systemPrompt: context.systemPrompt,
+    history: context.messages,
+    message: params.message,
+    maxTokens: config.ai.maxOutputTokens,
+    temperature: 0.7,
+    withSuggestedActions: params.withSuggestedActions,
+  });
 
-  // Extract KB section from system prompt for grounding check when chunks were loaded
   const kbText =
     context.kbChunksLoaded > 0
       ? (context.systemPrompt.split('KNOWLEDGE BASE:')[1] ?? '').split('\nRULES:')[0] ?? ''
@@ -157,11 +246,13 @@ export async function callLlmFull(params: {
 
   return {
     content: guarded.reply,
-    promptTokens: aiResponse.usage.promptTokens,
-    completionTokens: aiResponse.usage.completionTokens,
+    promptTokens: aiResponse.promptTokens,
+    completionTokens: aiResponse.completionTokens,
     skillsLoaded: context.skillsLoaded,
     kbChunksLoaded: context.kbChunksLoaded,
     guarded: guarded.replaced,
     escalate: guarded.escalate,
+    suggestedActions: guarded.escalate ? [] : aiResponse.suggestedActions,
+    llmCalls: aiResponse.llmCalls,
   };
 }

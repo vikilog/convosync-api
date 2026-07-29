@@ -26,5 +26,9 @@ assert.equal(keywordMediaFallback('Intro image do', catalog), 'intro1');
 assert.equal(keywordMediaFallback('intro image dedo', catalog), 'intro1');
 assert.equal(keywordMediaFallback('plan price list PDF', catalog), 'price1');
 assert.equal(keywordMediaFallback('hello', catalog), null);
+// Brand/feature questions must NOT attach media via keyword overlap alone.
+assert.equal(keywordMediaFallback('What is convosync', catalog), null);
+assert.equal(keywordMediaFallback('Convosync k feature btao', catalog), null);
+assert.equal(keywordMediaFallback('Feature btao ?', catalog), null);
 
 console.log('media-match.check: ok');

@@ -55,6 +55,9 @@ import {
   resolveOutboundInstagramKind,
   sendInstagramMediaMessage,
 } from '../services/instagramMedia.js';
+import {
+  sendMessengerMediaMessage,
+} from '../services/messenger.js';
 import { stageMediaForMetaFetch } from '../services/mediaStaging.js';
 import {
   previewForMessage,
@@ -932,8 +935,8 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     });
     if (!conv) return reply.code(404).send({ error: 'Not found' });
     if (!assertConversationInScope(conv, access.inboxScope, reply)) return;
-    if (conv.channel !== 'whatsapp' && conv.channel !== 'instagram') {
-      return reply.code(400).send({ error: 'Media messages are only supported on WhatsApp and Instagram' });
+    if (conv.channel !== 'whatsapp' && conv.channel !== 'instagram' && conv.channel !== 'messenger') {
+      return reply.code(400).send({ error: 'Media messages are only supported on WhatsApp, Instagram, and Messenger' });
     }
     if (!conv.contact?.phone) {
       return reply.code(400).send({ error: 'Contact has no phone number' });
@@ -1030,6 +1033,65 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         const message =
           err instanceof Error ? err.message : formatInstagramSendError(err);
         return reply.code(502).send({ error: message });
+      }
+    } else if (conv.channel === 'messenger') {
+      const psid = parseMessengerPsid(conv.contact.phone);
+      if (!psid) {
+        return reply.code(400).send({ error: 'Contact has no Messenger user id' });
+      }
+
+      let credentials;
+      try {
+        credentials = await getWorkspaceMessengerCredentials(workspaceId, conv.channelAccountId);
+      } catch (err) {
+        return reply.code(400).send({
+          error: err instanceof Error ? err.message : 'Messenger not connected',
+        });
+      }
+
+      const metaKind = resolveOutboundInstagramKind(mimeType);
+      messageKind = metaKind === 'file' ? 'document' : metaKind;
+      content = previewForMessage(
+        messageKind as 'image' | 'video' | 'audio' | 'document',
+        caption || fileName,
+        caption
+      );
+      channelAccountId = credentials.pageId;
+
+      try {
+        const staged = await stageMediaForMetaFetch(fileBuffer, mimeType, fileName);
+        const sent = await sendMessengerMediaMessage(
+          credentials.pageId,
+          credentials.pageAccessToken,
+          psid,
+          metaKind,
+          staged.publicUrl
+        );
+        waMessageId = sent.messageId;
+        initialMetadata = {
+          mimeType,
+          fileName,
+          caption: caption || undefined,
+        };
+
+        if (caption.trim()) {
+          try {
+            await sendMessengerMessage(
+              credentials.pageId,
+              credentials.pageAccessToken,
+              psid,
+              caption
+            );
+            captionSent = true;
+          } catch (captionErr) {
+            request.log.warn({ err: captionErr }, 'Messenger caption text send failed');
+          }
+        }
+      } catch (err) {
+        request.log.error({ err }, 'Messenger media send failed');
+        return reply.code(502).send({
+          error: formatMessengerSendError(err),
+        });
       }
     } else {
       let credentials;

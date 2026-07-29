@@ -1,5 +1,9 @@
 import axios from 'axios';
 import { formatInstagramSendError, sendInstagramMessage } from './instagram.js';
+import {
+  sendInstagramMediaMessage,
+  type InstagramAttachmentKind,
+} from './instagramMedia.js';
 
 export type MessengerUserProfile = {
   first_name?: string;
@@ -14,6 +18,7 @@ export type SendMessengerResult = {
 
 export { formatInstagramSendError as formatMessengerSendError };
 
+/** Meta Page Send API — same endpoint/shape as Instagram messaging. */
 export async function sendMessengerMessage(
   pageId: string,
   pageAccessToken: string,
@@ -21,6 +26,16 @@ export async function sendMessengerMessage(
   text: string
 ): Promise<SendMessengerResult> {
   return sendInstagramMessage(pageId, pageAccessToken, recipientPsid, text);
+}
+
+export async function sendMessengerMediaMessage(
+  pageId: string,
+  pageAccessToken: string,
+  recipientPsid: string,
+  kind: InstagramAttachmentKind,
+  mediaUrl: string
+): Promise<SendMessengerResult> {
+  return sendInstagramMediaMessage(pageId, pageAccessToken, recipientPsid, kind, mediaUrl);
 }
 
 export async function fetchMessengerUserProfile(

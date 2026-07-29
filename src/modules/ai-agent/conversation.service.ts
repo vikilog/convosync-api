@@ -1,9 +1,11 @@
 import { FastifyInstance } from 'fastify';
+import { config } from '../../config.js';
 import {
   isMediaCapabilityRefusal,
   mediaNoMatchReply,
   mediaSendAck,
   shouldAutoSendMedia,
+  shouldConsiderMediaAttachment,
 } from './media/media-offer.js';
 import { planAgentMediaAttachment, type MediaPlan } from './media/send-media.service.js';
 import { classifyIntent, INTENTS, looksLikeMediaRequest } from './intent.service.js';
@@ -13,6 +15,10 @@ import { AiProviderConfigService } from './services/ai-provider-config.service.j
 import { LlmClient, LlmClientError } from './services/llm-client.service.js';
 import { handleAIAgentQuery } from './hybrid/handle-ai-agent-query.js';
 import type { RetrievalPath } from './hybrid/types.js';
+import { executeActions, type AgentAction } from './actions/action-executor.js';
+import { getRuleBasedActions } from './actions/rule-based-actions.js';
+import { getLlmSuggestedActions } from './actions/llm-suggested-actions.js';
+import { runAgentGraph } from './graph/agent-graph.js';
 
 export type ChatMediaAttachment =
   | { action: 'send'; mediaId: string; title: string; type: string }
@@ -154,6 +160,7 @@ export class ConversationService {
       const { reply, mediaAttachment } = this.replyFromMediaPlan(plan, {
         preview: previewChannel,
         forceAck: true,
+        intent: INTENTS.MEDIA_REQUEST,
       });
       await this.saveMessage(conversation.id, 'user', params.message, 0, INTENTS.MEDIA_REQUEST);
       await this.saveMessage(conversation.id, 'assistant', reply, 0, INTENTS.MEDIA_REQUEST);
@@ -174,6 +181,17 @@ export class ConversationService {
         topScore: null,
         mediaAttachment,
       };
+    }
+
+    // ── LangGraph path (feature-flagged) ───────────────────────────────────
+    if (config.ai.useLangGraph) {
+      return this.chatViaLangGraph({
+        params,
+        llm,
+        billingMode,
+        conversation,
+        mediaConvId,
+      });
     }
 
     const recentContext = conversation.messages
@@ -205,6 +223,19 @@ export class ConversationService {
         'Bilkul! Main aapko abhi ek human agent se connect karta hun. Thoda wait karein. 🙏';
       await this.saveMessage(conversation.id, 'user', params.message, 0, intent);
       await this.saveMessage(conversation.id, 'assistant', reply, 0, intent);
+      // Escalate must run even though this path skips hybrid.
+      await this.runPostReplyActions({
+        workspaceId: params.workspaceId,
+        agentId: params.agentId,
+        channel: params.channel || conversation.channel,
+        mediaConversationId: params.mediaConversationId,
+        intent,
+        retrievalPath: 'escalate',
+        message: params.message,
+        reply,
+        llm,
+        allowLlmSuggestions: false,
+      });
       return {
         reply,
         conversationId: conversation.id,
@@ -245,12 +276,8 @@ export class ConversationService {
     let reply = hybrid.reply || 'Sorry, kuch galat hua. Please dobara try karein.';
     let mediaAttachment: ChatMediaAttachment = { action: 'none' };
 
-    const skipMedia = new Set<string>([
-      INTENTS.GREETING,
-      INTENTS.FAREWELL,
-      INTENTS.HUMAN_REQUEST,
-    ]);
-    if (!skipMedia.has(intent)) {
+    const skipMedia = !shouldConsiderMediaAttachment(intent, params.message);
+    if (!skipMedia) {
       const plan = await planAgentMediaAttachment({
         workspaceId: params.workspaceId,
         conversationId: mediaConvId,
@@ -262,6 +289,7 @@ export class ConversationService {
         preview: previewChannel,
         forceAck: false,
         baseReply: reply,
+        intent,
       });
       reply = shaped.reply;
       mediaAttachment = shaped.mediaAttachment;
@@ -301,6 +329,21 @@ export class ConversationService {
       data: { stage, detectedIntent: intent },
     });
 
+    // Actions never block the chat reply (errors logged inside).
+    // Skip LLM suggestions on cache/direct — cheap FAQ hits shouldn't pay another LLM call.
+    await this.runPostReplyActions({
+      workspaceId: params.workspaceId,
+      agentId: params.agentId,
+      channel: params.channel || conversation.channel,
+      mediaConversationId: params.mediaConversationId,
+      intent,
+      retrievalPath: hybrid.path,
+      message: params.message,
+      reply,
+      llm,
+      allowLlmSuggestions: hybrid.path !== 'cache' && hybrid.path !== 'direct',
+    });
+
     return {
       reply,
       conversationId: conversation.id,
@@ -316,9 +359,205 @@ export class ConversationService {
     };
   }
 
+  /**
+   * LangGraph orchestration (AI_AGENT_USE_LANGGRAPH=true). Same return contract as legacy chat().
+   */
+  private async chatViaLangGraph(args: {
+    params: {
+      workspaceId: string;
+      agentId: string;
+      conversationId?: string;
+      message: string;
+      channel?: string;
+      mediaConversationId?: string;
+    };
+    llm: LlmClient;
+    billingMode: 'convosync' | 'byok';
+    conversation: {
+      id: string;
+      channel: string;
+      stage: string;
+      messageCount: number;
+      messages: Array<{ role: string; content: string }>;
+      contactId?: string | null;
+    };
+    mediaConvId: string;
+  }): Promise<{
+    reply: string;
+    conversationId: string;
+    fromCache: boolean;
+    tokensUsed: number;
+    costInr: number;
+    intent: string;
+    stage: string;
+    billingMode?: 'convosync' | 'byok';
+    retrievalPath?: RetrievalPath;
+    topScore?: number | null;
+    mediaAttachment: ChatMediaAttachment;
+  }> {
+    const { params, llm, billingMode, conversation, mediaConvId } = args;
+    const channel = params.channel || conversation.channel || 'preview';
+    const stage = this.determineStage(conversation, 'general');
+    const history = conversation.messages.map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }));
+
+    const target = await this.resolveInboxActionTarget({
+      workspaceId: params.workspaceId,
+      channel,
+      mediaConversationId: params.mediaConversationId,
+    });
+
+    const graphResult = await runAgentGraph({
+      fastify: this.fastify,
+      llm,
+      workspaceId: params.workspaceId,
+      agentId: params.agentId,
+      conversationId: conversation.id,
+      contactId: target?.contactId ?? conversation.contactId ?? null,
+      message: params.message,
+      history,
+      stage,
+      channel,
+      mediaConversationId: params.mediaConversationId || mediaConvId,
+    });
+
+    const finalStage = this.determineStage(conversation, graphResult.intent);
+
+    const { costInr } = await this.tokenTracker.logUsage({
+      workspaceId: params.workspaceId,
+      agentId: params.agentId,
+      conversationId: conversation.id,
+      inputTokens: graphResult.promptTokens,
+      outputTokens: graphResult.completionTokens,
+      fromCache: graphResult.fromCache,
+      intentDetected: `langgraph:${graphResult.retrievalPath ?? 'unknown'}`,
+      skillsLoaded: graphResult.skillsLoaded,
+      kbChunksLoaded: graphResult.kbChunksLoaded,
+      billingMode,
+    });
+
+    await this.saveMessage(conversation.id, 'user', params.message, 0, graphResult.intent);
+    await this.saveMessage(
+      conversation.id,
+      'assistant',
+      graphResult.reply,
+      graphResult.promptTokens + graphResult.completionTokens,
+      graphResult.intent,
+      graphResult.fromCache
+    );
+
+    await this.prisma.agentChatConversation.update({
+      where: { id: conversation.id },
+      data: { stage: finalStage, detectedIntent: graphResult.intent },
+    });
+
+    return {
+      reply: graphResult.reply,
+      conversationId: conversation.id,
+      fromCache: graphResult.fromCache,
+      tokensUsed: graphResult.promptTokens + graphResult.completionTokens,
+      costInr: graphResult.fromCache ? 0 : costInr,
+      intent: graphResult.intent,
+      stage: finalStage,
+      billingMode,
+      retrievalPath: graphResult.retrievalPath,
+      topScore: graphResult.topScore,
+      mediaAttachment: graphResult.mediaAttachment,
+    };
+  }
+
+  /**
+   * Inbox-only side effects (escalate / close / tags). Preview chats have no Contact row.
+   * Failures are logged and never thrown to the caller.
+   */
+  private async runPostReplyActions(params: {
+    workspaceId: string;
+    agentId: string;
+    channel?: string;
+    mediaConversationId?: string;
+    intent: string;
+    retrievalPath: string;
+    message: string;
+    reply: string;
+    llm: LlmClient;
+    allowLlmSuggestions: boolean;
+  }): Promise<void> {
+    try {
+      const target = await this.resolveInboxActionTarget(params);
+      if (!target) return;
+
+      const intentForRules = params.intent || 'unknown';
+      const ruleActions = getRuleBasedActions({
+        intent: intentForRules,
+        retrievalPath: params.retrievalPath,
+        message: params.message,
+      });
+
+      const hasTerminal = ruleActions.some(
+        (a) => a.type === 'escalate_to_human' || a.type === 'close_conversations'
+      );
+
+      let llmActions: AgentAction[] = [];
+      if (params.allowLlmSuggestions && !hasTerminal && intentForRules !== 'unknown') {
+        try {
+          llmActions = await getLlmSuggestedActions({
+            message: params.message,
+            reply: params.reply,
+            llmClient: params.llm,
+            workspaceId: params.workspaceId,
+          });
+        } catch (err) {
+          console.warn(
+            '[ConversationService] llm suggested actions failed',
+            err instanceof Error ? err.message : err
+          );
+        }
+      }
+
+      const allActions = [...ruleActions, ...llmActions];
+      if (allActions.length === 0) return;
+
+      await executeActions(allActions, {
+        prisma: this.prisma,
+        workspaceId: params.workspaceId,
+        conversationId: target.conversationId,
+        contactId: target.contactId,
+        agentId: params.agentId,
+        intent: intentForRules,
+        triggerReason: `Auto: ${intentForRules}`,
+      });
+    } catch (err) {
+      console.error(
+        '[ConversationService] action execution failed',
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  private async resolveInboxActionTarget(params: {
+    workspaceId: string;
+    channel?: string;
+    mediaConversationId?: string;
+  }): Promise<{ conversationId: string; contactId: string } | null> {
+    const channel = params.channel || '';
+    const inboxId =
+      params.mediaConversationId ||
+      (channel.startsWith('inbox:') ? channel.slice('inbox:'.length) : null);
+    if (!inboxId) return null;
+
+    const inbox = await this.prisma.conversation.findFirst({
+      where: { id: inboxId, workspaceId: params.workspaceId },
+      select: { id: true, contactId: true },
+    });
+    if (!inbox?.contactId) return null;
+    return { conversationId: inbox.id, contactId: inbox.contactId };
+  }
+
   private replyFromMediaPlan(
     plan: MediaPlan,
-    opts: { preview: boolean; forceAck: boolean; baseReply?: string }
+    opts: { preview: boolean; forceAck: boolean; baseReply?: string; intent?: string }
   ): { reply: string; mediaAttachment: ChatMediaAttachment } {
     if (plan.kind === 'send') {
       const title = plan.asset.title;
@@ -354,11 +593,14 @@ export class ConversationService {
         },
       };
     }
-    if (opts.forceAck || shouldAutoSendMedia(INTENTS.MEDIA_REQUEST)) {
-      return { reply: mediaNoMatchReply(), mediaAttachment: { action: 'none' } };
+    // No gallery match: keep the normal answer. Only use the gallery clarifier when
+    // this turn was explicitly a media ask (forceAck / media_request|pricing intent).
+    const mediaAsk = opts.forceAck || shouldAutoSendMedia(opts.intent || '');
+    if (opts.baseReply?.trim()) {
+      return { reply: opts.baseReply, mediaAttachment: { action: 'none' } };
     }
     return {
-      reply: opts.baseReply || mediaNoMatchReply(),
+      reply: mediaAsk ? mediaNoMatchReply() : '',
       mediaAttachment: { action: 'none' },
     };
   }

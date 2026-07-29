@@ -12,6 +12,13 @@ import { eventBus } from '../modules/journey/events/event-bus.js';
 import { getIo } from '../socket.js';
 import { contactChannelWhere, type ContactChannelFilter } from '../lib/channelContact.js';
 import { getContactAudits } from '../services/contact-audit.service.js';
+import { getContactLeadJourney } from '../services/leadJourney.js';
+import {
+  getContactOverview,
+  linkContacts,
+  listContactLinks,
+  unlinkContact,
+} from '../services/contactLink.service.js';
 import { deleteConversationThread } from '../services/conversation-delete.service.js';
 
 import {
@@ -404,6 +411,66 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     const contact = await prisma.contact.findFirst({ where: { id, workspaceId } });
     if (!contact) return reply.code(404).send({ error: 'Not found' });
     return contact;
+  });
+
+  fastify.get('/:id/lead-journey', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const contact = await prisma.contact.findFirst({
+      where: { id, workspaceId },
+      select: { id: true },
+    });
+    if (!contact) return reply.code(404).send({ error: 'Not found' });
+    const journey = await getContactLeadJourney(workspaceId, id);
+    return { journey };
+  });
+
+  fastify.get('/:id/links', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const links = await listContactLinks(workspaceId, id);
+    if (!links) return reply.code(404).send({ error: 'Not found' });
+    return links;
+  });
+
+  fastify.post('/:id/links', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const body = z.object({ otherContactId: z.string().min(1) }).parse(request.body);
+    try {
+      const links = await linkContacts(workspaceId, id, body.otherContactId);
+      if (!links) return reply.code(404).send({ error: 'Not found' });
+      return links;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Link failed';
+      const code = /not found/i.test(message) ? 404 : 400;
+      return reply.code(code).send({ error: message });
+    }
+  });
+
+  fastify.delete('/:id/links/:otherContactId', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id, otherContactId } = request.params as {
+      id: string;
+      otherContactId: string;
+    };
+    try {
+      const links = await unlinkContact(workspaceId, id, otherContactId);
+      if (!links) return reply.code(404).send({ error: 'Not found' });
+      return links;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unlink failed';
+      const code = /not found/i.test(message) ? 404 : 400;
+      return reply.code(code).send({ error: message });
+    }
+  });
+
+  fastify.get('/:id/overview', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const overview = await getContactOverview(workspaceId, id);
+    if (!overview) return reply.code(404).send({ error: 'Not found' });
+    return overview;
   });
 
   fastify.get('/:id/audits', auth, async (request, reply) => {

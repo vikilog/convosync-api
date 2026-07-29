@@ -5,7 +5,18 @@ import { initAiKnowledgeModule } from '../modules/ai-knowledge/container.js';
 import type { AiChatHistoryMessage } from '../modules/ai-chat/types/ai-chat.types.js';
 import { getWorkspaceWhatsAppCredentials } from './whatsappCredentials.js';
 import { formatMetaSendError, sendWhatsAppMessage } from './whatsapp.js';
-import type { InboundWhatsAppContext } from './ruleBasedFlowEngine.js';
+import { getWorkspaceInstagramCredentials } from './instagramCredentials.js';
+import { formatInstagramSendError, sendInstagramMessage } from './instagram.js';
+import {
+  formatMessengerSendError,
+  sendMessengerMessage,
+} from './messenger.js';
+import { getWorkspaceMessengerCredentials } from './messengerCredentials.js';
+import {
+  parseInstagramScopedUserId,
+  parseMessengerPsid,
+} from '../lib/channelContact.js';
+import type { InboundMessagingContext } from './ruleBasedFlowEngine.js';
 import { ensureAiHandlingStarted } from './conversation-event.service.js';
 
 function logAi(label: string, payload?: unknown) {
@@ -28,8 +39,8 @@ function buildHistoryFromMessages(
     }));
 }
 
-/** FAQ auto-reply when conversation is assigned to AI. */
-export async function processAiInbound(ctx: InboundWhatsAppContext): Promise<void> {
+/** FAQ auto-reply when conversation is assigned to AI (WhatsApp / Instagram / Messenger). */
+export async function processAiInbound(ctx: InboundMessagingContext): Promise<void> {
   const conversation = await prisma.conversation.findFirst({
     where: { id: ctx.conversationId, workspaceId: ctx.workspaceId },
     include: {
@@ -44,6 +55,13 @@ export async function processAiInbound(ctx: InboundWhatsAppContext): Promise<voi
     logAi('skip — not assigned to AI');
     return;
   }
+
+  const channel: 'whatsapp' | 'instagram' | 'messenger' =
+    ctx.channel === 'instagram' || ctx.channel === 'messenger'
+      ? ctx.channel
+      : conversation.channel === 'instagram' || conversation.channel === 'messenger'
+        ? conversation.channel
+        : 'whatsapp';
 
   const config = await prisma.aiKnowledgeConfig.findUnique({
     where: { workspaceId: ctx.workspaceId },
@@ -65,7 +83,7 @@ export async function processAiInbound(ctx: InboundWhatsAppContext): Promise<voi
       venueId: config.venueId,
       message: ctx.text,
       customerId: ctx.contactId,
-      channel: 'whatsapp',
+      channel,
       history,
     });
   } catch (err) {
@@ -77,23 +95,63 @@ export async function processAiInbound(ctx: InboundWhatsAppContext): Promise<voi
   if (!replyText) return;
 
   try {
-    const credentials = await getWorkspaceWhatsAppCredentials(ctx.workspaceId);
-    const phoneNumberId = ctx.phoneNumberId || credentials.phoneNumberId;
-    if (!phoneNumberId) {
-      logAi('skip — no WhatsApp phone number id');
-      return;
+    let externalId: string | undefined;
+
+    if (channel === 'instagram') {
+      const recipientId = parseInstagramScopedUserId(ctx.contactPhone);
+      if (!recipientId) {
+        logAi('skip — no Instagram user id');
+        return;
+      }
+      const credentials = await getWorkspaceInstagramCredentials(
+        ctx.workspaceId,
+        conversation.channelAccountId
+      );
+      const sent = await sendInstagramMessage(
+        credentials.pageId,
+        credentials.pageAccessToken,
+        recipientId,
+        replyText,
+        { instagramUserId: credentials.instagramUserId }
+      );
+      externalId = sent.messageId;
+    } else if (channel === 'messenger') {
+      const recipientId = parseMessengerPsid(ctx.contactPhone);
+      if (!recipientId) {
+        logAi('skip — no Messenger PSID');
+        return;
+      }
+      const credentials = await getWorkspaceMessengerCredentials(
+        ctx.workspaceId,
+        conversation.channelAccountId
+      );
+      const sent = await sendMessengerMessage(
+        credentials.pageId,
+        credentials.pageAccessToken,
+        recipientId,
+        replyText
+      );
+      externalId = sent.messageId;
+    } else {
+      const credentials = await getWorkspaceWhatsAppCredentials(ctx.workspaceId);
+      const phoneNumberId = ctx.phoneNumberId || credentials.phoneNumberId;
+      if (!phoneNumberId) {
+        logAi('skip — no WhatsApp phone number id');
+        return;
+      }
+      const sent = await sendWhatsAppMessage(
+        credentials.accessToken,
+        phoneNumberId,
+        ctx.contactPhone,
+        replyText
+      );
+      externalId = sent.waMessageId;
     }
-    const sent = await sendWhatsAppMessage(
-      credentials.accessToken,
-      phoneNumberId,
-      ctx.contactPhone,
-      replyText
-    );
 
     const message = await prisma.message.create({
       data: {
         conversationId: ctx.conversationId,
-        waMessageId: sent.waMessageId,
+        waMessageId: externalId,
         sender: 'agent',
         senderName: 'AI Copilot',
         content: replyText,
@@ -101,6 +159,7 @@ export async function processAiInbound(ctx: InboundWhatsAppContext): Promise<voi
         status: 'sent',
         metadata: {
           source: 'ai_copilot',
+          channel,
           intent: result.intent,
           confidence: result.confidence,
           ...(result.tokensUsed ? { tokensUsed: result.tokensUsed } : {}),
@@ -130,11 +189,17 @@ export async function processAiInbound(ctx: InboundWhatsAppContext): Promise<voi
       conversationId: ctx.conversationId,
       workspaceId: ctx.workspaceId,
       actorName: 'AI Copilot',
-      metadata: { source: 'ai_copilot' },
+      metadata: { source: 'ai_copilot', channel },
     });
 
-    logAi('reply sent', { intent: result.intent, confidence: result.confidence });
+    logAi('reply sent', { intent: result.intent, confidence: result.confidence, channel });
   } catch (err) {
-    logAi('WhatsApp send failed', formatMetaSendError(err));
+    const formatted =
+      channel === 'instagram'
+        ? formatInstagramSendError(err)
+        : channel === 'messenger'
+          ? formatMessengerSendError(err)
+          : formatMetaSendError(err);
+    logAi(`${channel} send failed`, formatted);
   }
 }

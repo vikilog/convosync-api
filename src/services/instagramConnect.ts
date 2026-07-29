@@ -502,6 +502,7 @@ export async function completeInstagramConnect(input: {
   pageId: string;
   candidates: InstagramConnectSessionCandidate[];
   metaUserId?: string;
+  connectedByUserId?: string;
 }): Promise<InstagramConnectResult> {
   const selected = input.candidates.find((candidate) => candidate.pageId === input.pageId);
   if (!selected) {
@@ -521,6 +522,7 @@ export async function completeInstagramConnect(input: {
     await assertChannelCreateAllowed(input.workspaceId);
   }
 
+  const now = new Date();
   await prisma.instagramAccount.upsert({
     where: {
       workspaceId_instagramUserId: {
@@ -538,6 +540,10 @@ export async function completeInstagramConnect(input: {
       displayName: selected.displayName,
       profilePicture: selected.profilePicture,
       pageAccessToken: encryptSecret(selected.pageAccessToken),
+      status: 'connected',
+      tokenValidatedAt: now,
+      tokenExpiresAt: null,
+      connectedByUserId: input.connectedByUserId,
     },
     update: {
       metaUserId: input.metaUserId,
@@ -547,6 +553,10 @@ export async function completeInstagramConnect(input: {
       displayName: selected.displayName,
       profilePicture: selected.profilePicture,
       pageAccessToken: encryptSecret(selected.pageAccessToken),
+      status: 'connected',
+      tokenValidatedAt: now,
+      tokenExpiresAt: null,
+      connectedByUserId: input.connectedByUserId ?? undefined,
     },
   });
 
@@ -561,7 +571,7 @@ export async function completeInstagramConnect(input: {
 }
 
 export async function connectWorkspaceInstagram(
-  input: InstagramConnectInput
+  input: InstagramConnectInput & { connectedByUserId?: string }
 ): Promise<InstagramConnectResult> {
   const { sessionCandidates, metaUserId } = await previewInstagramConnect({
     workspaceId: input.workspaceId,
@@ -582,6 +592,7 @@ export async function connectWorkspaceInstagram(
     pageId,
     candidates: sessionCandidates,
     metaUserId,
+    connectedByUserId: input.connectedByUserId,
   });
 }
 
@@ -596,10 +607,55 @@ export async function summarizeInstagramDiscovery(
   };
 }
 
-export async function listInstagramAccounts(workspaceId: string) {
+export type InstagramAccountPublic = {
+  id: string;
+  workspaceId: string;
+  instagramUserId: string;
+  metaUserId: string | null;
+  pageId: string;
+  pageName: string | null;
+  username: string | null;
+  displayName: string | null;
+  profilePicture: string | null;
+  status: string;
+  tokenExpiresAt: Date | null;
+  tokenValidatedAt: Date | null;
+  connectedByUserId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  /** UI helper derived from status + expiry */
+  statusLabel: 'connected' | 'expiring_soon' | 'expired' | 'error' | 'revoked';
+};
+
+const EXPIRING_SOON_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function deriveInstagramStatusLabel(account: {
+  status: string;
+  tokenExpiresAt: Date | null;
+}): InstagramAccountPublic['statusLabel'] {
+  if (account.status === 'revoked') return 'revoked';
+  if (account.status === 'error') return 'error';
+  if (account.status === 'expired') return 'expired';
+  if (
+    account.tokenExpiresAt &&
+    account.tokenExpiresAt.getTime() - Date.now() < EXPIRING_SOON_MS &&
+    account.tokenExpiresAt.getTime() > Date.now()
+  ) {
+    return 'expiring_soon';
+  }
+  if (account.tokenExpiresAt && account.tokenExpiresAt.getTime() <= Date.now()) {
+    return 'expired';
+  }
+  return 'connected';
+}
+
+export async function listInstagramAccounts(workspaceId: string): Promise<InstagramAccountPublic[]> {
   const rows = await prisma.instagramAccount.findMany({
     where: { workspaceId },
     orderBy: { createdAt: 'asc' },
   });
-  return rows.map(({ pageAccessToken: _token, ...rest }) => rest);
+  return rows.map(({ pageAccessToken: _token, ...rest }) => ({
+    ...rest,
+    statusLabel: deriveInstagramStatusLabel(rest),
+  }));
 }

@@ -4,6 +4,8 @@ export type InstagramWebhookSubscribeResult = {
   subscribed: boolean;
   error?: string;
   details?: string;
+  messagingSubscribed?: boolean;
+  commentsSubscribed?: boolean;
 };
 
 /** Page fields needed for Instagram + Messenger DMs (incl. handover standby). */
@@ -17,10 +19,20 @@ const PAGE_MESSAGING_WEBHOOK_FIELDS = [
   'standby',
 ].join(',');
 
-export async function subscribeInstagramPageWebhooks(
+/** Instagram object fields for live Social Listening comments (App Dashboard must also subscribe these). */
+const IG_COMMENT_WEBHOOK_FIELDS = ['comments', 'live_comments'].join(',');
+
+function graphErrMessage(err: unknown): string {
+  return (
+    (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+      ?.message || (err as Error)?.message || 'unknown error'
+  );
+}
+
+async function subscribePageMessaging(
   pageId: string,
   pageAccessToken: string
-): Promise<InstagramWebhookSubscribeResult> {
+): Promise<{ ok: boolean; error?: string }> {
   try {
     await axios.post(`https://graph.facebook.com/v25.0/${pageId}/subscribed_apps`, null, {
       params: {
@@ -28,17 +40,72 @@ export async function subscribeInstagramPageWebhooks(
         access_token: pageAccessToken,
       },
     });
-    return { subscribed: true };
+    return { ok: true };
   } catch (err: unknown) {
-    const message =
-      (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
-        ?.message || (err as Error)?.message;
+    return { ok: false, error: graphErrMessage(err) };
+  }
+}
+
+/** Subscribe IG professional account to comment webhooks (Facebook Login + Page token). */
+async function subscribeIgComments(
+  instagramUserId: string,
+  pageAccessToken: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v25.0/${instagramUserId}/subscribed_apps`,
+      null,
+      {
+        params: {
+          subscribed_fields: IG_COMMENT_WEBHOOK_FIELDS,
+          access_token: pageAccessToken,
+        },
+      }
+    );
+    return { ok: true };
+  } catch (err: unknown) {
+    return { ok: false, error: graphErrMessage(err) };
+  }
+}
+
+export async function subscribeInstagramPageWebhooks(
+  pageId: string,
+  pageAccessToken: string,
+  instagramUserId?: string | null
+): Promise<InstagramWebhookSubscribeResult> {
+  const messaging = await subscribePageMessaging(pageId, pageAccessToken);
+  const comments = instagramUserId
+    ? await subscribeIgComments(instagramUserId, pageAccessToken)
+    : { ok: false, error: 'Missing Instagram user id' };
+
+  if (messaging.ok && comments.ok) {
     return {
-      subscribed: false,
-      error: 'Instagram webhook subscription failed',
-      details: message,
+      subscribed: true,
+      messagingSubscribed: true,
+      commentsSubscribed: true,
     };
   }
+
+  // Messaging alone still useful for DMs; comments alone useful for listening
+  if (messaging.ok || comments.ok) {
+    return {
+      subscribed: true,
+      messagingSubscribed: messaging.ok,
+      commentsSubscribed: comments.ok,
+      error: !comments.ok
+        ? 'Comment webhook subscription failed (check App Dashboard Instagram → comments + Advanced Access)'
+        : 'Messaging webhook subscription failed',
+      details: [messaging.error, comments.error].filter(Boolean).join(' | '),
+    };
+  }
+
+  return {
+    subscribed: false,
+    messagingSubscribed: false,
+    commentsSubscribed: false,
+    error: 'Instagram webhook subscription failed',
+    details: [messaging.error, comments.error].filter(Boolean).join(' | '),
+  };
 }
 
 /** Take thread control so future DMs arrive on `messaging` instead of `standby`. */

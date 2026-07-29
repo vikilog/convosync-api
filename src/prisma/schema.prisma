@@ -67,6 +67,12 @@ model Workspace {
   whatsappPhoneAccounts WhatsAppPhoneAccount[]
   instagramAccounts     InstagramAccount[]
   messengerAccounts     MessengerAccount[]
+  socialComments        SocialComment[]
+  leadFunnels           LeadFunnel[]
+  leads                 Lead[]
+  socialListeningSettings SocialListeningSettings?
+  socialListeningActivities SocialListeningActivity[]
+  socialListeningPostSettings SocialListeningPostSetting[]
   memberships   WorkspaceMembership[]
   users         User[]
   contacts      Contact[]
@@ -107,7 +113,6 @@ model Workspace {
   usageLimits          WorkspaceUsageLimits?
   agentChatConversations AgentChatConversation[]
   tokenUsageLogs         TokenUsageLog[]
-  cachedResponses        CachedResponse[]
   aiProviderConfig       WorkspaceAiProviderConfig?
   whatsappPaymentRequests WhatsAppPaymentRequest[]
   wallet                  WorkspaceWallet?
@@ -387,13 +392,238 @@ model InstagramAccount {
   username         String?
   displayName      String?
   profilePicture   String?
+  /// Encrypted Page access token (csenc:v1:) — same helper as WhatsApp.
   pageAccessToken  String
+  /// connected | expired | revoked | error
+  status           String    @default("connected")
+  /// Page tokens from long-lived user tokens usually do not expire; set when Meta reports expiry.
+  tokenExpiresAt   DateTime?
+  tokenValidatedAt DateTime?
+  connectedByUserId String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+
+  socialComments SocialComment[]
 
   @@unique([workspaceId, instagramUserId])
   @@index([workspaceId])
   @@index([metaUserId])
+  @@index([status])
+}
+
+/// Instagram comment persisted for AI classification + Review Queue.
+model SocialComment {
+  id                   String    @id @default(cuid())
+  workspaceId          String
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// InstagramAccount.id
+  socialAccountId      String
+  socialAccount        InstagramAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  /// IG media / post id
+  postId               String
+  /// IG comment id (Graph)
+  commentId            String
+  parentCommentId      String?
+  commenterUsername    String?
+  commenterProfilePic  String?
+  commentText          String
+  /// interested | question | complaint | spam | unclear | null while pending
+  intent               String?
+  /// 0–1 confidence; null while pending / failed
+  confidence           Float?
+  /// pending | classified | failed
+  classificationStatus String    @default("pending")
+  classificationError  String?
+  /// new | approved | replied | escalated | ignored
+  status               String    @default("new")
+  suggestedReply       String?
+  /// Audit: public comment reply sent on approve_dm / approve_reply
+  publicReplyText      String?
+  /// Audit: private DM text sent via Private Reply API
+  dmReplyText          String?
+  dmSentAt             DateTime?
+  /// none | pending | sent | failed | skipped
+  dmStatus             String    @default("none")
+  dmError              String?
+  postCaption          String?
+  postThumbnailUrl     String?
+  commentedAt          DateTime?
+  leadId               String?   @unique
+  lead                 Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([workspaceId, commentId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, postId])
+  @@index([socialAccountId])
+  @@index([classificationStatus])
+}
+
+/// Sales funnel — Kanban board container. Never auto-created.
+model LeadFunnel {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  description String    @default("")
+  /// Free-text goal (e.g. target count / revenue / outcome).
+  goal        String    @default("")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  stages                    LeadFunnelStage[]
+  leads                     Lead[]
+  socialListeningAsTarget   SocialListeningSettings[]
+  socialListeningPostTargets SocialListeningPostSetting[]
+
+  @@index([workspaceId])
+}
+
+/// Kanban columns for a funnel. Default: single "New" board on funnel create.
+model LeadFunnelStage {
+  id        String    @id @default(cuid())
+  funnelId  String
+  funnel    LeadFunnel @relation(fields: [funnelId], references: [id], onDelete: Cascade)
+  name      String
+  /// Display order left → right (0 = first).
+  position  Int       @default(0)
+  /// Final board — leads here can convert to Contact.
+  isFinal   Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  leads Lead[]
+
+  @@index([funnelId, position])
+}
+
+model Lead {
+  id                     String     @id @default(cuid())
+  workspaceId            String
+  workspace              Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  funnelId               String?
+  funnel                 LeadFunnel? @relation(fields: [funnelId], references: [id], onDelete: Cascade)
+  /// Kanban column (LeadFunnelStage.id). Null = orphan / legacy.
+  stageId                String?
+  funnelStage            LeadFunnelStage? @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  /// Linked CRM contact after convert-from-final-board.
+  contactId              String?
+  contact                Contact?   @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  name                   String?
+  phone                  String?
+  email                  String?
+  /// Denormalized stage name for activity / legacy display (synced from stageId).
+  stage                  String    @default("New")
+  /// instagram | manual | whatsapp
+  source                 String    @default("instagram")
+  requirement            String    @default("")
+  notes                  String    @default("")
+  originUsername         String?
+  originCommentText      String?
+  originPostThumbnailUrl String?
+  originPostCaption      String?
+  originCommentedAt      DateTime?
+  /// [{ id, type, text, at }]
+  activity               Json      @default("[]")
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  socialComment SocialComment?
+
+  @@index([workspaceId, stage])
+  @@index([workspaceId, source])
+  @@index([workspaceId, createdAt])
+  @@index([funnelId, stage])
+  @@index([stageId])
+  @@index([contactId])
+}
+
+/// Per-workspace Social Listening automation (auto-reply / DM / lead rules).
+model SocialListeningSettings {
+  id                  String    @id @default(cuid())
+  workspaceId         String    @unique
+  workspace           Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Master toggle — OFF = everything stays in review (safe default).
+  /// Requires leadFunnelId when true (no funnel = no automation).
+  autoResponseEnabled Boolean   @default(false)
+  /// Target funnel for auto-created leads; required to enable automation.
+  leadFunnelId        String?
+  leadFunnel          LeadFunnel? @relation(fields: [leadFunnelId], references: [id], onDelete: SetNull)
+  /// auto | review | off
+  interestedMode      String    @default("review")
+  /// auto | review | off
+  questionMode        String    @default("review")
+  /// review | escalate_only — never auto
+  complaintMode       String    @default("review")
+  /// auto_ignore | review
+  spamMode            String    @default("review")
+  /// 0–100; auto mode requires confidence >= this
+  confidenceThreshold Int       @default(80)
+  /// friendly | professional | playful
+  publicReplyTone     String    @default("friendly")
+  /// Optional AiSkill.id for DM generation context
+  dmAgentSkillId      String?
+  fallbackMessage     String?
+  /// interested_only | interested_and_questions | never
+  leadCreationRule    String    @default("interested_only")
+  maxAutoDmsPerDay    Int       @default(50)
+  workingHoursOnly    Boolean   @default(false)
+  /// HH:mm
+  workingHoursStart   String?
+  /// HH:mm
+  workingHoursEnd     String?
+  updatedAt           DateTime  @updatedAt
+}
+
+/// Lightweight audit feed for Social Listening automation / approvals.
+model SocialListeningActivity {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// auto_dm | auto_ignore | auto_escalate | manual_approve_dm | dm_failed | dm_sent | lead_created | classified
+  eventType        String
+  message          String
+  relatedCommentId String?
+  relatedLeadId    String?
+  meta             Json?
+  createdAt        DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, eventType, createdAt])
+}
+
+/// Per Instagram media (post/reel) agent + automation settings for a workspace.
+/// Missing row = Agent OFF (safe). All rules are post-wise (not workspace defaults).
+model SocialListeningPostSetting {
+  id                  String    @id @default(cuid())
+  workspaceId         String
+  workspace           Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Instagram Graph media id (same as SocialComment.postId)
+  postId              String
+  /// Master agent toggle — OFF = comments stay in review.
+  autoResponseEnabled Boolean   @default(false)
+  /// Funnel for leads from this post; required when autoResponseEnabled.
+  leadFunnelId        String?
+  leadFunnel          LeadFunnel? @relation(fields: [leadFunnelId], references: [id], onDelete: SetNull)
+  interestedMode      String    @default("review")
+  questionMode        String    @default("review")
+  complaintMode       String    @default("review")
+  spamMode            String    @default("review")
+  confidenceThreshold Int       @default(80)
+  publicReplyTone     String    @default("friendly")
+  dmAgentSkillId      String?
+  fallbackMessage     String?
+  leadCreationRule    String    @default("interested_only")
+  maxAutoDmsPerDay    Int       @default(50)
+  workingHoursOnly    Boolean   @default(false)
+  workingHoursStart   String?
+  workingHoursEnd     String?
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([workspaceId, postId])
+  @@index([workspaceId])
+  @@index([leadFunnelId])
 }
 
 model MessengerAccount {
@@ -482,6 +712,8 @@ model Contact {
   tags          String[]
   customFields  Json?
   journeyStatus String?
+  /// Shared across manually linked multi-channel contacts (same person).
+  linkGroupId   String?
   /// Team/test numbers — never enqueue contact-insight compute
   excludeFromInsights Boolean @default(false)
   workspaceId   String
@@ -496,9 +728,11 @@ model Contact {
   callSessions      CallSession[]
   callParticipations CallParticipant[]
   insights          ContactInsight[]
+  leads             Lead[]
 
   @@unique([phone, workspaceId])
   @@index([workspaceId, excludeFromInsights])
+  @@index([workspaceId, linkGroupId])
 }
 
 model Conversation {
@@ -986,22 +1220,6 @@ model TokenUsageLog {
 
   @@index([workspaceId, createdAt])
   @@index([agentId, createdAt])
-}
-
-model CachedResponse {
-  id           String    @id @default(cuid())
-  workspaceId  String
-  agentId      String
-  questionHash String
-  question     String    @db.Text
-  answer       String    @db.Text
-  intent       String?
-  hitCount     Int       @default(0)
-  expiresAt    DateTime
-  createdAt    DateTime  @default(now())
-  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  @@unique([workspaceId, agentId, questionHash])
 }
 
 /// Workspace-level AI provider (ConvoSync hosted vs BYOK).

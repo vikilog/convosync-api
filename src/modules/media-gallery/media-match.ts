@@ -72,9 +72,9 @@ export function buildMediaSelectPrompt(
     system: `You pick at most one media asset that strongly matches the user request.
 Reply with JSON only: {"mediaId":"<id>"} or {"mediaId":null}.
 Rules:
-- Pick when the user explicitly asks for a file/image/PDF/brochure/catalog/menu.
+- Pick ONLY when the user explicitly asks for a file/image/PDF/brochure/catalog/menu/price list (send/share/bhejo/dikhao).
 - Pick when the question is about price/plans AND a price list / pricing PDF / brochure clearly matches.
-- Pick when the question is about a specific feature/product topic AND a catalog item is clearly about that same topic (title/tags/description).
+- Prefer null for product/feature explanations ("what is X", "features btao") unless they also ask to send a file.
 - Prefer null when the asset is only loosely related, or for greetings/farewells/unrelated chat.
 - Never invent an id not in the catalog.`,
     user: `User query:\n${query}\n\nCatalog:\n${JSON.stringify(catalog, null, 2)}`,
@@ -90,20 +90,27 @@ const KEYWORD_STOP = new Set(
 /**
  * When the LLM picker returns null, score title/tags/description overlap.
  * Requires score >= 2 so a single short token alone is not enough.
+ * Also requires an explicit media/pricing cue — brand-name overlap alone must not attach files.
  */
 export function keywordMediaFallback(
   query: string,
   catalog: MediaCatalogItem[]
 ): string | null {
+  const wantsImage = /\b(image|photo|pic|picture|intro\s*image|dikhao?)\b/i.test(query);
+  const wantsPdf = /\b(pdf|document|brochure|catalog|catalogue|price\s*list|menu|flyer)\b/i.test(
+    query
+  );
+  const wantsSend =
+    /\b(bhejo|bhej\s*do|dedo|de\s*do|send|share|download|file)\b/i.test(query);
+  const wantsPricing = /\b(price|pricing|plan|plans|cost|kitna|fees|rate\s*list)\b/i.test(query);
+  if (!wantsImage && !wantsPdf && !wantsSend && !wantsPricing) return null;
+
   const tokens = query
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
     .filter((t) => t.length >= 3 && !KEYWORD_STOP.has(t));
   if (tokens.length === 0 || catalog.length === 0) return null;
-
-  const wantsImage = /\b(image|photo|pic|picture|intro)\b/i.test(query);
-  const wantsPdf = /\b(pdf|document|brochure|catalog|catalogue|price\s*list)\b/i.test(query);
 
   let best: { id: string; score: number } | null = null;
   for (const item of catalog) {
@@ -114,6 +121,7 @@ export function keywordMediaFallback(
     }
     if (wantsImage && (item.type === 'image' || /\b(image|photo|intro)\b/i.test(hay))) score += 1;
     if (wantsPdf && (item.type === 'pdf' || item.type === 'document')) score += 1;
+    if (wantsPricing && /\b(price|pricing|plan|brochure)\b/i.test(hay)) score += 1;
     if (score > 0 && (!best || score > best.score)) best = { id: item.id, score };
   }
   return best && best.score >= 2 ? best.id : null;

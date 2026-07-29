@@ -56,13 +56,42 @@ type InboundWebhookMessage = {
   interactive?: {
     type?: string;
     button_reply?: { id?: string; title?: string };
+    list_reply?: { id?: string; title?: string; description?: string };
   };
+  /** Present on Meta `type: "unsupported"` — explains why (code / title / message). */
+  errors?: Array<{
+    code?: number;
+    title?: string;
+    message?: string;
+    error_data?: { details?: string };
+    href?: string;
+  }>;
+  reaction?: { message_id?: string; emoji?: string };
+  contacts?: Array<{
+    name?: { formatted_name?: string; first_name?: string; last_name?: string };
+    phones?: Array<{ phone?: string; type?: string; wa_id?: string }>;
+    emails?: Array<{ email?: string; type?: string }>;
+  }>;
+  order?: {
+    catalog_id?: string;
+    text?: string;
+    product_items?: Array<{
+      product_retailer_id?: string;
+      quantity?: number;
+      item_price?: number;
+      currency?: string;
+    }>;
+  };
+  system?: { body?: string; type?: string; wa_id?: string };
 };
 
 export type ParsedInboundWhatsApp = {
   kind: WhatsAppMessageKind;
   content: string;
   buttonPayload?: string;
+  /** Meta system notifications render as centered inbox system rows. */
+  sender?: 'contact' | 'system';
+  reaction?: { emoji?: string; reactedToWaMessageId?: string };
   media?: {
     waMediaId?: string;
     mediaUrl?: string;
@@ -72,6 +101,17 @@ export type ParsedInboundWhatsApp = {
   };
   location?: MessageMediaMetadata;
 };
+
+/** Skip DB persist (still ACK Meta with 200). Only used for genuine `type: "unsupported"`. */
+export type ParseInboundWhatsAppResult =
+  | { skip: true }
+  | ParsedInboundWhatsApp;
+
+export function isSkippedInbound(
+  parsed: ParseInboundWhatsAppResult
+): parsed is { skip: true } {
+  return 'skip' in parsed && parsed.skip === true;
+}
 
 export function previewForMessage(kind: WhatsAppMessageKind, content: string, caption?: string): string {
   if (caption?.trim()) return caption.trim();
@@ -117,20 +157,78 @@ function mediaFromPart(
   };
 }
 
+function formatOrderContent(order: NonNullable<InboundWebhookMessage['order']>): string {
+  const items = order.product_items ?? [];
+  const lines = items.map((item) => {
+    const qty = item.quantity ?? 1;
+    const id = item.product_retailer_id?.trim() || 'item';
+    if (item.item_price != null && item.currency) {
+      return `${qty}× ${id} (${item.currency} ${item.item_price})`;
+    }
+    return `${qty}× ${id}`;
+  });
+  const total = items.reduce((sum, item) => {
+    const qty = item.quantity ?? 1;
+    const price = item.item_price ?? 0;
+    return sum + qty * price;
+  }, 0);
+  const currency = items.find((i) => i.currency)?.currency;
+  const summary = lines.length ? lines.join(', ') : 'no items';
+  const totalPart =
+    currency && items.some((i) => i.item_price != null) ? ` — Total: ${currency} ${total}` : '';
+  const note = order.text?.trim();
+  return note ? `Order: ${summary}${totalPart}. ${note}` : `Order: ${summary}${totalPart}`;
+}
+
+function formatContactsContent(
+  contacts: NonNullable<InboundWebhookMessage['contacts']>
+): string {
+  const summaries = contacts.slice(0, 3).map((c) => {
+    const name =
+      c.name?.formatted_name?.trim() ||
+      [c.name?.first_name, c.name?.last_name].filter(Boolean).join(' ').trim() ||
+      'Unknown';
+    const phone = c.phones?.[0]?.phone?.trim() || c.phones?.[0]?.wa_id?.trim();
+    const email = c.emails?.[0]?.email?.trim();
+    if (phone) return `${name} (${phone})`;
+    if (email) return `${name} (${email})`;
+    return name;
+  });
+  if (summaries.length === 0) return 'Shared contact';
+  if (summaries.length === 1) return `Shared contact: ${summaries[0]}`;
+  const extra = contacts.length > summaries.length ? ` +${contacts.length - summaries.length} more` : '';
+  return `Shared contacts: ${summaries.join('; ')}${extra}`;
+}
+
 /**
  * Parse WhatsApp Cloud API / coexistence inbound message.
  * Prefers payload shape (image/video/…) over `type` string — some echoes set type
  * without a usable id, or send `link` instead of `id`.
+ * Returns `{ skip: true }` for Meta `type: "unsupported"` (do not persist).
  */
-export function parseInboundWhatsAppMessage(msg: InboundWebhookMessage): ParsedInboundWhatsApp {
-  const isButtonReply = msg.type === 'interactive' && msg.interactive?.button_reply;
-  const buttonPayload =
-    msg.interactive?.button_reply?.id || msg.interactive?.button_reply?.title || undefined;
-
-  if (isButtonReply) {
+export function parseInboundWhatsAppMessage(
+  msg: InboundWebhookMessage
+): ParseInboundWhatsAppResult {
+  const buttonReply = msg.interactive?.button_reply;
+  if ((msg.type === 'interactive' || msg.interactive) && buttonReply) {
+    const buttonPayload = buttonReply.id || buttonReply.title || undefined;
     return {
       kind: 'text',
       content: buttonPayload || '[button]',
+      buttonPayload,
+    };
+  }
+
+  const listReply = msg.interactive?.list_reply;
+  if ((msg.type === 'interactive' || msg.interactive) && listReply) {
+    const buttonPayload = listReply.id || listReply.title || undefined;
+    const title = listReply.title?.trim();
+    const description = listReply.description?.trim();
+    let content = title || buttonPayload || '[list]';
+    if (description) content = `${content} — ${description}`;
+    return {
+      kind: 'text',
+      content,
       buttonPayload,
     };
   }
@@ -188,8 +286,52 @@ export function parseInboundWhatsAppMessage(msg: InboundWebhookMessage): ParsedI
   const text = msg.text?.body?.trim();
   if (text) return { kind: 'text', content: text };
 
+  if (msg.type === 'reaction' || msg.reaction) {
+    const emoji = msg.reaction?.emoji?.trim() || '👍';
+    const reactedToWaMessageId = msg.reaction?.message_id?.trim() || undefined;
+    return {
+      kind: 'text',
+      content: `${emoji} reacted to a message`,
+      reaction: { emoji, reactedToWaMessageId },
+    };
+  }
+
+  if (msg.type === 'order' || msg.order) {
+    return {
+      kind: 'text',
+      content: msg.order ? formatOrderContent(msg.order) : 'Order received',
+    };
+  }
+
+  if (msg.type === 'system' || msg.system) {
+    const body = msg.system?.body?.trim();
+    return {
+      kind: 'text',
+      content: body || `System: ${msg.system?.type || 'notification'}`,
+      sender: 'system',
+    };
+  }
+
+  if (msg.type === 'contacts' || (Array.isArray(msg.contacts) && msg.contacts.length > 0)) {
+    return {
+      kind: 'text',
+      content: msg.contacts?.length ? formatContactsContent(msg.contacts) : 'Shared contact',
+    };
+  }
+
+  // Meta couldn't deliver the original content — unrecoverable; do not persist.
+  if (msg.type === 'unsupported') {
+    console.log('[WhatsAppInbound] skipped unsupported', {
+      from: msg.from,
+      type: 'unsupported',
+      errorCode: msg.errors?.[0]?.code,
+    });
+    return { skip: true };
+  }
+
   // Never persist bare "[media]" — inbox shows that as a broken placeholder.
   if (msg.type && msg.type !== 'text') {
+    console.log('[WhatsAppInbound] unhandled type', { from: msg.from, type: msg.type });
     return { kind: 'text', content: `Unsupported message (${msg.type})` };
   }
   return { kind: 'text', content: 'Message' };

@@ -18,6 +18,33 @@ interface BuiltContext {
   estimatedTokens: number;
 }
 
+export type SkillMatchInput = {
+  title: string;
+  trigger: string;
+  instructions: string;
+};
+
+/** Shared skill matcher — used by ContextBuilder and LangGraph select_skills (all paths). */
+export function matchRelevantSkills(params: {
+  skills: SkillMatchInput[];
+  intent: string;
+  message: string;
+}): SkillMatchInput[] {
+  const relevantSkillTitles = INTENT_TO_SKILLS[params.intent] || [];
+  const msg = params.message.toLowerCase();
+  return params.skills.filter((skill) => {
+    const byIntent = relevantSkillTitles.some((title) =>
+      skill.title.toLowerCase().includes(title.toLowerCase())
+    );
+    if (byIntent) return true;
+    const hay = `${skill.title} ${skill.trigger}`.toLowerCase();
+    return hay
+      .split(/[^a-z0-9]+/)
+      .filter((t) => t.length >= 5)
+      .some((t) => msg.includes(t));
+  });
+}
+
 export class ContextBuilderService {
   constructor(private fastify: FastifyInstance) {}
 
@@ -47,19 +74,10 @@ export class ContextBuilderService {
 
     if (!agent) throw new Error('Agent not found');
 
-    const relevantSkillTitles = INTENT_TO_SKILLS[params.intent] || [];
-    const msg = params.currentMessage.toLowerCase();
-    const relevantSkills = agent.skills.filter((skill) => {
-      const byIntent = relevantSkillTitles.some((title) =>
-        skill.title.toLowerCase().includes(title.toLowerCase())
-      );
-      if (byIntent) return true;
-      // Also load when the user message hits the skill title/trigger keywords.
-      const hay = `${skill.title} ${skill.trigger}`.toLowerCase();
-      return hay
-        .split(/[^a-z0-9]+/)
-        .filter((t) => t.length >= 5)
-        .some((t) => msg.includes(t));
+    const relevantSkills = matchRelevantSkills({
+      skills: agent.skills,
+      intent: params.intent,
+      message: params.currentMessage,
     });
 
     const relevantTags = INTENT_TO_KB_TAGS[params.intent] || [];

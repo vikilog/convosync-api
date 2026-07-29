@@ -78,20 +78,25 @@ export function parseInboundInstagramMessage(
   }
 
   const attachment = attachments?.[0];
-  if (!attachment?.payload?.url) {
-    return { kind: 'text', content: '[media]' };
+  if (!attachment) {
+    return { kind: 'image', content: previewForMessage('image', '') };
   }
 
   const mapped =
     mapInstagramAttachmentType(attachment.type) ?? inferKindFromWebhookAttachment(attachment);
-  const title = attachment.payload.title?.trim() || '[media]';
+  const title = attachment.payload?.title?.trim() || '';
+  const url = attachment.payload?.url?.trim();
+  if (!url) {
+    // Story share / reel / sticker without fetchable URL — typed preview, not "[media]".
+    return { kind: mapped, content: previewForMessage(mapped, title) };
+  }
 
   return {
     kind: mapped,
     content: previewForMessage(mapped, title),
     media: {
-      url: attachment.payload.url,
-      fileName: attachment.payload.title,
+      url,
+      fileName: attachment.payload?.title,
     },
   };
 }
@@ -168,12 +173,37 @@ export async function sendInstagramMediaMessage(
 }
 
 type GraphMessageAttachment = {
+  id?: string;
   mime_type?: string;
   name?: string;
   file_url?: string;
-  image_data?: { url?: string };
-  video_data?: { url?: string };
+  image_data?: {
+    url?: string;
+    preview_url?: string;
+    animated_gif_url?: string;
+    width?: number;
+    height?: number;
+    render_as_sticker?: boolean;
+  };
+  video_data?: {
+    url?: string;
+    preview_url?: string;
+    width?: number;
+    height?: number;
+  };
 };
+
+function graphAttachmentUrl(attachment: GraphMessageAttachment): string | undefined {
+  return (
+    attachment.file_url?.trim() ||
+    attachment.image_data?.url?.trim() ||
+    attachment.image_data?.animated_gif_url?.trim() ||
+    attachment.image_data?.preview_url?.trim() ||
+    attachment.video_data?.url?.trim() ||
+    attachment.video_data?.preview_url?.trim() ||
+    undefined
+  );
+}
 
 export function parseGraphInstagramMessage(
   text: string | undefined,
@@ -189,25 +219,26 @@ export function parseGraphInstagramMessage(
     : attachments?.data;
   const attachment = list?.[0];
   if (!attachment) {
-    return { kind: 'text', content: '[media]' };
+    // Empty Meta message body with no attachment payload (share/story stub, etc.)
+    return { kind: 'image', content: previewForMessage('image', '') };
   }
 
-  const url =
-    attachment.file_url ||
-    attachment.image_data?.url ||
-    attachment.video_data?.url;
-  const title = attachment.name?.trim() || '[media]';
-  if (!url) {
-    return { kind: 'text', content: title };
-  }
-
+  const url = graphAttachmentUrl(attachment);
   const mime = attachment.mime_type || '';
   let kind: ParsedInboundInstagram['kind'] = 'document';
-  if (mime.startsWith('image/')) kind = 'image';
-  else if (mime.startsWith('video/')) kind = 'video';
-  else if (mime.startsWith('audio/')) kind = 'audio';
-  else if (attachment.image_data?.url) kind = 'image';
-  else if (attachment.video_data?.url) kind = 'video';
+  if (mime.startsWith('image/') || attachment.image_data) {
+    kind = 'image';
+  } else if (mime.startsWith('video/') || attachment.video_data) {
+    kind = 'video';
+  } else if (mime.startsWith('audio/')) {
+    kind = 'audio';
+  }
+
+  const title = attachment.name?.trim() || '';
+  if (!url) {
+    // Attachment present but CDN URL missing — keep typed preview, not bare "[media]".
+    return { kind, content: previewForMessage(kind, title) };
+  }
 
   return {
     kind,

@@ -21,14 +21,21 @@ import {
 } from './instagramSyncParticipants.js';
 
 const GRAPH = 'https://graph.facebook.com/v25.0';
-const DEFAULT_CONVERSATIONS_PAGE_LIMIT = 25;
+/** Temporary cap — keep list small while Meta timeouts are being shaken out. */
+const DEFAULT_CONVERSATIONS_PAGE_LIMIT = 20;
 /** Valid Conversation fields only — nested message fields on the conversation node break/omit participants. */
 const CONVERSATION_LIST_FIELDS =
-  'id,updated_time,participants{id,username,name},messages.limit(1){id,message,from,created_time,attachments}';
-const CONVERSATION_DETAIL_FIELDS =
-  'id,updated_time,participants{id,username,name},messages.limit(5){id,message,from,created_time,attachments}';
-const DEFAULT_MAX_CONVERSATION_PAGES = 25;
-const GRAPH_HTTP_TIMEOUT_MS = 20_000;
+  // ponytail: omit attachments on list pages — Meta times out on deep pagination with nested media
+  'id,updated_time,participants{id,username,name},messages.limit(1){id,message,from,created_time}';
+const MESSAGE_ATTACHMENT_FIELDS =
+  'id,mime_type,name,file_url,image_data,video_data';
+const MESSAGE_LIST_FIELDS = `id,message,from,created_time,attachments{${MESSAGE_ATTACHMENT_FIELDS}}`;
+const CONVERSATION_DETAIL_FIELDS = `id,updated_time,participants{id,username,name},messages.limit(5){${MESSAGE_LIST_FIELDS}}`;
+/** Temporary: 1 page × 20 = max 20 threads until sync is stable. */
+const DEFAULT_MAX_CONVERSATION_PAGES = 1;
+/** List pagination with nested fields is slow on Meta — 20s was aborting mid-sync. */
+const GRAPH_HTTP_TIMEOUT_MS = 60_000;
+const GRAPH_GET_RETRIES = 2;
 
 export { DEFAULT_MAX_CONVERSATION_PAGES };
 export {
@@ -42,6 +49,10 @@ export type InstagramSyncOptions = {
   maxPages?: number;
   conversationsPerPage?: number;
   workspaceId?: string;
+  /** Meta Graph `after` cursor — used for Load more. */
+  after?: string | null;
+  /** Continue from saved cursor instead of restarting at the newest page. */
+  loadMore?: boolean;
 };
 
 export type InstagramSyncResult = {
@@ -79,7 +90,10 @@ type GraphConversation = {
   created_time?: string;
 };
 
-type GraphList<T> = { data?: T[]; paging?: { next?: string } };
+type GraphList<T> = {
+  data?: T[];
+  paging?: { next?: string; cursors?: { after?: string; before?: string } };
+};
 
 type InstagramAccountRow = {
   workspaceId: string;
@@ -94,6 +108,39 @@ type SyncCounters = {
   skippedConversations: number;
   importedMessages: number;
 };
+
+function syncAfterKey(workspaceId: string, pageId: string) {
+  return `ig:sync:after:${workspaceId}:${pageId}`;
+}
+
+async function readSyncAfter(workspaceId: string, pageId: string): Promise<string | null> {
+  try {
+    const { getRedis } = await import('../lib/redis.js');
+    const raw = await getRedis().get(syncAfterKey(workspaceId, pageId));
+    return raw?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeSyncAfter(
+  workspaceId: string,
+  pageId: string,
+  after: string | null
+): Promise<void> {
+  try {
+    const { getRedis } = await import('../lib/redis.js');
+    const key = syncAfterKey(workspaceId, pageId);
+    if (!after) {
+      await getRedis().del(key);
+      return;
+    }
+    // ponytail: 30d — long enough for "Load more later"; reconnect clears via fresh sync
+    await getRedis().set(key, after, 'EX', 60 * 60 * 24 * 30);
+  } catch {
+    // cursor optional — Load more just won't resume until next successful page
+  }
+}
 
 function parseParticipants(
   raw: GraphConversation['participants'] | undefined
@@ -114,49 +161,109 @@ function progressSnapshot(counters: SyncCounters, extra?: { pageNumber?: number;
   };
 }
 
+function isTransientGraphError(err: unknown): boolean {
+  if (!axios.isAxiosError(err)) return false;
+  if (
+    err.code === 'ECONNABORTED' ||
+    err.code === 'ETIMEDOUT' ||
+    err.code === 'ECONNRESET' ||
+    err.code === 'ENOTFOUND'
+  ) {
+    return true;
+  }
+  const status = err.response?.status;
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+async function graphGet<T>(
+  url: string,
+  config?: { params?: Record<string, string>; timeout?: number }
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= GRAPH_GET_RETRIES; attempt++) {
+    try {
+      const res = await axios.get<T>(url, {
+        ...config,
+        timeout: config?.timeout ?? GRAPH_HTTP_TIMEOUT_MS,
+      });
+      return res.data;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < GRAPH_GET_RETRIES && isTransientGraphError(err)) {
+        // ponytail: linear backoff 1s/2s — enough for Meta blips, not a full circuit breaker
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
 async function fetchInstagramConversations(
   pageId: string,
   pageAccessToken: string,
   options: InstagramSyncOptions,
   counters: SyncCounters
-): Promise<{ conversations: GraphConversation[]; pagesFetched: number; hasMore: boolean }> {
+): Promise<{
+  conversations: GraphConversation[];
+  pagesFetched: number;
+  hasMore: boolean;
+  nextAfter: string | null;
+}> {
   const workspaceId = options.workspaceId;
   const conversations: GraphConversation[] = [];
   const pageLimit = options.conversationsPerPage ?? DEFAULT_CONVERSATIONS_PAGE_LIMIT;
   const maxPages = options.maxPages ?? DEFAULT_MAX_CONVERSATION_PAGES;
-  const baseParams = {
+  const baseParams: Record<string, string> = {
     platform: 'instagram',
     fields: CONVERSATION_LIST_FIELDS,
     limit: String(pageLimit),
     access_token: pageAccessToken,
   };
+  if (options.after) {
+    baseParams.after = options.after;
+  }
 
   let followUpUrl: string | null = null;
   let fetchFirstPage = true;
   let pagesFetched = 0;
   let hasMore = false;
+  let nextAfter: string | null = null;
 
   while ((fetchFirstPage || followUpUrl) && pagesFetched < maxPages) {
     fetchFirstPage = false;
     pagesFetched += 1;
     let page: GraphList<GraphConversation>;
 
-    if (followUpUrl) {
-      const res = await axios.get<GraphList<GraphConversation>>(followUpUrl, {
-        timeout: GRAPH_HTTP_TIMEOUT_MS,
-      });
-      page = res.data;
-    } else {
-      const res = await axios.get<GraphList<GraphConversation>>(
-        `${GRAPH}/${pageId}/conversations`,
-        { params: baseParams, timeout: GRAPH_HTTP_TIMEOUT_MS }
-      );
-      page = res.data;
+    try {
+      if (followUpUrl) {
+        page = await graphGet<GraphList<GraphConversation>>(followUpUrl);
+      } else {
+        page = await graphGet<GraphList<GraphConversation>>(`${GRAPH}/${pageId}/conversations`, {
+          params: baseParams,
+        });
+      }
+    } catch (err) {
+      // Mid-pagination timeout: keep what we have rather than failing the whole sync.
+      if (conversations.length > 0 && isTransientGraphError(err)) {
+        console.warn('[instagram-sync] conversation list page failed — returning partial', {
+          pageId,
+          pagesFetched,
+          loaded: conversations.length,
+          err: err instanceof Error ? err.message : err,
+        });
+        hasMore = true;
+        break;
+      }
+      throw err;
     }
 
     const batch = page.data || [];
     conversations.push(...batch);
     counters.loadedConversations += batch.length;
+    nextAfter = page.paging?.cursors?.after?.trim() || nextAfter;
+    hasMore = Boolean(page.paging?.next);
 
     if (workspaceId) {
       emitInstagramSyncProgress(workspaceId, {
@@ -174,8 +281,11 @@ async function fetchInstagramConversations(
   if (followUpUrl) {
     hasMore = true;
   }
+  if (!hasMore) {
+    nextAfter = null;
+  }
 
-  return { conversations, pagesFetched, hasMore };
+  return { conversations, pagesFetched, hasMore, nextAfter };
 }
 
 async function fetchConversationMessages(
@@ -186,7 +296,7 @@ async function fetchConversationMessages(
 ): Promise<GraphMessage[]> {
   const messages: GraphMessage[] = [];
   const baseParams = {
-    fields: 'id,message,from,created_time,attachments',
+    fields: MESSAGE_LIST_FIELDS,
     limit: '50',
     access_token: pageAccessToken,
   };
@@ -201,16 +311,11 @@ async function fetchConversationMessages(
     let page: GraphList<GraphMessage>;
 
     if (followUpUrl) {
-      const res = await axios.get<GraphList<GraphMessage>>(followUpUrl, {
-        timeout: GRAPH_HTTP_TIMEOUT_MS,
-      });
-      page = res.data;
+      page = await graphGet<GraphList<GraphMessage>>(followUpUrl);
     } else {
-      const res = await axios.get<GraphList<GraphMessage>>(`${GRAPH}/${conversationId}/messages`, {
+      page = await graphGet<GraphList<GraphMessage>>(`${GRAPH}/${conversationId}/messages`, {
         params: baseParams,
-        timeout: GRAPH_HTTP_TIMEOUT_MS,
       });
-      page = res.data;
     }
 
     messages.push(...(page.data || []));
@@ -252,14 +357,12 @@ async function fetchGraphConversation(
   pageAccessToken: string
 ): Promise<GraphConversation | null> {
   try {
-    const res = await axios.get<GraphConversation>(`${GRAPH}/${conversationId}`, {
+    return await graphGet<GraphConversation>(`${GRAPH}/${conversationId}`, {
       params: {
         fields: CONVERSATION_DETAIL_FIELDS,
         access_token: pageAccessToken,
       },
-      timeout: GRAPH_HTTP_TIMEOUT_MS,
     });
-    return res.data;
   } catch {
     return null;
   }
@@ -381,13 +484,18 @@ async function upsertSyncedThread(
     graphMessageIds.length > 0
       ? await prisma.message.findMany({
           where: { waMessageId: { in: graphMessageIds } },
-          select: { waMessageId: true },
+          select: { id: true, waMessageId: true, content: true, type: true, metadata: true },
         })
       : [];
-  const existingIds = new Set(existingRows.map((row) => row.waMessageId).filter(Boolean));
+  const existingByWa = new Map(
+    existingRows
+      .filter((row) => row.waMessageId)
+      .map((row) => [row.waMessageId as string, row] as const)
+  );
 
   type PendingMedia = {
     waMessageId: string;
+    messageId?: string;
     url: string;
     mimeType?: string;
     fileName?: string;
@@ -410,7 +518,7 @@ async function upsertSyncedThread(
   let lastAt = conv.lastMessageAt;
 
   for (const graphMessage of rawMessages) {
-    if (!graphMessage.id || existingIds.has(graphMessage.id)) continue;
+    if (!graphMessage.id) continue;
 
     const fromPage = isPageSender(graphMessage.from?.id, account);
     const parsed = parseGraphInstagramMessage(graphMessage.message, graphMessage.attachments);
@@ -423,7 +531,41 @@ async function upsertSyncedThread(
       metadata = {
         mimeType: parsed.media.mimeType,
         fileName: parsed.media.fileName,
+        mediaUrl: parsed.media.url,
       };
+    }
+
+    const existing = existingByWa.get(graphMessage.id);
+    if (existing) {
+      const meta = (existing.metadata || {}) as MessageMediaMetadata;
+      const needsRepair =
+        existing.content === '[media]' ||
+        (!meta.storageKey && Boolean(parsed.media?.url));
+      if (needsRepair) {
+        await prisma.message.update({
+          where: { id: existing.id },
+          data: {
+            content: parsed.content,
+            type: parsed.kind,
+            metadata: metadata
+              ? ({ ...meta, ...metadata } as object)
+              : existing.metadata ?? undefined,
+          },
+        });
+        if (parsed.media?.url && !meta.storageKey) {
+          pendingMedia.push({
+            waMessageId: graphMessage.id,
+            messageId: existing.id,
+            url: parsed.media.url,
+            mimeType: parsed.media.mimeType,
+            fileName: parsed.media.fileName,
+            baseMeta: { ...meta, ...metadata },
+          });
+        }
+        lastText = parsed.content;
+        lastAt = createdAt;
+      }
+      continue;
     }
 
     toCreate.push({
@@ -456,17 +598,21 @@ async function upsertSyncedThread(
   }
 
   if (pendingMedia.length > 0) {
-    const createdRows = await prisma.message.findMany({
-      where: {
-        conversationId: conv.id,
-        waMessageId: { in: pendingMedia.map((m) => m.waMessageId) },
-      },
-      select: { id: true, waMessageId: true },
-    });
+    const needLookup = pendingMedia.filter((m) => !m.messageId).map((m) => m.waMessageId);
+    const createdRows =
+      needLookup.length > 0
+        ? await prisma.message.findMany({
+            where: {
+              conversationId: conv.id,
+              waMessageId: { in: needLookup },
+            },
+            select: { id: true, waMessageId: true },
+          })
+        : [];
     const idByWa = new Map(createdRows.map((r) => [r.waMessageId, r.id] as const));
 
     for (const media of pendingMedia) {
-      const messageId = idByWa.get(media.waMessageId);
+      const messageId = media.messageId || idByWa.get(media.waMessageId);
       if (!messageId) continue;
       try {
         const downloaded = await downloadInstagramMediaUrl(media.url, account.pageAccessToken);
@@ -488,8 +634,11 @@ async function upsertSyncedThread(
             } as object,
           },
         });
-      } catch {
-        // Graph attachment URLs may expire; keep preview text only
+      } catch (err) {
+        console.warn('[instagram-sync] media download failed', {
+          waMessageId: media.waMessageId,
+          err: err instanceof Error ? err.message : err,
+        });
       }
     }
   }
@@ -528,13 +677,33 @@ async function syncPageConversations(
   let pagesFetched = 0;
   let hasMore = false;
 
+  let after = options.after ?? null;
+  if (options.loadMore && workspaceId) {
+    after = (await readSyncAfter(workspaceId, account.pageId)) || after;
+    if (!after) {
+      return {
+        pagesFetched: 0,
+        hasMore: false,
+        warning: 'No more Instagram chats to load. Tap Sync to refresh from the start.',
+      };
+    }
+  } else if (workspaceId && !options.loadMore) {
+    await writeSyncAfter(workspaceId, account.pageId, null);
+  }
+
+  const listOptions: InstagramSyncOptions = { ...options, after };
+
   try {
     const listed = await fetchInstagramConversations(
       account.pageId,
       account.pageAccessToken,
-      options,
+      listOptions,
       counters
     );
+
+    if (workspaceId) {
+      await writeSyncAfter(workspaceId, account.pageId, listed.nextAfter);
+    }
 
     // Dedupe by conversation id — Meta paging can re-emit the same thread.
     const byId = new Map<string, GraphConversation>();
@@ -543,8 +712,13 @@ async function syncPageConversations(
       else byId.set(`anon:${byId.size}`, row);
     }
 
-    // Some Meta setups only surface a chat on the IG user node — merge without double-counting.
-    if (account.instagramUserId && account.instagramUserId !== account.pageId) {
+    // Fresh sync only: some Meta setups also list on the IG user node.
+    // Skip on Load more — keeps a single page cursor.
+    if (
+      !options.loadMore &&
+      account.instagramUserId &&
+      account.instagramUserId !== account.pageId
+    ) {
       try {
         const shadow: SyncCounters = {
           loadedConversations: 0,
@@ -555,7 +729,7 @@ async function syncPageConversations(
         const alt = await fetchInstagramConversations(
           account.instagramUserId,
           account.pageAccessToken,
-          options,
+          { ...listOptions, after: undefined },
           shadow
         );
         for (const row of alt.conversations) {
@@ -591,8 +765,9 @@ async function syncPageConversations(
 
   for (const thread of threads) {
     try {
-      let msgItems = messagesFromConversation(thread);
-      if (thread.id && msgItems.length === 0) {
+      // List preview omits attachments (timeout-safe) — always pull message pages so media URLs exist.
+      let msgItems: GraphMessage[] = [];
+      if (thread.id) {
         try {
           msgItems = await fetchConversationMessages(
             thread.id,
@@ -606,7 +781,10 @@ async function syncPageConversations(
             conversationId: thread.id,
             err: msgErr instanceof Error ? msgErr.message : msgErr,
           });
+          msgItems = messagesFromConversation(thread);
         }
+      } else {
+        msgItems = messagesFromConversation(thread);
       }
 
       const saved = await upsertSyncedThread(account, thread, msgItems);
@@ -691,7 +869,11 @@ export async function syncInstagramConversationsForWorkspace(
       const pageAccessToken = decryptSecret(account.pageAccessToken);
       if (!pageAccessToken) continue;
 
-      void subscribeInstagramPageWebhooks(account.pageId, pageAccessToken).catch(() => {
+      void subscribeInstagramPageWebhooks(
+        account.pageId,
+        pageAccessToken,
+        account.instagramUserId
+      ).catch(() => {
         // ponytail: sync still imports history if webhook subscribe fails
       });
 
@@ -727,7 +909,9 @@ export async function syncInstagramConversationsForWorkspace(
       importedMessages: result.importedMessages,
       hasMore: result.hasMore,
       warning: result.warning,
-      message: `Sync complete: ${result.syncedConversations} chat(s), ${result.importedMessages} message(s)`,
+      message: options.loadMore
+        ? `Loaded more: ${result.syncedConversations} chat(s), ${result.importedMessages} message(s)`
+        : `Sync complete: ${result.syncedConversations} chat(s), ${result.importedMessages} message(s)`,
     });
 
     return result;

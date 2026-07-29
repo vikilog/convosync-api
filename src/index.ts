@@ -27,6 +27,9 @@ import webhookRoutes from './routes/webhooks.js';
 import analyticsRoutes from './routes/analytics.js';
 import whatsappRoutes from './routes/whatsapp.js';
 import instagramRoutes from './routes/instagram.js';
+import socialListeningRoutes from './routes/socialListening.js';
+import leadsRoutes from './routes/leads.js';
+import leadFunnelsRoutes from './routes/leadFunnels.js';
 import messengerRoutes from './routes/messenger.js';
 import metaRoutes from './routes/meta.js';
 import facebookRoutes from './routes/facebook.js';
@@ -52,6 +55,7 @@ import { startDeveloperSyncWorker } from './modules/developers/workers/sync-even
 import { startGbpSyncWorker } from './modules/google/business-profile/workers/gbp-sync.worker.js';
 import { startGbpScheduler } from './modules/google/business-profile/workers/gbp-scheduler.worker.js';
 import { startTrialScheduler } from './workers/trial.scheduler.js';
+import { startInstagramTokenScheduler } from './workers/instagram-token.scheduler.js';
 // import { startWalletAutoRechargeWorker } from './workers/wallet-auto-recharge.worker.js';
 import { initJourneyModule } from './modules/journey/container.js';
 import { initEmailModule } from './modules/email/container.js';
@@ -118,6 +122,9 @@ async function start() {
   await fastify.register(analyticsRoutes, { prefix: '/api/analytics' });
   await fastify.register(whatsappRoutes, { prefix: '/api/whatsapp' });
   await fastify.register(instagramRoutes, { prefix: '/api/instagram' });
+  await fastify.register(socialListeningRoutes, { prefix: '/api/social-listening' });
+  await fastify.register(leadsRoutes, { prefix: '/api/leads' });
+  await fastify.register(leadFunnelsRoutes, { prefix: '/api/lead-funnels' });
   await fastify.register(messengerRoutes, { prefix: '/api/messenger' });
   await fastify.register(metaRoutes, { prefix: '/api/meta' });
   await fastify.register(facebookRoutes, { prefix: '/api/facebook' });
@@ -164,6 +171,7 @@ async function start() {
   startGbpSyncWorker();
   startGbpScheduler();
   startTrialScheduler();
+  startInstagramTokenScheduler();
   startQueueDepthPoller();
   // AUTO_RECHARGE_DISABLED — re-enable later
   // startWalletAutoRechargeWorker();

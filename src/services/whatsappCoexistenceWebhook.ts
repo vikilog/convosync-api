@@ -4,6 +4,7 @@ import { resolveWorkspaceByPhoneNumberId } from './workspaceResolve.js';
 import { findOrReopenConversationForInbound } from './conversationThread.service.js';
 import {
   fetchAndStoreInboundMedia,
+  isSkippedInbound,
   parseInboundWhatsAppMessage,
   previewForMessage,
 } from './whatsappMedia.js';
@@ -64,9 +65,46 @@ export async function handleSmbMessageEchoes(value: CoexistenceWebhookValue): Pr
       | { latitude?: number; longitude?: number; name?: string; address?: string }
       | undefined,
     interactive: echo.interactive as
-      | { type?: string; button_reply?: { id?: string; title?: string } }
+      | {
+          type?: string;
+          button_reply?: { id?: string; title?: string };
+          list_reply?: { id?: string; title?: string; description?: string };
+        }
       | undefined,
+    errors: echo.errors as
+      | Array<{ code?: number; title?: string; message?: string }>
+      | undefined,
+    reaction: echo.reaction as { message_id?: string; emoji?: string } | undefined,
+    contacts: echo.contacts as
+      | Array<{
+          name?: { formatted_name?: string; first_name?: string; last_name?: string };
+          phones?: Array<{ phone?: string; type?: string; wa_id?: string }>;
+          emails?: Array<{ email?: string; type?: string }>;
+        }>
+      | undefined,
+    order: echo.order as
+      | {
+          catalog_id?: string;
+          text?: string;
+          product_items?: Array<{
+            product_retailer_id?: string;
+            quantity?: number;
+            item_price?: number;
+            currency?: string;
+          }>;
+        }
+      | undefined,
+    system: echo.system as { body?: string; type?: string; wa_id?: string } | undefined,
   });
+
+  if (isSkippedInbound(parsed)) {
+    logCoexistence('smb_message_echoes → skipped (no persist)', {
+      waMessageId: echo.id,
+      type: echo.type,
+    });
+    return;
+  }
+
   const text = parsed.content;
 
   const contact = await upsertWhatsAppContact({
@@ -104,13 +142,27 @@ export async function handleSmbMessageEchoes(value: CoexistenceWebhookValue): Pr
     };
   }
 
+  let displayContent = text;
+  if (parsed.reaction?.reactedToWaMessageId) {
+    const reactedTo = await prisma.message.findFirst({
+      where: {
+        waMessageId: parsed.reaction.reactedToWaMessageId,
+        conversationId: conv.id,
+      },
+      select: { content: true },
+    });
+    if (reactedTo?.content) {
+      displayContent = `${parsed.reaction.emoji || '👍'} reacted to: ${reactedTo.content.slice(0, 60)}`;
+    }
+  }
+
   const message = await prisma.message.create({
     data: {
       waMessageId: echo.id,
       conversationId: conv.id,
-      sender: 'agent',
-      senderName: 'WhatsApp Business App',
-      content: text,
+      sender: parsed.sender === 'system' ? 'system' : 'agent',
+      senderName: parsed.sender === 'system' ? 'WhatsApp' : 'WhatsApp Business App',
+      content: displayContent,
       type: parsed.kind,
       metadata: metadata as object,
     },
@@ -139,7 +191,7 @@ export async function handleSmbMessageEchoes(value: CoexistenceWebhookValue): Pr
     }
   }
 
-  const lastPreview = previewForMessage(parsed.kind, text, parsed.media?.caption);
+  const lastPreview = previewForMessage(parsed.kind, displayContent, parsed.media?.caption);
 
   await prisma.conversation.updateMany({
     where: { id: conv.id, workspaceId: workspace.id },

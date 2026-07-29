@@ -8,6 +8,7 @@ import { refreshInstagramContactProfile } from './instagramContactProfile.js';
 import { findInstagramAccountByEntryId } from './workspaceResolve.js';
 import { takeInstagramThreadControl } from './instagramWebhookSubscribe.js';
 import { applyMessagingReadReceipt } from './messagingReadReceipt.service.js';
+import { routeInboundConversation } from './conversation-inbound-router.service.js';
 import {
   downloadInstagramMediaUrl,
   parseInboundInstagramMessage,
@@ -193,6 +194,23 @@ async function upsertInstagramInboundMessage(params: {
     contactId: contact.id,
     fromStandby: Boolean(params.fromStandby),
   });
+
+  // Same assignee routing as WhatsApp (AI Agent / etc.)
+  try {
+    await routeInboundConversation({
+      workspaceId: workspace.id,
+      conversationId: conv.id,
+      contactId: contact.id,
+      contactPhone,
+      text: params.parsed.content,
+      channel: 'instagram',
+    });
+  } catch (routeErr) {
+    logInstagramWebhook(
+      'inbound route failed',
+      routeErr instanceof Error ? routeErr.message : routeErr
+    );
+  }
 }
 
 export type PageMessagingWebhookBody = {
@@ -201,6 +219,7 @@ export type PageMessagingWebhookBody = {
     id?: string;
     messaging?: PageMessagingEvent[];
     standby?: PageMessagingEvent[];
+    changes?: Array<{ field?: string; value?: Record<string, unknown> }>;
   }>;
 };
 
@@ -244,6 +263,8 @@ export async function handleInstagramWebhookBody(body: PageMessagingWebhookBody)
     const events = collectMessagingEvents(entry);
 
     if (events.length === 0) {
+      // comments/live_comments are handled in handleInstagramCommentWebhookBody
+      if ((entry.changes?.length ?? 0) > 0) continue;
       logInstagramWebhook('entry with no messaging/standby events', { entryId });
       continue;
     }

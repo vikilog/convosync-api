@@ -27,8 +27,10 @@ export function isInstagramOutsideMessagingWindow(err: unknown): boolean {
   const graphErr = metaGraphError(err);
   if (!graphErr) return false;
   if (graphErr.error_subcode === 2534022) return true;
-  const msg = (graphErr.message || '').toLowerCase();
-  return graphErr.code === 10 && msg.includes('outside of allowed window');
+  const msg = (graphErr.message || graphErr.error_user_msg || '').toLowerCase();
+  // Messenger: "outside the allowed window"; Instagram often: "outside of allowed window"
+  if (msg.includes('outside') && msg.includes('allowed window')) return true;
+  return graphErr.code === 10 && msg.includes('messaging window');
 }
 
 export function formatInstagramSendError(err: unknown): string {

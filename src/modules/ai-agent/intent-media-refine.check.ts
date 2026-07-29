@@ -26,11 +26,17 @@ assert.equal(
 );
 assert.equal(looksLikeMediaRequest('Convosync kya hai?'), false);
 assert.equal(looksLikeMediaRequest('what is convosync'), false);
+assert.equal(looksLikeMediaRequest('Convosync k feature btao'), false);
+assert.equal(looksLikeMediaRequest('Feature btao ?'), false);
 assert.equal(looksLikeMediaRequest('Intro image do'), true);
 assert.equal(looksLikeMediaRequest('intro image dedo'), true);
 assert.equal(
   refineIntent(INTENTS.FEATURE_QUESTION, 'Convosync kya hai?'),
   INTENTS.FEATURE_QUESTION
+);
+assert.equal(
+  refineIntent(INTENTS.MEDIA_REQUEST, 'What is convosync'),
+  INTENTS.GENERAL
 );
 
 console.log('intent-media-refine.check: ok');

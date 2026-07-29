@@ -26,6 +26,7 @@ import {
 } from '../services/whatsappCoexistenceWebhook.js';
 import {
   fetchAndStoreInboundMedia,
+  isSkippedInbound,
   parseInboundWhatsAppMessage,
   previewForMessage,
   type MessageMediaMetadata,
@@ -118,138 +119,181 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
         const msg = value.messages[0];
         const from = msg.from;
         const parsed = parseInboundWhatsAppMessage(msg);
-        const text = parsed.content;
-        const buttonPayload = parsed.buttonPayload;
         const waNumberId = value.metadata?.phone_number_id;
-        if (!waNumberId) {
-          logWebhook('POST → skip (no phone_number_id)', value?.metadata);
-          logWebhook('POST → response', 'ok');
-          return reply.send('ok');
-        }
 
-        const workspace = await resolveWorkspaceByPhoneNumberId(waNumberId);
-        if (!workspace) {
-          logWebhook('POST → skip (unknown workspace)', { waNumberId });
-          logWebhook('POST → response', 'ok');
-          return reply.send('ok');
-        }
-
-        logWebhook('POST → inbound message', { from, text, waNumberId, workspaceId: workspace.id });
-
-        const profileName = extractWhatsAppProfileName(value.contacts, from);
-        const contact = await upsertWhatsAppContact({
-          db: prisma,
-          workspaceId: workspace.id,
-          waFrom: from,
-          profileName,
-        });
-
-        const { conversation: conv, reopened } = await findOrReopenConversationForInbound({
-          workspaceId: workspace.id,
-          contactId: contact.id,
-          channel: 'whatsapp',
-          channelAccountId: waNumberId,
-        });
-
-        if (reopened) {
-          logWebhook('POST → reopened resolved conversation', { conversationId: conv.id });
-        }
-
-        const existingMessage = await prisma.message.findFirst({
-          where: { waMessageId: msg.id },
-        });
-        if (existingMessage) {
-          logWebhook('POST → duplicate message skipped', { waMessageId: msg.id });
-        } else {
-          let metadata: MessageMediaMetadata | undefined;
-          if (parsed.location) {
-            metadata = { ...parsed.location };
-          } else if (parsed.media) {
-            metadata = {
-              mimeType: parsed.media.mimeType,
-              fileName: parsed.media.fileName,
-              caption: parsed.media.caption,
-              waMediaId: parsed.media.waMediaId,
-              mediaUrl: parsed.media.mediaUrl,
-            };
-          }
-
-          const message = await prisma.message.create({
-            data: {
-              waMessageId: msg.id,
-              conversationId: conv.id,
-              sender: 'contact',
-              senderName: contact.name,
-              content: text,
-              type: parsed.kind,
-              metadata: metadata ? (metadata as object) : undefined,
-            },
+        if (isSkippedInbound(parsed)) {
+          // Meta still needs 200 OK — we just don't create a Message row.
+          logWebhook('POST → skipped message (no persist)', {
+            from,
+            type: msg.type,
+            waMessageId: msg.id,
           });
+        } else if (!waNumberId) {
+          logWebhook('POST → skip (no phone_number_id)', value?.metadata);
+        } else {
+          const text = parsed.content;
+          const buttonPayload = parsed.buttonPayload;
+          const workspace = await resolveWorkspaceByPhoneNumberId(waNumberId);
+          if (!workspace) {
+            logWebhook('POST → skip (unknown workspace)', { waNumberId });
+          } else {
+            logWebhook('POST → inbound message', {
+              from,
+              text,
+              waNumberId,
+              workspaceId: workspace.id,
+            });
 
-          if (parsed.media?.waMediaId || parsed.media?.mediaUrl) {
-            try {
-              const credentials = await getWorkspaceWhatsAppCredentials(workspace.id, waNumberId);
-              metadata = await fetchAndStoreInboundMedia({
-                workspaceId: workspace.id,
-                messageId: message.id,
-                waToken: credentials.accessToken,
-                media: parsed.media,
+            const profileName = extractWhatsAppProfileName(value.contacts, from);
+            const contact = await upsertWhatsAppContact({
+              db: prisma,
+              workspaceId: workspace.id,
+              waFrom: from,
+              profileName,
+            });
+
+            const { conversation: conv, reopened } = await findOrReopenConversationForInbound({
+              workspaceId: workspace.id,
+              contactId: contact.id,
+              channel: 'whatsapp',
+              channelAccountId: waNumberId,
+            });
+
+            if (reopened) {
+              logWebhook('POST → reopened resolved conversation', { conversationId: conv.id });
+            }
+
+            const existingMessage = await prisma.message.findFirst({
+              where: { waMessageId: msg.id },
+            });
+            if (existingMessage) {
+              logWebhook('POST → duplicate message skipped', { waMessageId: msg.id });
+            } else {
+              let metadata: MessageMediaMetadata | undefined;
+              if (parsed.location) {
+                metadata = { ...parsed.location };
+              } else if (parsed.media) {
+                metadata = {
+                  mimeType: parsed.media.mimeType,
+                  fileName: parsed.media.fileName,
+                  caption: parsed.media.caption,
+                  waMediaId: parsed.media.waMediaId,
+                  mediaUrl: parsed.media.mediaUrl,
+                };
+              }
+
+              let displayContent = text;
+              if (parsed.reaction?.reactedToWaMessageId) {
+                const reactedTo = await prisma.message.findFirst({
+                  where: {
+                    waMessageId: parsed.reaction.reactedToWaMessageId,
+                    conversationId: conv.id,
+                  },
+                  select: { content: true },
+                });
+                if (reactedTo?.content) {
+                  const snippet = reactedTo.content.slice(0, 60);
+                  displayContent = `${parsed.reaction.emoji || '👍'} reacted to: ${snippet}`;
+                }
+              }
+
+              const message = await prisma.message.create({
+                data: {
+                  waMessageId: msg.id,
+                  conversationId: conv.id,
+                  sender: parsed.sender === 'system' ? 'system' : 'contact',
+                  senderName: parsed.sender === 'system' ? 'WhatsApp' : contact.name,
+                  content: displayContent,
+                  type: parsed.kind,
+                  metadata: metadata ? (metadata as object) : undefined,
+                },
               });
-              await prisma.message.update({
-                where: { id: message.id },
-                data: { metadata: metadata as object },
-              });
-              message.metadata = metadata as object;
-            } catch (mediaErr) {
-              logWebhook(
-                'POST → media download failed',
-                mediaErr instanceof Error ? mediaErr.message : mediaErr
+
+              if (parsed.media?.waMediaId || parsed.media?.mediaUrl) {
+                try {
+                  const credentials = await getWorkspaceWhatsAppCredentials(
+                    workspace.id,
+                    waNumberId
+                  );
+                  metadata = await fetchAndStoreInboundMedia({
+                    workspaceId: workspace.id,
+                    messageId: message.id,
+                    waToken: credentials.accessToken,
+                    media: parsed.media,
+                  });
+                  await prisma.message.update({
+                    where: { id: message.id },
+                    data: { metadata: metadata as object },
+                  });
+                  message.metadata = metadata as object;
+                } catch (mediaErr) {
+                  logWebhook(
+                    'POST → media download failed',
+                    mediaErr instanceof Error ? mediaErr.message : mediaErr
+                  );
+                }
+              }
+
+              const lastPreview = previewForMessage(
+                parsed.kind,
+                displayContent,
+                parsed.media?.caption
               );
+
+              await prisma.conversation.updateMany({
+                where: { id: conv.id, workspaceId: workspace.id },
+                data: {
+                  lastMessage: lastPreview,
+                  lastMessageAt: new Date(),
+                  unreadCount: { increment: 1 },
+                },
+              });
+
+              getIo().to(workspace.id).emit('new_message', {
+                conversationId: conv.id,
+                message,
+              });
+              getIo().to(workspace.id).emit('conversation_updated', {
+                conversationId: conv.id,
+              });
+
+              logWebhook('POST → saved message', {
+                messageId: message.id,
+                conversationId: conv.id,
+                contactId: contact.id,
+              });
+
+              // Don't feed system/reaction noise into journeys / AI.
+              if (parsed.sender !== 'system' && !parsed.reaction) {
+                try {
+                  await routeInboundWhatsApp({
+                    workspaceId: workspace.id,
+                    conversationId: conv.id,
+                    contactId: contact.id,
+                    contactPhone: contact.phone,
+                    text: displayContent,
+                    buttonPayload,
+                    phoneNumberId: waNumberId,
+                  });
+                } catch (flowErr) {
+                  logWebhook(
+                    'POST → inbound router error',
+                    flowErr instanceof Error ? flowErr.message : flowErr
+                  );
+                  fastify.log.error(flowErr);
+                }
+
+                void eventBus.emit('message.received', {
+                  workspaceId: workspace.id,
+                  event: 'message.received',
+                  contactId: contact.id,
+                  payload: { text: displayContent, conversationId: conv.id },
+                });
+              }
             }
           }
-
-          const lastPreview = previewForMessage(parsed.kind, text, parsed.media?.caption);
-
-          await prisma.conversation.updateMany({
-            where: { id: conv.id, workspaceId: workspace.id },
-            data: {
-              lastMessage: lastPreview,
-              lastMessageAt: new Date(),
-              unreadCount: { increment: 1 },
-            },
-          });
-
-          getIo().to(workspace.id).emit('new_message', { conversationId: conv.id, message });
-          getIo().to(workspace.id).emit('conversation_updated', { conversationId: conv.id });
-
-          logWebhook('POST → saved message', {
-            messageId: message.id,
-            conversationId: conv.id,
-            contactId: contact.id,
-          });
-
-          try {
-            await routeInboundWhatsApp({
-              workspaceId: workspace.id,
-              conversationId: conv.id,
-              contactId: contact.id,
-              contactPhone: contact.phone,
-              text,
-              buttonPayload,
-              phoneNumberId: waNumberId,
-            });
-          } catch (flowErr) {
-            logWebhook('POST → inbound router error', flowErr instanceof Error ? flowErr.message : flowErr);
-            fastify.log.error(flowErr);
-          }
-
-          void eventBus.emit('message.received', {
-            workspaceId: workspace.id,
-            event: 'message.received',
-            contactId: contact.id,
-            payload: { text, conversationId: conv.id },
-          });
         }
+        // Always fall through — statuses may share the same webhook delivery.
       }
 
       if (value?.statuses?.[0]) {

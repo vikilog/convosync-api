@@ -7,12 +7,21 @@ import {
   buildMediaOfferLine,
   isMediaCapabilityRefusal,
   looksLikeMediaAffirmation,
+  mediaNoMatchReply,
   shouldAutoSendMedia,
+  shouldConsiderMediaAttachment,
 } from './media-offer.js';
 
 assert.equal(shouldAutoSendMedia('pricing'), true);
 assert.equal(shouldAutoSendMedia('media_request'), true);
 assert.equal(shouldAutoSendMedia('feature_question'), false);
+
+assert.equal(shouldConsiderMediaAttachment('feature_question', 'What is convosync'), false);
+assert.equal(shouldConsiderMediaAttachment('feature_question', 'Feature btao ?'), false);
+assert.equal(shouldConsiderMediaAttachment('general', 'Convosync k feature btao'), false);
+assert.equal(shouldConsiderMediaAttachment('media_request', 'send intro image'), true);
+assert.equal(shouldConsiderMediaAttachment('pricing', 'kitna lagega'), true);
+assert.equal(shouldConsiderMediaAttachment('general', 'price list bhejo'), true);
 
 assert.equal(looksLikeMediaAffirmation('haan'), true);
 assert.equal(looksLikeMediaAffirmation('bhejo'), true);
@@ -29,5 +38,7 @@ assert.equal(
   ),
   true
 );
+
+assert.doesNotMatch(mediaNoMatchReply(), /team se connect/i);
 
 console.log('media-offer.check: ok');

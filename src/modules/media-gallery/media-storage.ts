@@ -2,6 +2,7 @@ import path from 'node:path';
 import {
   deleteObject,
   getObject,
+  getPresignedGetUrl,
   isObjectStorageEnabled,
   mimeTypeFromStorageKey,
   publicObjectUrl,
@@ -79,4 +80,24 @@ export async function readMediaGalleryFile(storageKey: string): Promise<{
 export async function deleteMediaGalleryFile(storageKey?: string | null): Promise<void> {
   if (!storageKey) return;
   await deleteObject(storageKey);
+}
+
+/**
+ * Meta IG/Messenger Send API needs a fetchable HTTPS URL (no upload-by-id).
+ * Prefer a short-lived signed URL so private buckets still work; fall back to stored url.
+ */
+export async function resolveMetaFetchableMediaUrl(asset: {
+  url?: string | null;
+  storageKey?: string | null;
+}): Promise<string | null> {
+  if (asset.storageKey && isObjectStorageEnabled()) {
+    try {
+      // ponytail: 1h ceiling — Meta fetches promptly; bump if large video uploads stall
+      return await getPresignedGetUrl(asset.storageKey, 3600);
+    } catch {
+      // fall through to stored URL
+    }
+  }
+  if (asset.url?.startsWith('https://')) return asset.url;
+  return null;
 }

@@ -39,7 +39,13 @@ export default async function messengerRoutes(fastify: FastifyInstance) {
           }
           const webhookSubscribe = await subscribeInstagramPageWebhooks(
             account.pageId,
-            pageAccessToken
+            pageAccessToken,
+            (
+              await prisma.instagramAccount.findFirst({
+                where: { workspaceId, pageId: account.pageId },
+                select: { instagramUserId: true },
+              })
+            )?.instagramUserId
           );
           return { pageId: result.pageId, ...webhookSubscribe };
         })
@@ -57,7 +63,13 @@ export default async function messengerRoutes(fastify: FastifyInstance) {
             `Messenger inbox sync after connect: ${sync.syncedConversations} threads, ${sync.importedMessages} messages`
           );
         })
-        .catch((syncErr) => fastify.log.error({ err: syncErr }, 'Messenger post-connect sync failed'));
+        .catch((syncErr) => {
+          const ax = syncErr as { code?: string; message?: string };
+          fastify.log.error(
+            { code: ax?.code, message: ax?.message || String(syncErr) },
+            'Messenger post-connect sync failed'
+          );
+        });
 
       const primary = results[0];
       return reply.send({
@@ -136,7 +148,15 @@ export default async function messengerRoutes(fastify: FastifyInstance) {
         );
       })
       .catch((syncErr) => {
-        fastify.log.error({ err: syncErr }, 'Messenger background sync failed');
+        const ax = syncErr as { code?: string; message?: string };
+        fastify.log.error(
+          {
+            code: ax?.code,
+            message: ax?.message || (syncErr instanceof Error ? syncErr.message : String(syncErr)),
+            workspaceId,
+          },
+          'Messenger background sync failed'
+        );
       });
 
     return reply.send({

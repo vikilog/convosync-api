@@ -5,7 +5,26 @@ import { getIo } from '../socket.js';
 import { ConversationService } from '../modules/ai-agent/conversation.service.js';
 import { getWorkspaceWhatsAppCredentials } from './whatsappCredentials.js';
 import { formatMetaSendError, sendWhatsAppMessage } from './whatsapp.js';
-import type { InboundWhatsAppContext } from './ruleBasedFlowEngine.js';
+import { getWorkspaceInstagramCredentials } from './instagramCredentials.js';
+import {
+  formatInstagramSendError,
+  sendInstagramMessage,
+} from './instagram.js';
+import {
+  sendInstagramMediaMessage,
+  resolveOutboundInstagramKind,
+} from './instagramMedia.js';
+import {
+  formatMessengerSendError,
+  sendMessengerMediaMessage,
+  sendMessengerMessage,
+} from './messenger.js';
+import { getWorkspaceMessengerCredentials } from './messengerCredentials.js';
+import {
+  parseInstagramScopedUserId,
+  parseMessengerPsid,
+} from '../lib/channelContact.js';
+import type { InboundMessagingContext } from './ruleBasedFlowEngine.js';
 import { ensureAiHandlingStarted } from './conversation-event.service.js';
 import { seedAgentChatFromInbox } from './ai-agent-inbox-seed.service.js';
 import {
@@ -18,6 +37,11 @@ import {
   loadAgentMediaAsset,
   sendAgentMediaAsset,
 } from '../modules/ai-agent/media/send-media.service.js';
+import {
+  mediaTypeFromMime,
+  resolveMetaFetchableMediaUrl,
+} from '../modules/media-gallery/media-storage.js';
+import { previewForMessage } from './whatsappMedia.js';
 
 function logAiAgent(label: string, payload?: unknown) {
   const prefix = '[AiAgentInbound]';
@@ -36,11 +60,37 @@ function aiAgentRuntime(): FastifyInstance {
   return { prisma, redis: getRedis() } as unknown as FastifyInstance;
 }
 
+function resolveChannel(
+  ctxChannel: InboundMessagingContext['channel'],
+  conversationChannel: string | null | undefined,
+  contactPhone?: string
+): 'whatsapp' | 'instagram' | 'messenger' {
+  if (ctxChannel === 'instagram' || ctxChannel === 'messenger' || ctxChannel === 'whatsapp') {
+    return ctxChannel;
+  }
+  if (conversationChannel === 'instagram' || conversationChannel === 'messenger') {
+    return conversationChannel;
+  }
+  // Infer from contact id prefix when Conversation.channel is missing/wrong.
+  if (contactPhone?.startsWith('ig:')) return 'instagram';
+  if (contactPhone?.startsWith('fb:')) return 'messenger';
+  return 'whatsapp';
+}
+
+function formatChannelSendError(
+  channel: 'whatsapp' | 'instagram' | 'messenger',
+  err: unknown
+): unknown {
+  if (channel === 'instagram') return formatInstagramSendError(err);
+  if (channel === 'messenger') return formatMessengerSendError(err);
+  return formatMetaSendError(err);
+}
+
 /**
- * WhatsApp reply via published AI Agent (hybrid retrieval / ConversationService).
+ * AI Agent inbound for WhatsApp + Instagram + Messenger inbox threads.
  * Continues the same AgentChatConversation keyed by inbox conversation id.
  */
-export async function processAiAgentInbound(ctx: InboundWhatsAppContext): Promise<void> {
+export async function processAiAgentInbound(ctx: InboundMessagingContext): Promise<void> {
   const text = ctx.text?.trim();
   if (!text || text === '[media]') {
     logAiAgent('skip — empty or media-only message');
@@ -49,13 +99,20 @@ export async function processAiAgentInbound(ctx: InboundWhatsAppContext): Promis
 
   const conversation = await prisma.conversation.findFirst({
     where: { id: ctx.conversationId, workspaceId: ctx.workspaceId },
-    select: { assigneeType: true, assigneeId: true, channelAccountId: true },
+    select: {
+      assigneeType: true,
+      assigneeId: true,
+      channelAccountId: true,
+      channel: true,
+    },
   });
 
   if (!conversation || conversation.assigneeType !== 'ai_agent' || !conversation.assigneeId) {
     logAiAgent('skip — not assigned to AI agent');
     return;
   }
+
+  const channel = resolveChannel(ctx.channel, conversation.channel, ctx.contactPhone);
 
   const agentId = conversation.assigneeId;
   const agent = await prisma.aiAgent.findFirst({
@@ -80,38 +137,27 @@ export async function processAiAgentInbound(ctx: InboundWhatsAppContext): Promis
       workspaceId: ctx.workspaceId,
       actorId: agentId,
       actorName: agent.name,
-      metadata: { source: 'ai_agent' },
+      metadata: { source: 'ai_agent', channel },
     }).catch((err) =>
       logAiAgent('event AI_HANDLING_STARTED failed', err instanceof Error ? err.message : err)
     );
   };
 
-  const resolveWa = async () => {
-    const phoneNumberId = ctx.phoneNumberId || conversation.channelAccountId || undefined;
-    const credentials = await getWorkspaceWhatsAppCredentials(ctx.workspaceId, phoneNumberId);
-    const resolvedPhoneId = phoneNumberId || credentials.phoneNumberId;
-    if (!resolvedPhoneId) throw new Error('No WhatsApp phone number id');
-    return { credentials, resolvedPhoneId };
-  };
-
-  const sendText = async (reply: string, meta?: Record<string, unknown>) => {
-    const { credentials, resolvedPhoneId } = await resolveWa();
-    const sent = await sendWhatsAppMessage(
-      credentials.accessToken,
-      resolvedPhoneId,
-      ctx.contactPhone,
-      reply
-    );
+  const persistOutbound = async (
+    reply: string,
+    waMessageId: string | undefined,
+    meta?: Record<string, unknown>
+  ) => {
     const message = await prisma.message.create({
       data: {
-        waMessageId: sent.waMessageId,
+        waMessageId: waMessageId || null,
         conversationId: ctx.conversationId,
         sender: 'agent',
         senderName: agent.name,
         content: reply,
         type: 'text',
         status: 'sent',
-        metadata: { source: 'ai_agent', agentId, ...meta },
+        metadata: { source: 'ai_agent', agentId, channel, ...meta },
       },
     });
     await prisma.conversation.updateMany({
@@ -122,7 +168,209 @@ export async function processAiAgentInbound(ctx: InboundWhatsAppContext): Promis
     getIo().to(ctx.workspaceId).emit('conversation_updated', {
       conversationId: ctx.conversationId,
     });
-    return { credentials, resolvedPhoneId, message };
+    return message;
+  };
+
+  type SendBundle =
+    | {
+        channel: 'whatsapp';
+        accessToken: string;
+        phoneNumberId: string;
+        message: Awaited<ReturnType<typeof persistOutbound>>;
+      }
+    | {
+        channel: 'instagram' | 'messenger';
+        pageId: string;
+        pageAccessToken: string;
+        recipientId: string;
+        message: Awaited<ReturnType<typeof persistOutbound>>;
+      };
+
+  const sendText = async (reply: string, meta?: Record<string, unknown>): Promise<SendBundle> => {
+    if (channel === 'instagram') {
+      const recipientId = parseInstagramScopedUserId(ctx.contactPhone);
+      if (!recipientId) throw new Error('Contact has no Instagram user id');
+      const credentials = await getWorkspaceInstagramCredentials(
+        ctx.workspaceId,
+        conversation.channelAccountId
+      );
+      const lastContactMsg = await prisma.message.findFirst({
+        where: {
+          conversationId: ctx.conversationId,
+          sender: 'contact',
+          waMessageId: { not: null },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { waMessageId: true },
+      });
+      const sent = await sendInstagramMessage(
+        credentials.pageId,
+        credentials.pageAccessToken,
+        recipientId,
+        reply,
+        {
+          replyToMid: lastContactMsg?.waMessageId || undefined,
+          instagramUserId: credentials.instagramUserId,
+        }
+      );
+      const message = await persistOutbound(reply, sent.messageId, meta);
+      return {
+        channel: 'instagram',
+        pageId: credentials.pageId,
+        pageAccessToken: credentials.pageAccessToken,
+        recipientId,
+        message,
+      };
+    }
+
+    if (channel === 'messenger') {
+      const recipientId = parseMessengerPsid(ctx.contactPhone);
+      if (!recipientId) throw new Error('Contact has no Messenger PSID');
+      const credentials = await getWorkspaceMessengerCredentials(
+        ctx.workspaceId,
+        conversation.channelAccountId
+      );
+      const sent = await sendMessengerMessage(
+        credentials.pageId,
+        credentials.pageAccessToken,
+        recipientId,
+        reply
+      );
+      const message = await persistOutbound(reply, sent.messageId, meta);
+      return {
+        channel: 'messenger',
+        pageId: credentials.pageId,
+        pageAccessToken: credentials.pageAccessToken,
+        recipientId,
+        message,
+      };
+    }
+
+    const phoneNumberId = ctx.phoneNumberId || conversation.channelAccountId || undefined;
+    const credentials = await getWorkspaceWhatsAppCredentials(ctx.workspaceId, phoneNumberId);
+    const resolvedPhoneId = phoneNumberId || credentials.phoneNumberId;
+    if (!resolvedPhoneId) throw new Error('No WhatsApp phone number id');
+    const sent = await sendWhatsAppMessage(
+      credentials.accessToken,
+      resolvedPhoneId,
+      ctx.contactPhone,
+      reply
+    );
+    const message = await persistOutbound(reply, sent.waMessageId, meta);
+    return {
+      channel: 'whatsapp',
+      accessToken: credentials.accessToken,
+      phoneNumberId: resolvedPhoneId,
+      message,
+    };
+  };
+
+  const sendMedia = async (bundle: SendBundle, mediaId: string) => {
+    const asset = await loadAgentMediaAsset(ctx.workspaceId, mediaId);
+    if (!asset) {
+      logAiAgent('media gallery', { status: 'skipped', reason: 'asset_missing' });
+      return;
+    }
+
+    if (bundle.channel === 'whatsapp') {
+      const mediaResult = await sendAgentMediaAsset({
+        workspaceId: ctx.workspaceId,
+        agentId,
+        agentName: agent.name,
+        conversationId: ctx.conversationId,
+        contactPhone: ctx.contactPhone,
+        accessToken: bundle.accessToken,
+        phoneNumberId: bundle.phoneNumberId,
+        asset,
+      });
+      logAiAgent('media gallery', mediaResult);
+      return;
+    }
+
+    // IG / Messenger: Meta requires a fetchable HTTPS URL (no WA-style upload id).
+    const mediaUrl = await resolveMetaFetchableMediaUrl(asset);
+    if (!mediaUrl) {
+      logAiAgent('media gallery', {
+        status: 'skipped',
+        reason: 'meta_needs_fetchable_https_url',
+        mediaId: asset.id,
+        channel: bundle.channel,
+      });
+      return;
+    }
+    try {
+      const kind = resolveOutboundInstagramKind(asset.mimeType || '');
+      const messageKind = kind === 'file' ? 'document' : kind;
+      const mimeType = asset.mimeType || 'application/octet-stream';
+      const fileName = asset.filename || asset.title || 'attachment';
+      const caption = asset.title;
+      const preview = previewForMessage(messageKind, fileName, caption);
+      const sent =
+        bundle.channel === 'messenger'
+          ? await sendMessengerMediaMessage(
+              bundle.pageId,
+              bundle.pageAccessToken,
+              bundle.recipientId,
+              kind,
+              mediaUrl
+            )
+          : await sendInstagramMediaMessage(
+              bundle.pageId,
+              bundle.pageAccessToken,
+              bundle.recipientId,
+              kind,
+              mediaUrl
+            );
+      const message = await prisma.message.create({
+        data: {
+          waMessageId: sent.messageId,
+          conversationId: ctx.conversationId,
+          sender: 'agent',
+          senderName: agent.name,
+          content: preview,
+          type: messageKind,
+          status: 'sent',
+          metadata: {
+            source: 'ai_agent',
+            agentId,
+            channel: bundle.channel,
+            mediaAssetId: asset.id,
+            mimeType,
+            fileName,
+            caption,
+            // Gallery key works with /messages/:id/attachment (same as WA AI path).
+            storageKey: asset.storageKey || undefined,
+            mediaLink: mediaUrl,
+            mediaType: asset.type || mediaTypeFromMime(mimeType, fileName),
+          },
+        },
+      });
+      await prisma.conversation.updateMany({
+        where: { id: ctx.conversationId, workspaceId: ctx.workspaceId },
+        data: {
+          lastMessage: preview.slice(0, 200),
+          lastMessageAt: new Date(),
+        },
+      });
+      getIo().to(ctx.workspaceId).emit('new_message', {
+        conversationId: ctx.conversationId,
+        message,
+      });
+      getIo().to(ctx.workspaceId).emit('conversation_updated', {
+        conversationId: ctx.conversationId,
+      });
+      await clearPendingMediaOffer(ctx.workspaceId, ctx.conversationId);
+      logAiAgent('media gallery', {
+        status: 'sent',
+        mediaId: asset.id,
+        channel: bundle.channel,
+      });
+    } catch (err) {
+      logAiAgent(
+        `${bundle.channel} media send failed`,
+        formatChannelSendError(bundle.channel, err)
+      );
+    }
   };
 
   // Affirm previous "Bhej doon?" offer — send file, skip LLM.
@@ -134,23 +382,11 @@ export async function processAiAgentInbound(ctx: InboundWhatsAppContext): Promis
         await clearPendingMediaOffer(ctx.workspaceId, ctx.conversationId);
         logAiAgent('media affirm — asset missing');
       } else {
-        const { credentials, resolvedPhoneId } = await sendText(mediaSendAck(asset.title), {
-          mediaOfferAffirm: true,
-        });
-        const mediaResult = await sendAgentMediaAsset({
-          workspaceId: ctx.workspaceId,
-          agentId,
-          agentName: agent.name,
-          conversationId: ctx.conversationId,
-          contactPhone: ctx.contactPhone,
-          accessToken: credentials.accessToken,
-          phoneNumberId: resolvedPhoneId,
-          asset,
-        });
-        logAiAgent('media gallery affirm', mediaResult);
+        const bundle = await sendText(mediaSendAck(asset.title), { mediaOfferAffirm: true });
+        await sendMedia(bundle, asset.id);
       }
     } catch (err) {
-      logAiAgent('media affirm failed', formatMetaSendError(err));
+      logAiAgent('media affirm failed', formatChannelSendError(channel, err));
     }
     await finishHandling();
     return;
@@ -168,6 +404,7 @@ export async function processAiAgentInbound(ctx: InboundWhatsAppContext): Promis
   logAiAgent('inbox history seed', {
     agentChatId: seeded.agentChatId,
     seeded: seeded.seeded,
+    channel,
   });
 
   const conversationService = new ConversationService(aiAgentRuntime());
@@ -212,11 +449,11 @@ export async function processAiAgentInbound(ctx: InboundWhatsAppContext): Promis
         channel: channelKey,
         mediaConversationId: ctx.conversationId,
       });
+      finalReply = finalResult.reply?.trim() || '';
     } catch (err) {
       logAiAgent('chat retry failed', err instanceof Error ? err.message : err);
       return;
     }
-    finalReply = finalResult.reply?.trim() || '';
   }
 
   if (!finalReply) {
@@ -225,47 +462,34 @@ export async function processAiAgentInbound(ctx: InboundWhatsAppContext): Promis
   }
 
   try {
-    const { credentials, resolvedPhoneId, message } = await sendText(finalReply, {
+    // IG text limit 1000; Messenger ~2000 — trim rather than failing the turn.
+    const outboundReply =
+      channel === 'instagram' && finalReply.length > 1000
+        ? `${finalReply.slice(0, 990)}…`
+        : channel === 'messenger' && finalReply.length > 2000
+          ? `${finalReply.slice(0, 1990)}…`
+          : finalReply;
+
+    const bundle = await sendText(outboundReply, {
       retrievalPath: finalResult.retrievalPath ?? null,
       mediaAttachment: finalResult.mediaAttachment?.action ?? 'none',
     });
 
     logAiAgent('replied', {
       agentId,
+      channel,
       path: finalResult.retrievalPath,
-      messageId: message.id,
+      messageId: bundle.message.id,
       media: finalResult.mediaAttachment,
     });
 
     if (finalResult.mediaAttachment?.action === 'send') {
-      const asset = await loadAgentMediaAsset(
-        ctx.workspaceId,
-        finalResult.mediaAttachment.mediaId
-      );
-      if (!asset) {
-        logAiAgent('media gallery', { status: 'skipped', reason: 'asset_missing' });
-      } else {
-        const mediaResult = await sendAgentMediaAsset({
-          workspaceId: ctx.workspaceId,
-          agentId,
-          agentName: agent.name,
-          conversationId: ctx.conversationId,
-          contactPhone: ctx.contactPhone,
-          accessToken: credentials.accessToken,
-          phoneNumberId: resolvedPhoneId,
-          asset,
-        });
-        logAiAgent('media gallery', mediaResult);
-        if (mediaResult.status !== 'sent') {
-          // User already got ack text — surface failure in logs; optional follow-up later.
-          logAiAgent('media send failed after ack', mediaResult);
-        }
-      }
+      await sendMedia(bundle, finalResult.mediaAttachment.mediaId);
     } else {
       logAiAgent('media gallery', finalResult.mediaAttachment ?? { action: 'none' });
     }
   } catch (err) {
-    logAiAgent('WhatsApp send failed', formatMetaSendError(err));
+    logAiAgent(`${channel} send failed`, formatChannelSendError(channel, err));
     return;
   }
 
@@ -287,10 +511,12 @@ export async function kickAiAgentReplyForLatestContactMessage(
       assigneeId: true,
       contactId: true,
       channelAccountId: true,
+      channel: true,
       contact: { select: { phone: true } },
       messages: {
+        where: { sender: 'contact' },
         orderBy: { createdAt: 'desc' },
-        take: 1,
+        take: 10,
         select: { sender: true, content: true },
       },
     },
@@ -300,12 +526,19 @@ export async function kickAiAgentReplyForLatestContactMessage(
     return;
   }
 
-  const last = conv.messages[0];
-  if (!last || last.sender !== 'contact') return;
-  const text = last.content?.trim();
-  if (!text || text === '[media]') return;
+  // Prefer last text-like contact message (skip empty / bare media stubs).
+  const last = conv.messages.find((m) => {
+    const text = m.content?.trim();
+    return Boolean(text) && text !== '[media]';
+  });
+  if (!last) return;
+  const text = last.content.trim();
 
-  logAiAgent('kick reply after assign', { conversationId, preview: text.slice(0, 80) });
+  logAiAgent('kick reply after assign', {
+    conversationId,
+    channel: resolveChannel(undefined, conv.channel, conv.contact.phone),
+    preview: text.slice(0, 80),
+  });
   await processAiAgentInbound({
     workspaceId,
     conversationId,
@@ -313,5 +546,6 @@ export async function kickAiAgentReplyForLatestContactMessage(
     contactPhone: conv.contact.phone,
     text,
     phoneNumberId: conv.channelAccountId ?? undefined,
+    channel: resolveChannel(undefined, conv.channel, conv.contact.phone),
   });
 }

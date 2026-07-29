@@ -75,7 +75,7 @@ export async function getContactAudits(
 ): Promise<ContactAuditResponse | null> {
   const contact = await prisma.contact.findFirst({
     where: { id: contactId, workspaceId },
-    select: { id: true, name: true, phone: true },
+    select: { id: true, name: true, phone: true, email: true },
   });
   if (!contact) return null;
 
@@ -86,7 +86,9 @@ export async function getContactAudits(
     })
   ).map((c) => c.id);
 
-  const [journeyExecutions, botSessions, automationMessages] = await Promise.all([
+  const email = contact.email?.trim() || null;
+
+  const [journeyExecutions, botSessions, automationMessages, emailLogs] = await Promise.all([
     prisma.journeyExecution.findMany({
       where: { contactId, journey: { workspaceId } },
       include: {
@@ -120,6 +122,28 @@ export async function getContactAudits(
           take: 500,
         })
       : Promise.resolve([]),
+    prisma.emailLog.findMany({
+      where: {
+        workspaceId,
+        OR: [
+          { metadata: { path: ['contactId'], equals: contactId } },
+          ...(email
+            ? [{ recipient: { equals: email, mode: 'insensitive' as const } }]
+            : []),
+        ],
+      },
+      select: {
+        id: true,
+        status: true,
+        recipient: true,
+        subject: true,
+        metadata: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    }),
   ]);
 
   let aiReplies = 0;
@@ -127,6 +151,9 @@ export async function getContactAudits(
   let templateSends = 0;
   const campaignIds = new Set<string>();
   const campaignNames = new Map<string, string>();
+  const campaignChannel = new Map<string, 'whatsapp' | 'email'>();
+  const campaignEmailStatus = new Map<string, string>();
+  const campaignEmailAt = new Map<string, Date>();
 
   for (const msg of automationMessages) {
     const meta = asRecord(msg.metadata);
@@ -142,6 +169,7 @@ export async function getContactAudits(
     }
     if (typeof meta.campaignId === 'string') {
       campaignIds.add(meta.campaignId);
+      campaignChannel.set(meta.campaignId, 'whatsapp');
       const templateName =
         typeof meta.templateName === 'string' ? meta.templateName : 'Campaign message';
       if (!campaignNames.has(meta.campaignId)) {
@@ -151,6 +179,22 @@ export async function getContactAudits(
     }
     if (msg.type === 'template' && !meta.campaignId && source !== 'journey') {
       templateSends += 1;
+    }
+  }
+
+  for (const log of emailLogs) {
+    const meta = asRecord(log.metadata);
+    const campaignId = typeof meta.campaignId === 'string' ? meta.campaignId : null;
+    if (!campaignId) continue;
+    campaignIds.add(campaignId);
+    campaignChannel.set(campaignId, 'email');
+    if (!campaignNames.has(campaignId)) {
+      campaignNames.set(campaignId, log.subject || 'Email campaign');
+    }
+    const prevAt = campaignEmailAt.get(campaignId);
+    if (!prevAt || log.updatedAt > prevAt) {
+      campaignEmailAt.set(campaignId, log.updatedAt);
+      campaignEmailStatus.set(campaignId, emailLogStatusLabel(log.status));
     }
   }
 
@@ -193,13 +237,19 @@ export async function getContactAudits(
   }
 
   for (const campaign of campaignRecords) {
+    const isEmail = campaignChannel.get(campaign.id) === 'email';
+    const emailAt = campaignEmailAt.get(campaign.id);
     events.push({
       id: `campaign-${campaign.id}`,
       type: 'campaign',
       title: campaign.name,
-      subtitle: campaignNames.get(campaign.id) ?? 'WhatsApp campaign',
-      status: 'Sent',
-      timestamp: (campaign.sentAt ?? new Date()).toISOString(),
+      subtitle: isEmail
+        ? campaignNames.get(campaign.id) ?? 'Email campaign'
+        : campaignNames.get(campaign.id) ?? 'WhatsApp campaign',
+      status: isEmail
+        ? campaignEmailStatus.get(campaign.id) ?? 'Sent'
+        : 'Sent',
+      timestamp: (emailAt ?? campaign.sentAt ?? new Date()).toISOString(),
     });
   }
 
@@ -220,4 +270,25 @@ export async function getContactAudits(
     },
     events,
   };
+}
+
+function emailLogStatusLabel(status: string): string {
+  switch (status.toLowerCase()) {
+    case 'clicked':
+      return 'Clicked';
+    case 'opened':
+      return 'Opened';
+    case 'delivered':
+      return 'Delivered';
+    case 'sent':
+      return 'Sent';
+    case 'bounced':
+      return 'Bounced';
+    case 'failed':
+      return 'Failed';
+    case 'queued':
+      return 'Queued';
+    default:
+      return status;
+  }
 }

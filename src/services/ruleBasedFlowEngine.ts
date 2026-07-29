@@ -3,6 +3,17 @@ import { prisma } from '../index.js';
 import { getIo } from '../socket.js';
 import { sendWhatsAppMessage, formatMetaSendError } from './whatsapp.js';
 import { getWorkspaceWhatsAppCredentials } from './whatsappCredentials.js';
+import { getWorkspaceInstagramCredentials } from './instagramCredentials.js';
+import { formatInstagramSendError, sendInstagramMessage } from './instagram.js';
+import {
+  formatMessengerSendError,
+  sendMessengerMessage,
+} from './messenger.js';
+import { getWorkspaceMessengerCredentials } from './messengerCredentials.js';
+import {
+  parseInstagramScopedUserId,
+  parseMessengerPsid,
+} from '../lib/channelContact.js';
 
 export type AgentFlowNodeType =
   | 'ask_question'
@@ -49,7 +60,12 @@ export type InboundWhatsAppContext = {
   phoneNumberId?: string;
   /** When set, run this rule-based agent (inbox assignment) without keyword matching. */
   forcedAgentId?: string;
+  /** Inbox channel — defaults to whatsapp for backward compat. */
+  channel?: 'whatsapp' | 'instagram' | 'messenger';
 };
+
+/** Channel-agnostic alias (WA + IG AI Agent / automation routing). */
+export type InboundMessagingContext = InboundWhatsAppContext;
 
 function logFlow(label: string, payload?: unknown) {
   const prefix = '[RuleBasedFlow]';
@@ -210,33 +226,85 @@ async function sendFlowText(
   contactPhone: string,
   agentName: string,
   text: string,
-  phoneNumberId?: string
+  opts?: {
+    phoneNumberId?: string;
+    channel?: string | null;
+    channelAccountId?: string | null;
+  }
 ): Promise<boolean> {
-  try {
-    const credentials = await getWorkspaceWhatsAppCredentials(workspaceId);
-    const resolvedPhoneNumberId = phoneNumberId || credentials.phoneNumberId;
-    if (!resolvedPhoneNumberId) {
-      logFlow('send skipped — no phoneNumberId', { workspaceId });
-      return false;
-    }
+  const channel =
+    opts?.channel === 'instagram' || opts?.channel === 'messenger' ? opts.channel : 'whatsapp';
 
-    const sent = await sendWhatsAppMessage(
-      credentials.accessToken,
-      resolvedPhoneNumberId,
-      contactPhone,
-      text
-    );
+  try {
+    let externalId: string | undefined;
+
+    if (channel === 'instagram') {
+      const recipientId = parseInstagramScopedUserId(contactPhone);
+      if (!recipientId) {
+        logFlow('send skipped — no Instagram user id', { conversationId });
+        return false;
+      }
+      const credentials = await getWorkspaceInstagramCredentials(
+        workspaceId,
+        opts?.channelAccountId
+      );
+      const sent = await sendInstagramMessage(
+        credentials.pageId,
+        credentials.pageAccessToken,
+        recipientId,
+        text,
+        { instagramUserId: credentials.instagramUserId }
+      );
+      externalId = sent.messageId;
+    } else if (channel === 'messenger') {
+      const recipientId = parseMessengerPsid(contactPhone);
+      if (!recipientId) {
+        logFlow('send skipped — no Messenger PSID', { conversationId });
+        return false;
+      }
+      const credentials = await getWorkspaceMessengerCredentials(
+        workspaceId,
+        opts?.channelAccountId
+      );
+      const sent = await sendMessengerMessage(
+        credentials.pageId,
+        credentials.pageAccessToken,
+        recipientId,
+        text
+      );
+      externalId = sent.messageId;
+    } else {
+      const credentials = await getWorkspaceWhatsAppCredentials(workspaceId);
+      const resolvedPhoneNumberId = opts?.phoneNumberId || credentials.phoneNumberId;
+      if (!resolvedPhoneNumberId) {
+        logFlow('send skipped — no phoneNumberId', { workspaceId });
+        return false;
+      }
+      const sent = await sendWhatsAppMessage(
+        credentials.accessToken,
+        resolvedPhoneNumberId,
+        contactPhone,
+        text
+      );
+      externalId = sent.waMessageId;
+    }
 
     await persistOutboundMessage(
       workspaceId,
       conversationId,
       agentName,
       text,
-      sent.waMessageId
+      externalId
     );
     return true;
   } catch (err) {
-    logFlow('send failed', formatMetaSendError(err));
+    const formatted =
+      channel === 'instagram'
+        ? formatInstagramSendError(err)
+        : channel === 'messenger'
+          ? formatMessengerSendError(err)
+          : formatMetaSendError(err);
+    logFlow('send failed', formatted);
     return false;
   }
 }
@@ -312,7 +380,11 @@ async function runFlowFromIndex(
           contact.phone,
           agent.name,
           text,
-          phoneNumberId
+          {
+            phoneNumberId,
+            channel: conversation.channel,
+            channelAccountId: conversation.channelAccountId,
+          }
         );
         sendMessageCount += 1;
       }
@@ -329,7 +401,11 @@ async function runFlowFromIndex(
           contact.phone,
           agent.name,
           text,
-          phoneNumberId
+          {
+            phoneNumberId,
+            channel: conversation.channel,
+            channelAccountId: conversation.channelAccountId,
+          }
         );
       }
       waitingForReply = true;
@@ -357,7 +433,11 @@ async function runFlowFromIndex(
         contact.phone,
         agent.name,
         thankYou,
-        phoneNumberId
+        {
+          phoneNumberId,
+          channel: conversation.channel,
+          channelAccountId: conversation.channelAccountId,
+        }
       );
 
       nodeIndex += 1;
@@ -378,7 +458,11 @@ async function runFlowFromIndex(
         contact.phone,
         agent.name,
         'Connecting you with a team member. Please hold on.',
-        phoneNumberId
+        {
+          phoneNumberId,
+          channel: conversation.channel,
+          channelAccountId: conversation.channelAccountId,
+        }
       );
       nodeIndex += 1;
       break;
