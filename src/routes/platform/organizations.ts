@@ -9,6 +9,7 @@ import {
   listPlatformOrganizations,
 } from '../../services/platformOrganizations.js';
 import {
+  assignPlanToWorkspace,
   createWorkspaceImpersonationSession,
   getWorkspaceAuditTrail,
   reactivateWorkspace,
@@ -163,6 +164,19 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
       return { ok: true, limits };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update limits';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  fastify.post('/:id/assign-plan', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = z.object({ planSlug: z.string().trim().min(1) }).parse(request.body);
+
+    try {
+      const result = await assignPlanToWorkspace(id, body.planSlug);
+      return { ok: true, ...result };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to assign plan';
       return reply.code(400).send({ error: message });
     }
   });

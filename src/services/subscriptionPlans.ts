@@ -41,54 +41,25 @@ export const DEFAULT_PLAN_SEEDS: Array<{
     slug: 'starter',
     planCode: 'tier_strt',
     name: 'STARTER',
-    labelColor: '#6B7280',
-    priceMonthly: 19.99,
-    priceAnnual: 199.9,
-    priceMonthlyPaise: 199900,
-    priceAnnualPaise: 1999000,
-    razorpayPlanIdMonthly: null,
-    razorpayPlanIdAnnual: null,
-    editButtonStyle: 'gray',
-    sortOrder: 1,
-    trialDays: 14,
-    features: {
-      contacts: '1,000',
-      teamMembers: '2',
-      aiAgents: '1',
-      channels: '2',
-      messagesPerMonth: 10000,
-      storageGb: 5,
-      apiAccess: false,
-      customBranding: false,
-      prioritySupport: false,
-      aiReplies: 500,
-      campaigns: 3,
-      integrations: 2,
-      emailsPerMonth: 1000,
-    },
-  },
-  {
-    slug: 'growth',
-    planCode: 'tier_grw',
-    name: 'GROWTH',
-    labelColor: '#6C63FF',
-    priceMonthly: 79,
-    priceAnnual: 790,
-    priceMonthlyPaise: 249900,
-    priceAnnualPaise: 2499900,
+    labelColor: '#064e3b',
+    // INR rupees (landing: ₹1,999/mo)
+    priceMonthly: 1999,
+    priceAnnual: 19990,
+    priceMonthlyPaise: 199_900,
+    priceAnnualPaise: 1_999_000,
     razorpayPlanIdMonthly: null,
     razorpayPlanIdAnnual: null,
     popular: true,
-    borderColor: '#6C63FF',
+    borderColor: '#064e3b',
     editButtonStyle: 'purple',
-    sortOrder: 2,
+    sortOrder: 1,
     trialDays: 14,
     features: {
-      contacts: '5,000',
-      teamMembers: '10',
-      aiAgents: '5',
-      channels: '5',
-      messagesPerMonth: 50000,
+      contacts: '2,000',
+      teamMembers: '3',
+      aiAgents: '1',
+      channels: '4',
+      messagesPerMonth: 50_000,
       storageGb: 25,
       apiAccess: true,
       customBranding: false,
@@ -99,70 +70,10 @@ export const DEFAULT_PLAN_SEEDS: Array<{
       emailsPerMonth: 5000,
     },
   },
-  {
-    slug: 'pro',
-    planCode: 'tier_pro',
-    name: 'PRO',
-    labelColor: '#2563EB',
-    priceMonthly: 199,
-    priceAnnual: 1990,
-    priceMonthlyPaise: 599900,
-    priceAnnualPaise: 5999900,
-    razorpayPlanIdMonthly: null,
-    razorpayPlanIdAnnual: null,
-    editButtonStyle: 'blue',
-    sortOrder: 3,
-    trialDays: 14,
-    features: {
-      contacts: '25,000',
-      teamMembers: '50',
-      aiAgents: '20',
-      channels: 'Unlimited',
-      messagesPerMonth: 250000,
-      storageGb: 100,
-      apiAccess: true,
-      customBranding: true,
-      prioritySupport: true,
-      channelsUnlimited: true,
-      aiReplies: 'unlimited',
-      campaigns: 'unlimited',
-      integrations: 25,
-      emailsPerMonth: 25000,
-    },
-  },
-  {
-    slug: 'enterprise',
-    planCode: 'tier_ent',
-    name: 'ENTERPRISE',
-    labelColor: '#111827',
-    priceMonthly: null,
-    priceAnnual: 0,
-    priceMonthlyPaise: null,
-    priceAnnualPaise: null,
-    razorpayPlanIdMonthly: null,
-    razorpayPlanIdAnnual: null,
-    priceLabel: 'Custom',
-    editButtonStyle: 'dark',
-    sortOrder: 4,
-    trialDays: 14,
-    features: {
-      contacts: 'Custom',
-      teamMembers: 'Custom',
-      aiAgents: 'Custom',
-      channels: 'Custom',
-      messagesPerMonth: 0,
-      storageGb: 0,
-      apiAccess: true,
-      customBranding: true,
-      prioritySupport: true,
-      channelsUnlimited: true,
-      aiReplies: 'custom',
-      campaigns: 'custom',
-      integrations: 'custom',
-      emailsPerMonth: 'custom',
-    },
-  },
 ];
+
+/** Old multi-tier catalog — seed deactivates these; custom-* plans are left alone. */
+const RETIRED_PUBLIC_SLUGS = ['growth', 'pro', 'enterprise'] as const;
 
 export async function seedSubscriptionPlans() {
   const plans = [];
@@ -210,6 +121,12 @@ export async function seedSubscriptionPlans() {
     plans.push(plan);
   }
 
+  // Retire old public tiers only — leave custom-* plans alone
+  await prisma.subscriptionPlan.updateMany({
+    where: { slug: { in: [...RETIRED_PUBLIC_SLUGS] } },
+    data: { isActive: false },
+  });
+
   return plans;
 }
 
@@ -222,19 +139,164 @@ export async function detachPlansFromTrialWorkspaces() {
   return result.count;
 }
 
-export async function listSubscriptionPlans() {
-  return prisma.subscriptionPlan.findMany({
+/** Admin-created plans use `custom-` slug prefix; never shown on public checkout. */
+export function isCustomPlanSlug(slug: string) {
+  return slug.startsWith('custom-');
+}
+
+export async function listSubscriptionPlans(opts?: { includeCustom?: boolean }) {
+  const plans = await prisma.subscriptionPlan.findMany({
     where: { isActive: true },
     orderBy: { sortOrder: 'asc' },
   });
+  if (opts?.includeCustom) return plans;
+  return plans.filter((p) => !isCustomPlanSlug(p.slug));
 }
 
 export async function getSubscriptionPlanBySlug(slug: string) {
   return prisma.subscriptionPlan.findUnique({ where: { slug } });
 }
 
+export type PlanWriteInput = {
+  name: string;
+  planCode?: string;
+  priceMonthly: number | null;
+  priceAnnual: number | null;
+  features: PlanFeatures;
+  popular?: boolean;
+  labelColor?: string;
+  borderColor?: string;
+  editButtonStyle?: string;
+};
+
+function slugifyPlanName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'plan';
+}
+
+function toPaise(rupees: number | null) {
+  if (rupees == null || !Number.isFinite(rupees)) return null;
+  return Math.round(rupees * 100);
+}
+
+async function uniqueCustomSlug(baseName: string) {
+  const base = `custom-${slugifyPlanName(baseName)}`;
+  let slug = base;
+  let n = 2;
+  while (await prisma.subscriptionPlan.findUnique({ where: { slug } })) {
+    slug = `${base}-${n}`;
+    n += 1;
+  }
+  return slug;
+}
+
+async function uniquePlanCode(preferred?: string) {
+  const base =
+    preferred?.trim().replace(/[^a-zA-Z0-9_]/g, '').slice(0, 24) ||
+    `tier_cstm_${Date.now().toString(36).slice(-6)}`;
+  let code = base;
+  let n = 2;
+  while (await prisma.subscriptionPlan.findUnique({ where: { planCode: code } })) {
+    code = `${base.slice(0, 20)}_${n}`;
+    n += 1;
+  }
+  return code;
+}
+
+export async function createCustomSubscriptionPlan(input: PlanWriteInput) {
+  const slug = await uniqueCustomSlug(input.name);
+  const planCode = await uniquePlanCode(input.planCode);
+  const customCount = await prisma.subscriptionPlan.count({
+    where: { slug: { startsWith: 'custom-' } },
+  });
+
+  return prisma.subscriptionPlan.create({
+    data: {
+      slug,
+      planCode,
+      name: input.name.trim().toUpperCase(),
+      labelColor: input.labelColor ?? '#7C3AED',
+      priceMonthly: input.priceMonthly,
+      priceAnnual: input.priceAnnual,
+      priceMonthlyPaise: toPaise(input.priceMonthly),
+      priceAnnualPaise: toPaise(input.priceAnnual),
+      popular: input.popular ?? false,
+      borderColor: input.borderColor ?? '#7C3AED',
+      editButtonStyle: input.editButtonStyle ?? 'purple',
+      sortOrder: 100 + customCount,
+      trialDays: 0,
+      features: input.features as Prisma.InputJsonValue,
+      isActive: true,
+    },
+  });
+}
+
+export async function updateSubscriptionPlan(slug: string, input: PlanWriteInput) {
+  const existing = await prisma.subscriptionPlan.findUnique({ where: { slug } });
+  if (!existing) throw new Error('Plan not found');
+  if (!existing.isActive) throw new Error('Plan is inactive');
+
+  const data: Prisma.SubscriptionPlanUpdateInput = {
+    name: input.name.trim().toUpperCase(),
+    priceMonthly: input.priceMonthly,
+    priceAnnual: input.priceAnnual,
+    priceMonthlyPaise: toPaise(input.priceMonthly),
+    priceAnnualPaise: toPaise(input.priceAnnual),
+    labelColor: input.labelColor ?? existing.labelColor,
+    borderColor: input.borderColor ?? existing.borderColor,
+    editButtonStyle: input.editButtonStyle ?? existing.editButtonStyle,
+    popular: input.popular ?? existing.popular,
+    features: input.features as Prisma.InputJsonValue,
+  };
+
+  // Don't churn planCode on edit — uniqueness fights the same code
+  return prisma.subscriptionPlan.update({ where: { slug }, data });
+}
+
+export async function syncWorkspaceLimitsFromPlanFeatures(
+  workspaceId: string,
+  features: PlanFeatures
+) {
+  const campaignsLimit =
+    typeof features.campaigns === 'number'
+      ? features.campaigns
+      : features.campaigns === 'unlimited'
+        ? Number.MAX_SAFE_INTEGER
+        : 3;
+
+  return prisma.workspaceUsageLimits.upsert({
+    where: { workspaceId },
+    create: {
+      workspaceId,
+      contactsLimit: parseFeatureLimitForBackfill(features.contacts, 1000),
+      teamMembersLimit: parseFeatureLimitForBackfill(features.teamMembers, 3),
+      aiAgentsLimit: parseFeatureLimitForBackfill(features.aiAgents, 1),
+      channelsLimit: parseFeatureLimitForBackfill(features.channels, 2),
+      aiTokensIncluded: 0,
+      campaignsLimit,
+      // ponytail: wallet bills email — don't gift plan emails as free quota
+      emailsLimit: 0,
+    },
+    update: {
+      contactsLimit: parseFeatureLimitForBackfill(features.contacts, 1000),
+      teamMembersLimit: parseFeatureLimitForBackfill(features.teamMembers, 3),
+      aiAgentsLimit: parseFeatureLimitForBackfill(features.aiAgents, 1),
+      channelsLimit: parseFeatureLimitForBackfill(features.channels, 2),
+      aiTokensIncluded: 0,
+      campaignsLimit,
+      emailsLimit: 0,
+    },
+  });
+}
+
 export function planDisplayName(slug: string) {
   if (!slug) return 'Starter';
+  if (isCustomPlanSlug(slug)) {
+    return slug.replace(/^custom-/, '').replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
   return slug.charAt(0).toUpperCase() + slug.slice(1);
 }
 
@@ -273,6 +335,7 @@ export function serializeSubscriptionPlan(plan: Awaited<ReturnType<typeof listSu
     sortOrder: plan.sortOrder,
     trialDays: plan.trialDays,
     isActive: plan.isActive,
+    isCustom: isCustomPlanSlug(plan.slug),
     createdAt: plan.createdAt.toISOString(),
     updatedAt: plan.updatedAt.toISOString(),
   };

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../index.js';
 import { config } from '../config.js';
 import {
@@ -8,6 +9,11 @@ import {
 import { onboardingPayloadFromUser } from './onboarding.js';
 import { activateWorkspaceSubscription } from './trial.js';
 import { signSessionToken } from './userSecurity.js';
+import {
+  getSubscriptionPlanBySlug,
+  syncWorkspaceLimitsFromPlanFeatures,
+  type PlanFeatures,
+} from './subscriptionPlans.js';
 
 export async function suspendWorkspace(workspaceId: string) {
   const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
@@ -58,6 +64,42 @@ export async function updateWorkspaceLimits(
     create: { workspaceId, ...data },
     update: data,
   });
+}
+
+/** Attach a catalog (or custom) plan to a workspace and sync usage limits. */
+export async function assignPlanToWorkspace(workspaceId: string, planSlug: string) {
+  const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
+  if (!workspace) throw new Error('Workspace not found');
+
+  const plan = await getSubscriptionPlanBySlug(planSlug);
+  if (!plan || !plan.isActive) throw new Error('Plan not found or inactive');
+
+  await prisma.workspace.update({
+    where: { id: workspaceId },
+    data: {
+      planId: plan.id,
+      // Clear builder quote so org shows as this plan, not Custom quote
+      customPlanSelection: Prisma.DbNull,
+    },
+  });
+
+  await syncWorkspaceLimitsFromPlanFeatures(workspaceId, plan.features as PlanFeatures);
+
+  if (workspace.subscriptionStatus === 'trial' || workspace.subscriptionStatus === 'cancelled') {
+    await activateWorkspaceSubscription(workspaceId);
+  }
+
+  return {
+    workspaceId,
+    planSlug: plan.slug,
+    planName: plan.name,
+    subscriptionStatus: (
+      await prisma.workspace.findUniqueOrThrow({
+        where: { id: workspaceId },
+        select: { subscriptionStatus: true },
+      })
+    ).subscriptionStatus,
+  };
 }
 
 export async function setWorkspaceAgentEnabled(

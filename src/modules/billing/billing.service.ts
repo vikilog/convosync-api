@@ -99,16 +99,18 @@ export class BillingService {
       orderBy: { sortOrder: 'asc' },
     });
 
-    return plans.map((plan) => ({
-      id: plan.id,
-      slug: plan.slug,
-      name: plan.name,
-      priceMonthlyPaise: plan.priceMonthlyPaise,
-      priceAnnualPaise: plan.priceAnnualPaise,
-      razorpayPlanIdMonthly: plan.razorpayPlanIdMonthly,
-      razorpayPlanIdAnnual: plan.razorpayPlanIdAnnual,
-      features: plan.features,
-    }));
+    return plans
+      .filter((plan) => !plan.slug.startsWith('custom-'))
+      .map((plan) => ({
+        id: plan.id,
+        slug: plan.slug,
+        name: plan.name,
+        priceMonthlyPaise: plan.priceMonthlyPaise,
+        priceAnnualPaise: plan.priceAnnualPaise,
+        razorpayPlanIdMonthly: plan.razorpayPlanIdMonthly,
+        razorpayPlanIdAnnual: plan.razorpayPlanIdAnnual,
+        features: plan.features,
+      }));
   }
 
   async getWorkspaceBilling(workspaceId: string) {

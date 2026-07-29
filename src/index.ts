@@ -42,6 +42,7 @@ import platformOrganizationRoutes from './routes/platform/organizations.js';
 import platformPlanRoutes from './routes/platform/plans.js';
 import platformSettingsRoutes from './routes/platform/settings.js';
 import platformDemoRequestRoutes from './routes/platform/demo-requests.js';
+import platformInfrastructureRoutes from './routes/platform/infrastructure.js';
 import demoRequestRoutes from './routes/demo-requests.js';
 import aiKnowledgeRoutes from './modules/ai-knowledge/routes/ai-knowledge.routes.js';
 import aiChatRoutes from './modules/ai-chat/routes/ai-chat.routes.js';
@@ -138,6 +139,7 @@ async function start() {
   await fastify.register(platformPlanRoutes, { prefix: '/api/platform/plans' });
   await fastify.register(platformSettingsRoutes, { prefix: '/api/platform/settings' });
   await fastify.register(platformDemoRequestRoutes, { prefix: '/api/platform/demo-requests' });
+  await fastify.register(platformInfrastructureRoutes, { prefix: '/api/platform/infrastructure' });
   await fastify.register(demoRequestRoutes, { prefix: '/api/demo-requests' });
   await fastify.register(aiKnowledgeRoutes, { prefix: '/api/ai-knowledge' });
   await fastify.register(aiChatRoutes, { prefix: '/api/ai-chat' });

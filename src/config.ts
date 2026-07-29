@@ -136,7 +136,7 @@ export const config = {
     /** Razorpay Subscriptions + UPI Autopay / card mandate. Auto-on when plan IDs are configured. */
     recurringEnabled:
       process.env.RAZORPAY_RECURRING_ENABLED === 'true' ||
-      ['STARTER', 'GROWTH', 'PRO'].some((slug) => {
+      ['STARTER'].some((slug) => {
         const monthly = process.env[`RAZORPAY_PLAN_${slug}_MONTHLY`]?.trim();
         const annual = process.env[`RAZORPAY_PLAN_${slug}_ANNUAL`]?.trim();
         return (

@@ -1,15 +1,91 @@
 import { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { authenticatePlatformAdmin } from '../../middleware/platformAuth.js';
 import {
+  createCustomSubscriptionPlan,
   listSubscriptionPlans,
   serializeSubscriptionPlan,
+  updateSubscriptionPlan,
+  type PlanFeatures,
 } from '../../services/subscriptionPlans.js';
+
+const featuresSchema = z.object({
+  contacts: z.string().min(1),
+  teamMembers: z.string().min(1),
+  aiAgents: z.string().min(1),
+  channels: z.string().min(1),
+  messagesPerMonth: z.number().int().min(0).optional(),
+  storageGb: z.number().int().min(0).optional(),
+  apiAccess: z.boolean().optional(),
+  customBranding: z.boolean().optional(),
+  prioritySupport: z.boolean().optional(),
+  channelsUnlimited: z.boolean().optional(),
+  aiReplies: z.union([z.number().int().min(0), z.literal('unlimited'), z.literal('custom')]).optional(),
+  campaigns: z.union([z.number().int().min(0), z.literal('unlimited'), z.literal('custom')]).optional(),
+  integrations: z.union([z.number().int().min(0), z.literal('unlimited'), z.literal('custom')]).optional(),
+  emailsPerMonth: z.union([z.number().int().min(0), z.literal('unlimited'), z.literal('custom')]).optional(),
+});
+
+const planWriteSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  planCode: z.string().trim().min(2).max(32).optional(),
+  priceMonthly: z.number().int().min(0).nullable(),
+  priceAnnual: z.number().int().min(0).nullable(),
+  features: featuresSchema,
+  popular: z.boolean().optional(),
+  labelColor: z.string().optional(),
+  borderColor: z.string().optional(),
+  editButtonStyle: z.enum(['gray', 'purple', 'blue', 'dark']).optional(),
+});
 
 export default async function platformPlanRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticatePlatformAdmin);
 
   fastify.get('/', async () => {
-    const plans = await listSubscriptionPlans();
+    const plans = await listSubscriptionPlans({ includeCustom: true });
     return { plans: plans.map(serializeSubscriptionPlan) };
+  });
+
+  fastify.post('/', async (request, reply) => {
+    const body = planWriteSchema.parse(request.body);
+    try {
+      const plan = await createCustomSubscriptionPlan({
+        name: body.name,
+        planCode: body.planCode,
+        priceMonthly: body.priceMonthly,
+        priceAnnual: body.priceAnnual,
+        features: body.features as PlanFeatures,
+        popular: body.popular,
+        labelColor: body.labelColor,
+        borderColor: body.borderColor,
+        editButtonStyle: body.editButtonStyle,
+      });
+      return reply.code(201).send({ plan: serializeSubscriptionPlan(plan) });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to create plan';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  fastify.patch('/:slug', async (request, reply) => {
+    const { slug } = request.params as { slug: string };
+    const body = planWriteSchema.parse(request.body);
+    try {
+      const plan = await updateSubscriptionPlan(slug, {
+        name: body.name,
+        planCode: body.planCode,
+        priceMonthly: body.priceMonthly,
+        priceAnnual: body.priceAnnual,
+        features: body.features as PlanFeatures,
+        popular: body.popular,
+        labelColor: body.labelColor,
+        borderColor: body.borderColor,
+        editButtonStyle: body.editButtonStyle,
+      });
+      return { plan: serializeSubscriptionPlan(plan) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update plan';
+      return reply.code(400).send({ error: message });
+    }
   });
 }
