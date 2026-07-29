@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "prisma generate --schema=src/prisma/schema.prisma && tsx watch --import ./src/instrumentation.ts src/index.ts",
     "build": "tsc",
+    "build:prod": "NODE_OPTIONS='--max-old-space-size=4096' prisma generate --schema=src/prisma/schema.prisma && NODE_OPTIONS='--max-old-space-size=4096' tsc",
     "start": "node --import ./dist/instrumentation.js dist/index.js",
     "db:push": "prisma db push --schema=src/prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --name init --schema=src/prisma/schema.prisma",
