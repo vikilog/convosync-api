@@ -1,4 +1,4 @@
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { assertFunnelInWorkspace } from './leadFunnel.service.js';
 import { automationAllowed } from './leadFunnel.gate.js';
 import {
@@ -9,11 +9,21 @@ import {
   type SocialListeningSettingsPublic,
 } from './socialListeningSettings.service.js';
 
-export type PostSettingsPublic = SocialListeningSettingsPublic & { postId: string };
+export type PostSettingsPublic = SocialListeningSettingsPublic & {
+  postId: string;
+  commentAutomationJourneyId: string | null;
+  commentAutomationJourneyName: string | null;
+};
 
 export type PostAutomationInfo = {
   autoResponseEnabled: boolean;
   leadFunnelId: string | null;
+  commentAutomationJourneyId: string | null;
+  commentAutomationJourneyName: string | null;
+};
+
+export type PostSettingsPatch = SettingsPatch & {
+  commentAutomationJourneyId?: string | null;
 };
 
 const SAFE_DEFAULTS = {
@@ -46,6 +56,17 @@ export async function isPostAutomationEnabled(
   return row?.autoResponseEnabled ?? false;
 }
 
+export async function getPostCommentAutomationJourneyId(
+  workspaceId: string,
+  postId: string
+): Promise<string | null> {
+  const row = await prisma.socialListeningPostSetting.findUnique({
+    where: { workspaceId_postId: { workspaceId, postId } },
+    select: { commentAutomationJourneyId: true },
+  });
+  return row?.commentAutomationJourneyId ?? null;
+}
+
 export async function getPostAutomationMap(
   workspaceId: string,
   postIds: string[]
@@ -53,19 +74,32 @@ export async function getPostAutomationMap(
   const ids = [...new Set(postIds.filter(Boolean))].slice(0, 200);
   const map: Record<string, PostAutomationInfo> = {};
   for (const id of ids) {
-    map[id] = { autoResponseEnabled: false, leadFunnelId: null };
+    map[id] = {
+      autoResponseEnabled: false,
+      leadFunnelId: null,
+      commentAutomationJourneyId: null,
+      commentAutomationJourneyName: null,
+    };
   }
 
   if (ids.length === 0) return map;
 
   const rows = await prisma.socialListeningPostSetting.findMany({
     where: { workspaceId, postId: { in: ids } },
-    select: { postId: true, autoResponseEnabled: true, leadFunnelId: true },
+    select: {
+      postId: true,
+      autoResponseEnabled: true,
+      leadFunnelId: true,
+      commentAutomationJourneyId: true,
+      commentAutomationJourney: { select: { name: true } },
+    },
   });
   for (const row of rows) {
     map[row.postId] = {
       autoResponseEnabled: row.autoResponseEnabled,
       leadFunnelId: row.leadFunnelId,
+      commentAutomationJourneyId: row.commentAutomationJourneyId,
+      commentAutomationJourneyName: row.commentAutomationJourney?.name ?? null,
     };
   }
   return map;
@@ -91,6 +125,20 @@ async function workspaceTz(workspaceId: string): Promise<string> {
   return workspace?.timezone || 'Asia/Kolkata';
 }
 
+async function assertPublishedIgJourney(
+  workspaceId: string,
+  journeyId: string
+): Promise<{ id: string; name: string }> {
+  const journey = await prisma.instagramJourney.findFirst({
+    where: { id: journeyId, workspaceId, status: 'published' },
+    select: { id: true, name: true },
+  });
+  if (!journey) {
+    throw new Error('Published Instagram automation not found');
+  }
+  return journey;
+}
+
 export async function getEffectivePostSettings(
   workspaceId: string,
   postId: string
@@ -99,6 +147,7 @@ export async function getEffectivePostSettings(
   const autoDmsSentToday = await countAutoDmsSentTodayForPost(workspaceId, postId, tz);
   const row = await prisma.socialListeningPostSetting.findUnique({
     where: { workspaceId_postId: { workspaceId, postId } },
+    include: { commentAutomationJourney: { select: { name: true } } },
   });
 
   if (!row) {
@@ -113,23 +162,28 @@ export async function getEffectivePostSettings(
         autoDmsSentToday
       ),
       postId,
+      commentAutomationJourneyId: null,
+      commentAutomationJourneyName: null,
     };
   }
 
   return {
     ...toPublicSettings(row, autoDmsSentToday),
     postId: row.postId,
+    commentAutomationJourneyId: row.commentAutomationJourneyId,
+    commentAutomationJourneyName: row.commentAutomationJourney?.name ?? null,
   };
 }
 
 export async function updatePostSettings(
   workspaceId: string,
   postId: string,
-  patch: SettingsPatch
+  patch: PostSettingsPatch
 ): Promise<PostSettingsPublic> {
   if (!postId.trim()) throw new Error('postId required');
 
-  const validated = validateSettingsPatch(patch);
+  const { commentAutomationJourneyId: journeyPatch, ...settingsOnly } = patch;
+  const validated = validateSettingsPatch(settingsOnly);
   if (!validated.ok) throw new Error(validated.error);
   const data = validated.data;
 
@@ -145,6 +199,17 @@ export async function updatePostSettings(
     data.autoResponseEnabled !== undefined
       ? data.autoResponseEnabled
       : (existing?.autoResponseEnabled ?? false);
+
+  let nextJourneyId =
+    journeyPatch !== undefined
+      ? journeyPatch
+      : (existing?.commentAutomationJourneyId ?? null);
+  if (journeyPatch !== undefined && journeyPatch) {
+    await assertPublishedIgJourney(workspaceId, journeyPatch);
+    nextJourneyId = journeyPatch;
+  } else if (journeyPatch === null || journeyPatch === '') {
+    nextJourneyId = null;
+  }
 
   if (data.leadFunnelId) {
     if (!(await assertFunnelInWorkspace(workspaceId, data.leadFunnelId))) {
@@ -163,6 +228,7 @@ export async function updatePostSettings(
     postId,
     autoResponseEnabled: nextAuto,
     leadFunnelId: nextFunnelId,
+    commentAutomationJourneyId: nextJourneyId,
     interestedMode: data.interestedMode ?? existing?.interestedMode ?? SAFE_DEFAULTS.interestedMode,
     questionMode: data.questionMode ?? existing?.questionMode ?? SAFE_DEFAULTS.questionMode,
     complaintMode: data.complaintMode ?? existing?.complaintMode ?? SAFE_DEFAULTS.complaintMode,
@@ -205,6 +271,9 @@ export async function updatePostSettings(
         ? { autoResponseEnabled: data.autoResponseEnabled }
         : {}),
       ...(data.leadFunnelId !== undefined ? { leadFunnelId: data.leadFunnelId } : {}),
+      ...(journeyPatch !== undefined
+        ? { commentAutomationJourneyId: nextJourneyId }
+        : {}),
       ...(data.interestedMode !== undefined ? { interestedMode: data.interestedMode } : {}),
       ...(data.questionMode !== undefined ? { questionMode: data.questionMode } : {}),
       ...(data.complaintMode !== undefined ? { complaintMode: data.complaintMode } : {}),
@@ -225,6 +294,7 @@ export async function updatePostSettings(
         ? { workingHoursEnd: data.workingHoursEnd || null }
         : {}),
     },
+    include: { commentAutomationJourney: { select: { name: true } } },
   });
 
   console.info('[social.post_setting]', {
@@ -232,9 +302,15 @@ export async function updatePostSettings(
     postId,
     autoResponseEnabled: row.autoResponseEnabled,
     leadFunnelId: row.leadFunnelId,
+    commentAutomationJourneyId: row.commentAutomationJourneyId,
   });
 
   const tz = await workspaceTz(workspaceId);
   const autoDmsSentToday = await countAutoDmsSentTodayForPost(workspaceId, postId, tz);
-  return { ...toPublicSettings(row, autoDmsSentToday), postId: row.postId };
+  return {
+    ...toPublicSettings(row, autoDmsSentToday),
+    postId: row.postId,
+    commentAutomationJourneyId: row.commentAutomationJourneyId,
+    commentAutomationJourneyName: row.commentAutomationJourney?.name ?? null,
+  };
 }

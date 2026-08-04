@@ -12,8 +12,10 @@ import {
   mergeLeadJourneyIntoCustomFields,
   parseLeadJourneyFromCustomFields,
 } from './leadJourney.js';
+import { resolveContactIdentityFields } from './leadIdentity.js';
 
 export { phoneForLeadContact } from './leadContactPhone.js';
+export { resolveContactIdentityFields } from './leadIdentity.js';
 
 export type LeadActivityItem = {
   id: string;
@@ -233,6 +235,119 @@ export async function listLeads(
     take: 500,
   });
   return rows.map(toPublicLead);
+}
+
+/**
+ * Create or re-link a funnel lead for an inbox contact (journey "Add to Funnel").
+ * Idempotent on (contactId, funnelId).
+ */
+export async function upsertLeadForContact(input: {
+  workspaceId: string;
+  contactId: string;
+  funnelId: string;
+  stageId?: string;
+  source?: 'whatsapp' | 'instagram' | 'manual';
+}): Promise<{ leadId: string; created: boolean }> {
+  if (!(await assertFunnelInWorkspace(input.workspaceId, input.funnelId))) {
+    throw new Error('Funnel not found — create a lead funnel first');
+  }
+
+  const contact = await prisma.contact.findFirst({
+    where: { id: input.contactId, workspaceId: input.workspaceId },
+    select: { id: true, name: true, email: true, phone: true, customFields: true },
+  });
+  if (!contact) throw new Error('Contact not found');
+
+  let stage =
+    input.stageId && (await assertStageInFunnel(input.funnelId, input.stageId));
+  if (!stage) {
+    stage = await getDefaultStageForFunnel(input.funnelId);
+  }
+
+  const identity = resolveContactIdentityFields(contact);
+  const source = input.source ?? 'manual';
+
+  const existing = await prisma.lead.findFirst({
+    where: {
+      workspaceId: input.workspaceId,
+      contactId: input.contactId,
+      funnelId: input.funnelId,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (existing) {
+    const updated = await prisma.lead.update({
+      where: { id: existing.id },
+      data: {
+        stageId: stage.id,
+        stage: stage.name,
+        ...(identity.name ? { name: identity.name } : {}),
+        ...(identity.email ? { email: identity.email } : {}),
+        ...(identity.phone ? { phone: identity.phone } : {}),
+        source: existing.source || source,
+      },
+    });
+    return { leadId: updated.id, created: false };
+  }
+
+  const now = new Date().toISOString();
+  const activity: LeadActivityItem[] = [
+    {
+      id: `act-${Date.now()}-created`,
+      type: 'created',
+      text: 'Lead created from automation (Add to Funnel)',
+      at: now,
+    },
+  ];
+
+  const lead = await prisma.lead.create({
+    data: {
+      workspaceId: input.workspaceId,
+      funnelId: input.funnelId,
+      stageId: stage.id,
+      stage: stage.name,
+      contactId: contact.id,
+      name: identity.name ?? contact.name ?? null,
+      email: identity.email ?? null,
+      phone: identity.phone ?? null,
+      source,
+      requirement: '',
+      notes: '',
+      activity: activity as unknown as Prisma.InputJsonValue,
+    },
+  });
+
+  return { leadId: lead.id, created: true };
+}
+
+/** Copy contact name/email/phone onto every lead linked to this contact. */
+export async function syncLinkedLeadsFromContact(contactId: string): Promise<number> {
+  const contact = await prisma.contact.findUnique({
+    where: { id: contactId },
+    select: {
+      id: true,
+      workspaceId: true,
+      name: true,
+      email: true,
+      phone: true,
+      customFields: true,
+    },
+  });
+  if (!contact) return 0;
+
+  const identity = resolveContactIdentityFields(contact);
+  if (!identity.name && !identity.email && !identity.phone) return 0;
+
+  const result = await prisma.lead.updateMany({
+    where: { contactId: contact.id, workspaceId: contact.workspaceId },
+    data: {
+      ...(identity.name ? { name: identity.name } : {}),
+      ...(identity.email ? { email: identity.email } : {}),
+      ...(identity.phone ? { phone: identity.phone } : {}),
+    },
+  });
+  return result.count;
 }
 
 export async function updateLead(

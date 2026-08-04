@@ -13,6 +13,7 @@ import {
   selectWorkspaceMetaAdAccount,
   setCampaignStatus,
 } from '../services/metaAdsConnect.js';
+import { assertPlanFeature, PlanGateError } from '../services/planUsageGuards.js';
 
 export default async function metaAdsRoutes(fastify: FastifyInstance) {
   const auth = companyAuth;
@@ -206,6 +207,7 @@ export default async function metaAdsRoutes(fastify: FastifyInstance) {
     }
 
     try {
+      await assertPlanFeature(workspaceId, 'ctwaAds');
       const result = await createCTWACampaign(workspaceId, {
         campaignName: body.campaignName,
         dailyBudget: body.dailyBudget,
@@ -221,6 +223,9 @@ export default async function metaAdsRoutes(fastify: FastifyInstance) {
       });
       return reply.send({ success: true, ...result });
     } catch (err: unknown) {
+      if (err instanceof PlanGateError) {
+        return reply.code(403).send({ error: err.message, upgradePath: err.upgradePath });
+      }
       const message =
         axios.isAxiosError(err) && err.response?.data
           ? JSON.stringify(err.response.data)

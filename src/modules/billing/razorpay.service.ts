@@ -42,6 +42,30 @@ export class RazorpayService {
     );
   }
 
+  /** Create a Razorpay Subscriptions plan (monthly or yearly). Returns plan_xxx id. */
+  async createPlan(params: {
+    name: string;
+    amountPaise: number;
+    period: 'monthly' | 'yearly';
+    description?: string;
+    notes?: Record<string, string>;
+  }) {
+    const created = await this.call(() =>
+      this.client.plans.create({
+        period: params.period,
+        interval: 1,
+        item: {
+          name: params.name,
+          amount: params.amountPaise,
+          currency: 'INR',
+          ...(params.description ? { description: params.description } : {}),
+        },
+        notes: params.notes ?? {},
+      })
+    );
+    return created as { id: string };
+  }
+
   async fetchOrder(orderId: string) {
     return this.call(() => this.client.orders.fetch(orderId));
   }

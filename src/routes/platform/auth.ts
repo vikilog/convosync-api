@@ -4,6 +4,11 @@ import { z } from 'zod';
 import { prisma } from '../../index.js';
 import { authenticatePlatformAdmin } from '../../middleware/platformAuth.js';
 import { getJwtUser } from '../../middleware/auth.js';
+import {
+  getRequestIp,
+  PLATFORM_AUDIT_ACTIONS,
+  recordAuditEvent,
+} from '../../services/platformAudit.js';
 
 export default async function platformAuthRoutes(fastify: FastifyInstance) {
   fastify.post('/login', async (request, reply) => {
@@ -14,11 +19,23 @@ export default async function platformAuthRoutes(fastify: FastifyInstance) {
       })
       .parse(request.body);
 
+    const ip = getRequestIp(request);
     const admin = await prisma.platformAdmin.findUnique({
       where: { email: body.email.toLowerCase() },
     });
 
     if (!admin || !(await bcrypt.compare(body.password, admin.password))) {
+      recordAuditEvent({
+        action: PLATFORM_AUDIT_ACTIONS.ADMIN_LOGIN_FAILED,
+        actor: { email: body.email.toLowerCase(), role: '—' },
+        category: 'security',
+        severity: 'danger',
+        ipAddress: ip,
+        metadata: {
+          details: 'Invalid email or password',
+          targetLabel: ip ?? body.email.toLowerCase(),
+        },
+      });
       return reply.code(401).send({ error: 'Invalid email or password' });
     }
 
@@ -30,6 +47,15 @@ export default async function platformAuthRoutes(fastify: FastifyInstance) {
       },
       { expiresIn: '30d' }
     );
+
+    recordAuditEvent({
+      action: PLATFORM_AUDIT_ACTIONS.ADMIN_LOGIN,
+      actor: { id: admin.id, email: admin.email, role: admin.role },
+      category: 'auth',
+      severity: 'info',
+      ipAddress: ip,
+      metadata: { details: 'Successful platform admin login' },
+    });
 
     return {
       token,

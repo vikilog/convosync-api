@@ -27,6 +27,17 @@ import {
   signSessionToken,
 } from '../services/userSecurity.js';
 
+async function replyServiceError(reply: { code: (n: number) => { send: (b: unknown) => unknown } }, err: unknown) {
+  const message = err instanceof Error ? err.message : 'Request failed';
+  const status =
+    /too many|incorrect|expired|not requested|not configured|valid mobile|add a mobile|changed since|nothing to update/i.test(
+      message
+    )
+      ? 400
+      : 500;
+  return reply.code(status).send({ error: message });
+}
+
 export default async function authRoutes(fastify: FastifyInstance) {
 
   fastify.get('/test', async (request, reply) => {
@@ -290,19 +301,28 @@ export default async function authRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.patch('/profile', { onRequest: [authenticate, requireWorkspaceAccess] }, async (request) => {
+  fastify.patch('/profile', { onRequest: [authenticate, requireWorkspaceAccess] }, async (request, reply) => {
     const { userId, workspaceId } = getJwtUser(request);
-    const body = z.object({ name: z.string().min(2).max(120) }).parse(request.body);
-    const user = await updateUserProfile(userId!, { name: body.name });
-    const access = await resolveMembershipAccess(userId!, workspaceId!);
-    return {
-      user: {
-        ...user,
-        role: access.role,
-        permissions: access.permissions,
-        inboxScope: access.inboxScope,
-      },
-    };
+    try {
+      const body = z
+        .object({
+          name: z.string().min(2).max(120).optional(),
+          phone: z.string().max(32).nullable().optional(),
+        })
+        .parse(request.body);
+      const user = await updateUserProfile(userId!, body);
+      const access = await resolveMembershipAccess(userId!, workspaceId!);
+      return {
+        user: {
+          ...user,
+          role: access.role,
+          permissions: access.permissions,
+          inboxScope: access.inboxScope,
+        },
+      };
+    } catch (err) {
+      return replyServiceError(reply, err);
+    }
   });
 
   fastify.patch('/avatar', { onRequest: [authenticate, requireWorkspaceAccess] }, async (request) => {

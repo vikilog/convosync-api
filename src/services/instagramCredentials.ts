@@ -1,4 +1,4 @@
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { decryptSecret } from '../lib/field-encryption.js';
 
 export type WorkspaceInstagramCredentials = {

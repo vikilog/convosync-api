@@ -12,6 +12,9 @@ export function sanitizeUser(user: {
   role: string;
   workspaceId: string;
   createdAt: Date;
+  phone?: string | null;
+  emailVerifiedAt?: Date | null;
+  phoneVerifiedAt?: Date | null;
 }) {
   return {
     id: user.id,
@@ -21,6 +24,11 @@ export function sanitizeUser(user: {
     role: user.role,
     workspaceId: user.workspaceId,
     createdAt: user.createdAt,
+    phone: user.phone ?? null,
+    emailVerifiedAt: user.emailVerifiedAt ?? null,
+    phoneVerifiedAt: user.phoneVerifiedAt ?? null,
+    emailVerified: Boolean(user.emailVerifiedAt),
+    phoneVerified: Boolean(user.phoneVerifiedAt),
   };
 }
 
@@ -57,15 +65,44 @@ export function validateAvatarValue(avatar: string | null | undefined) {
   return trimmed;
 }
 
-export async function updateUserProfile(userId: string, input: { name?: string }) {
-  const name = input.name?.trim();
-  if (!name || name.length < 2) {
-    throw new Error('Name must be at least 2 characters');
+export async function updateUserProfile(
+  userId: string,
+  input: { name?: string; phone?: string | null }
+) {
+  const data: { name?: string; phone?: string | null; phoneVerifiedAt?: null } = {};
+
+  if (input.name !== undefined) {
+    const name = input.name.trim();
+    if (!name || name.length < 2) {
+      throw new Error('Name must be at least 2 characters');
+    }
+    data.name = name;
+  }
+
+  if (input.phone !== undefined) {
+    const raw = input.phone?.trim() ?? '';
+    if (!raw) {
+      data.phone = null;
+      data.phoneVerifiedAt = null;
+    } else {
+      const { normalizeVerificationPhone } = await import('./contactVerification.service.js');
+      const next = normalizeVerificationPhone(raw);
+      const current = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { phone: true },
+      });
+      data.phone = next;
+      if (current?.phone !== next) data.phoneVerifiedAt = null;
+    }
+  }
+
+  if (Object.keys(data).length === 0) {
+    throw new Error('Nothing to update');
   }
 
   const user = await prisma.user.update({
     where: { id: userId },
-    data: { name },
+    data,
   });
 
   return sanitizeUser(user);

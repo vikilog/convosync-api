@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { prisma } from '../../../index.js';
-import { companyAuth } from '../../../middleware/workspaceScope.js';
+import { planFeatureAuth } from '../../../middleware/planFeatureAuth.js';
 import { DevelopersController, IncomingWebhookController } from '../controllers/developers.controller.js';
 import { initDevelopersModule } from '../container.js';
 
@@ -8,7 +8,7 @@ export default async function developersRoutes(fastify: FastifyInstance) {
   const container = initDevelopersModule(prisma);
   const controller = new DevelopersController(container);
   const incoming = new IncomingWebhookController(container);
-  const auth = companyAuth;
+  const auth = planFeatureAuth('developers');
 
   // Public incoming webhook endpoint (secret via header)
   fastify.post('/incoming/:slug', incoming.receive);

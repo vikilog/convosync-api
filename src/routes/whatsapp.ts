@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { decryptSecret } from '../lib/field-encryption.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
+import { planGatePayload } from '../services/planUsageGuards.js';
 import { connectWorkspaceWhatsApp } from '../services/whatsappConnect.js';
 import { listWhatsAppAccounts } from '../services/whatsappAccounts.js';
 import { getWorkspaceWhatsAppCredentials } from '../services/whatsappCredentials.js';
@@ -146,6 +147,9 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
         ...result,
       });
     } catch (err: any) {
+      const gate = planGatePayload(err);
+      if (gate) return reply.code(403).send(gate);
+
       fastify.log.error(err?.response?.data || err.message, 'WhatsApp connect error');
       return reply.code(500).send({
         error: 'WhatsApp connection failed',

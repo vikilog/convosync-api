@@ -16,9 +16,8 @@ import {
 } from '../services/instagramConnect.js';
 import { subscribeInstagramPageWebhooks } from '../services/instagramWebhookSubscribe.js';
 import { syncInstagramConversationsForWorkspace, DEFAULT_MAX_CONVERSATION_PAGES } from '../services/instagramSync.js';
-import {
-  disconnectInstagramAccounts,
-} from '../services/channelDisconnectCleanup.service.js';
+import { planGatePayload } from '../services/planUsageGuards.js';
+import { disconnectInstagramAccounts } from '../services/channelDisconnectCleanup.service.js';
 import {
   getListeningProfile,
   listListeningMedia,
@@ -241,6 +240,9 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
         messengerEnabled: false,
       });
     } catch (err: unknown) {
+      const gate = planGatePayload(err);
+      if (gate) return reply.code(403).send(gate);
+
       const graphMessage =
         (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
           ?.message || (err as Error)?.message;

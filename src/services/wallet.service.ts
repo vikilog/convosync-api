@@ -8,6 +8,8 @@ import {
   type WalletDebitCategory,
   walletDebitCategoryLabel,
 } from './wallet.constants.js';
+import { ccToDebitPaise } from './usageCost.constants.js';
+import { parsePlanWalletCreditsCc, type PlanFeatures } from './subscriptionPlans.js';
 // import { scheduleWalletAutoRecharge } from './walletAutoRecharge.service.js';
 
 type TxClient = Prisma.TransactionClient;
@@ -36,6 +38,50 @@ export async function ensureWallet(workspaceId: string, tx?: TxClient) {
       lowBalanceThresholdPaise: DEFAULT_LOW_BALANCE_THRESHOLD_PAISE,
     },
     update: {},
+  });
+}
+
+export type PlanWalletCreditSource =
+  | 'plan_purchase'
+  | 'subscription_payment'
+  | 'subscription_renewal';
+
+/** Monthly CC from plan features → paise for the billing period (×12 on annual). */
+export function planIncludedCreditPaise(
+  features: PlanFeatures,
+  billingCycle: 'monthly' | 'annual' = 'monthly'
+): number {
+  const monthlyCc = parsePlanWalletCreditsCc(features.walletCredits);
+  if (monthlyCc == null || monthlyCc <= 0) return 0;
+  const multiplier = billingCycle === 'annual' ? 12 : 1;
+  return ccToDebitPaise(monthlyCc * multiplier);
+}
+
+/** Idempotent plan-included CC credit (payment id or invoice id as externalId). */
+export async function creditPlanWalletCredits(params: {
+  workspaceId: string;
+  plan: { name: string; features: PlanFeatures };
+  billingCycle?: 'monthly' | 'annual';
+  source: PlanWalletCreditSource;
+  externalId: string;
+  tx?: TxClient;
+}) {
+  const billingCycle = params.billingCycle ?? 'monthly';
+  const amountPaise = planIncludedCreditPaise(params.plan.features, billingCycle);
+  if (amountPaise <= 0) return null;
+
+  const monthlyCc = parsePlanWalletCreditsCc(params.plan.features.walletCredits) ?? 0;
+  const ccTotal = billingCycle === 'annual' ? monthlyCc * 12 : monthlyCc;
+
+  return creditWallet({
+    workspaceId: params.workspaceId,
+    amountPaise,
+    category: 'adjustment',
+    description: `Plan included ConvoCoins — ${params.plan.name} (${ccTotal} CC)`,
+    referenceType: params.source,
+    referenceId: params.externalId,
+    idempotencyKey: `plan-wallet:${params.externalId}`,
+    tx: params.tx,
   });
 }
 

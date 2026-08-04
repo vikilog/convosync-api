@@ -1,6 +1,9 @@
-import { prisma } from '../../../index.js';
+import { prisma } from '../../../lib/prisma.js';
 import { applyConversationAssignee } from '../../../services/conversation-assignee.service.js';
 import { onConversationResolved } from '../../../services/conversationThread.service.js';
+import { syncLinkedLeadsFromContact } from '../../../services/lead.service.js';
+
+const CONTACT_IDENTITY_KEYS = new Set(['name', 'email', 'phone']);
 
 export async function findActiveConversationForContact(workspaceId: string, contactId: string) {
   return prisma.conversation.findFirst({
@@ -89,12 +92,32 @@ export async function mergeContactCustomFields(
   });
   const existing = readCustomFieldsRecord(contact?.customFields);
 
-  return prisma.contact.update({
+  const columnPatch: { name?: string; email?: string; phone?: string } = {};
+  const customPatch: Record<string, string> = {};
+  for (const [rawKey, value] of Object.entries(fields)) {
+    const key = rawKey.trim();
+    if (!key) continue;
+    const lower = key.toLowerCase();
+    if (CONTACT_IDENTITY_KEYS.has(lower)) {
+      columnPatch[lower as 'name' | 'email' | 'phone'] = value;
+      customPatch[lower] = value;
+    } else {
+      customPatch[key] = value;
+    }
+  }
+
+  const updated = await prisma.contact.update({
     where: { id: contactId },
     data: {
-      customFields: { ...existing, ...fields } as object,
+      ...columnPatch,
+      customFields: { ...existing, ...customPatch } as object,
     },
   });
+
+  if (Object.keys(columnPatch).length > 0) {
+    await syncLinkedLeadsFromContact(contactId);
+  }
+  return updated;
 }
 
 export async function updateContactField(
@@ -108,8 +131,13 @@ export async function updateContactField(
     return mergeContactCustomFields(contactId, { [key]: value });
   }
 
-  return prisma.contact.update({
+  const updated = await prisma.contact.update({
     where: { id: contactId },
     data: { [field]: value },
   });
+
+  if (field === 'name' || field === 'email' || field === 'phone') {
+    await syncLinkedLeadsFromContact(contactId);
+  }
+  return updated;
 }

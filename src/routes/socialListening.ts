@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
-import { companyAuth } from '../middleware/workspaceScope.js';
+import { planFeatureAuth } from '../middleware/planFeatureAuth.js';
 import { replyToListeningComment } from '../services/instagramListening.service.js';
 import {
   classifySocialCommentById,
@@ -34,7 +34,7 @@ import {
 } from '../services/socialListeningPostSetting.service.js';
 
 export default async function socialListeningRoutes(fastify: FastifyInstance) {
-  const auth = companyAuth;
+  const auth = planFeatureAuth('socialListening');
 
   fastify.get('/settings', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
@@ -189,7 +189,17 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
       return reply.code(400).send({ error: 'postId required' });
     }
     const body = (request.body || {}) as Record<string, unknown>;
-    const validated = validateSettingsPatch(body);
+    const {
+      commentAutomationJourneyId: journeyRaw,
+      ...settingsBody
+    } = body;
+    const commentAutomationJourneyId =
+      journeyRaw === null || journeyRaw === ''
+        ? null
+        : typeof journeyRaw === 'string'
+          ? journeyRaw
+          : undefined;
+    const validated = validateSettingsPatch(settingsBody);
     if (!validated.ok) {
       return reply.code(400).send({ error: validated.error });
     }
@@ -206,7 +216,10 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
           return reply.code(400).send({ error: 'dmAgentSkillId not found in this workspace' });
         }
       }
-      const settings = await updatePostSettings(workspaceId, postId, validated.data);
+      const settings = await updatePostSettings(workspaceId, postId, {
+        ...validated.data,
+        ...(commentAutomationJourneyId !== undefined ? { commentAutomationJourneyId } : {}),
+      });
       return { success: true, settings };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Update failed';

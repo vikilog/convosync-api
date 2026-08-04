@@ -88,11 +88,14 @@ export function formatWorkspaceMember(m: {
   role: string;
   permissions: string[];
   inboxScope?: unknown;
+  autoAssignEligible?: boolean;
+  assignmentLimit?: number | null;
   createdAt: Date;
   user: {
     id: string;
     name: string;
     email: string;
+    phone?: string | null;
     avatar: string | null;
     createdAt: Date;
   };
@@ -112,9 +115,12 @@ export function formatWorkspaceMember(m: {
     userId: m.user.id,
     name: m.user.name,
     email: m.user.email,
+    phone: m.user.phone ?? null,
     role: m.role,
     permissions,
     inboxScope,
+    autoAssignEligible: m.autoAssignEligible ?? true,
+    assignmentLimit: m.assignmentLimit ?? null,
     avatar: m.user.avatar,
     status: 'active',
     isOwner: ownerUserId === m.user.id,
@@ -132,6 +138,7 @@ export async function listWorkspaceMembersFormatted(workspaceId: string) {
             id: true,
             name: true,
             email: true,
+            phone: true,
             avatar: true,
             createdAt: true,
           },
@@ -284,6 +291,8 @@ export async function updateWorkspaceMember(input: {
   role: WorkspaceMemberRole;
   permissions?: WorkspacePermission[];
   inboxScope?: unknown;
+  autoAssignEligible?: boolean;
+  assignmentLimit?: number | null;
 }) {
   const membership = await prisma.workspaceMembership.findFirst({
     where: { id: input.membershipId, workspaceId: input.workspaceId },
@@ -340,8 +349,19 @@ export async function updateWorkspaceMember(input: {
     JSON.stringify(normalizePermissions(membership.permissions)) !==
       JSON.stringify(nextPermissions);
   const inboxScopeChanged = !inboxScopesEqual(currentEffectiveScope, nextEffectiveScope);
+  const autoAssignEligibleChanged =
+    input.autoAssignEligible !== undefined &&
+    input.autoAssignEligible !== membership.autoAssignEligible;
+  const assignmentLimitChanged =
+    input.assignmentLimit !== undefined && input.assignmentLimit !== membership.assignmentLimit;
 
-  if (!roleChanged && !permissionsChanged && !inboxScopeChanged) {
+  if (
+    !roleChanged &&
+    !permissionsChanged &&
+    !inboxScopeChanged &&
+    !autoAssignEligibleChanged &&
+    !assignmentLimitChanged
+  ) {
     const ownerUserId = await getWorkspaceOwnerUserId(input.workspaceId);
     return formatWorkspaceMember(membership, ownerUserId);
   }
@@ -359,6 +379,8 @@ export async function updateWorkspaceMember(input: {
       role: nextRole,
       permissions: nextPermissions,
       inboxScope: inboxScopeForStorage(nextValidatedInboxScope),
+      ...(autoAssignEligibleChanged ? { autoAssignEligible: input.autoAssignEligible } : {}),
+      ...(assignmentLimitChanged ? { assignmentLimit: input.assignmentLimit } : {}),
     },
     include: {
       user: {

@@ -1,4 +1,6 @@
 import { getIo } from '../socket.js';
+import { prisma } from '../index.js';
+import { formatInstagramContactPhone } from '../lib/channelContact.js';
 import { findInstagramAccountByEntryId } from './workspaceResolve.js';
 import {
   triggerClassifyAfterUpsert,
@@ -9,6 +11,8 @@ import {
   shapeWebhookComment,
   type InstagramCommentWebhookValue,
 } from './instagramCommentWebhook.shape.js';
+import { getPostCommentAutomationJourneyId } from './socialListeningPostSetting.service.js';
+import { getInstagramJourneyContainer } from '../modules/instagram-journey/container.js';
 
 export {
   isInstagramCommentWebhookField,
@@ -31,6 +35,32 @@ export type InstagramCommentWebhookBody = {
     changes?: Array<{ field?: string; value?: InstagramCommentWebhookValue }>;
   }>;
 };
+
+async function ensureInstagramCommentContact(
+  workspaceId: string,
+  fromId: string | null | undefined,
+  username: string | null | undefined
+): Promise<string | null> {
+  if (!fromId?.trim()) return null;
+  const phone = formatInstagramContactPhone(fromId.trim());
+  let contact = await prisma.contact.findFirst({
+    where: { phone, workspaceId },
+  });
+  if (!contact) {
+    const name = username?.trim()
+      ? `@${username.replace(/^@/, '')}`
+      : `Instagram ${fromId.slice(-6)}`;
+    contact = await prisma.contact.create({
+      data: {
+        name,
+        phone,
+        workspaceId,
+        source: 'Instagram',
+      },
+    });
+  }
+  return contact.id;
+}
 
 export async function handleInstagramCommentWebhookBody(
   body: InstagramCommentWebhookBody
@@ -86,6 +116,46 @@ export async function handleInstagramCommentWebhookBody(
           });
         } catch {
           // socket may be down during boot — persist still succeeded
+        }
+
+        try {
+          const contactId = await ensureInstagramCommentContact(
+            account.workspaceId,
+            shaped.comment.fromId,
+            shaped.comment.username
+          );
+          if (contactId) {
+            const postJourneyId = await getPostCommentAutomationJourneyId(
+              account.workspaceId,
+              shaped.postId
+            );
+            const trigger = getInstagramJourneyContainer(prisma).triggerService;
+            if (postJourneyId) {
+              await trigger.startPublishedJourney(
+                account.workspaceId,
+                postJourneyId,
+                contactId,
+                { restart: false }
+              );
+            } else {
+              await trigger.handleCommentReceived({
+                workspaceId: account.workspaceId,
+                event: 'comment.received',
+                contactId,
+                text: shaped.comment.text || '',
+                payload: {
+                  postId: shaped.postId,
+                  commentId: shaped.comment.id,
+                  fromId: shaped.comment.fromId,
+                },
+              });
+            }
+          }
+        } catch (igErr) {
+          logCommentWebhook(
+            'instagram journey comment trigger failed',
+            igErr instanceof Error ? igErr.message : igErr
+          );
         }
 
         handled += 1;

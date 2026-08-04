@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -153,4 +154,49 @@ export const MIME_BY_EXT: Record<string, string> = {
 export function mimeTypeFromStorageKey(storageKey: string): string {
   const ext = path.extname(storageKey).slice(1).toLowerCase();
   return MIME_BY_EXT[ext] || 'application/octet-stream';
+}
+
+async function sumLocalDirBytes(dirPath: string): Promise<number> {
+  let total = 0;
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        total += await sumLocalDirBytes(full);
+      } else if (entry.isFile()) {
+        const stat = await fs.stat(full);
+        total += stat.size;
+      }
+    }
+  } catch {
+    // missing prefix = zero usage
+  }
+  return total;
+}
+
+/** Sum object sizes under a tenant-relative prefix (S3 or local uploads fallback). */
+export async function sumObjectBytesUnderPrefix(storagePrefix: string): Promise<number> {
+  if (isObjectStorageEnabled()) {
+    let total = 0;
+    let continuationToken: string | undefined;
+    const prefix = objectKey(storagePrefix.endsWith('/') ? storagePrefix : `${storagePrefix}/`);
+    // ponytail: paginates ListObjectsV2; very large galleries may be slow — cache later if hot
+    do {
+      const response = await getS3Client().send(
+        new ListObjectsV2Command({
+          Bucket: config.aws.bucketName,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        })
+      );
+      for (const obj of response.Contents ?? []) {
+        total += obj.Size ?? 0;
+      }
+      continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return total;
+  }
+
+  return sumLocalDirBytes(path.join(UPLOADS_ROOT, storagePrefix));
 }

@@ -15,8 +15,11 @@ export const config = {
   /** Browser origins allowed for API + Socket.io (comma-separated in CORS_ALLOWED_ORIGINS) */
   corsAllowedOrigins: [
     (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, ''),
+    (process.env.LANDING_URL || 'http://localhost:3001').replace(/\/$/, ''),
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001',
     'http://localhost:3100',
     'http://127.0.0.1:3100',
     ...(process.env.CORS_ALLOWED_ORIGINS || '')
@@ -185,6 +188,18 @@ export const config = {
     whatsappAccessToken: (process.env.SUPER_ADMIN_ACCESS_TOKEN || '').trim(),
     igAccountId: (process.env.SUPER_ADMIN_IG_ACCOUNT_ID || '').trim(),
     igAccessToken: (process.env.SUPER_ADMIN_IG_ACCESS_TOKEN || '').trim(),
+  },
+  /** Account email/phone OTP (settings verification — does not block signup) */
+  contactOtp: {
+    ttlSeconds: parseInt(process.env.CONVOSYNC_OTP_TTL_SECONDS || '600', 10),
+    maxSendPerWindow: parseInt(process.env.CONVOSYNC_OTP_MAX_SEND || '5', 10),
+    sendWindowSeconds: parseInt(process.env.CONVOSYNC_OTP_SEND_WINDOW_SECONDS || '900', 10),
+    maxVerifyAttempts: parseInt(process.env.CONVOSYNC_OTP_MAX_ATTEMPTS || '5', 10),
+    emailFrom: (process.env.CONVOSYNC_SYSTEM_EMAIL_FROM || 'info@convosync.io').trim(),
+    waTemplateName: (process.env.CONVOSYNC_OTP_WA_TEMPLATE_NAME || '').trim(),
+    waTemplateLang: (process.env.CONVOSYNC_OTP_WA_TEMPLATE_LANG || 'en').trim(),
+    /** AUTH OTP templates need the code on the button; set false for body-only utility templates */
+    waIncludeButtonParam: process.env.CONVOSYNC_OTP_WA_INCLUDE_BUTTON !== 'false',
   },
   /**
    * Pipecat voice AI agent service (joins LiveKit rooms for AI-handled calls).

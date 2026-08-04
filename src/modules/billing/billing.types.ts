@@ -124,6 +124,8 @@ export interface VerifyOrderBody {
 export interface CreateSubscriptionBody {
   planId: string;
   billingCycle?: BillingCycle;
+  /** Applied on one-time plan purchase checkout (order mode); Razorpay subscription path ignores coupons for now. */
+  couponCode?: string;
 }
 
 export interface VerifySubscriptionBody {

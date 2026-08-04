@@ -172,6 +172,67 @@ export async function sendInstagramMediaMessage(
   }
 }
 
+export type InstagramTemplateElement = {
+  title: string;
+  subtitle?: string;
+  imageUrl?: string;
+  /** Single web_url button — postback buttons aren't wired to the journey engine. */
+  buttonTitle?: string;
+  buttonUrl?: string;
+};
+
+/**
+ * Messenger Platform "generic template" — same Send API endpoint as text/media, just a
+ * different attachment payload. IG Messaging accepts it for card (1 element) and horizontally
+ * scrollable gallery (2-10 elements) content.
+ */
+export async function sendInstagramTemplateMessage(
+  pageId: string,
+  pageAccessToken: string,
+  recipientInstagramScopedId: string,
+  elements: InstagramTemplateElement[]
+): Promise<SendInstagramResult> {
+  const recipient = { id: recipientInstagramScopedId };
+  const message = {
+    attachment: {
+      type: 'template',
+      payload: {
+        template_type: 'generic',
+        elements: elements.slice(0, 10).map((el) => ({
+          title: el.title.trim().slice(0, 80),
+          ...(el.subtitle?.trim() ? { subtitle: el.subtitle.trim().slice(0, 80) } : {}),
+          ...(el.imageUrl ? { image_url: el.imageUrl } : {}),
+          ...(el.buttonUrl && el.buttonTitle?.trim()
+            ? {
+                buttons: [
+                  { type: 'web_url', url: el.buttonUrl, title: el.buttonTitle.trim().slice(0, 20) },
+                ],
+              }
+            : {}),
+        })),
+      },
+    },
+  };
+
+  const post = async (payload: Record<string, unknown>) => {
+    const res = await axios.post(`${GRAPH}/${pageId}/messages`, payload, {
+      params: { access_token: pageAccessToken },
+    });
+    const messageId = (res.data as { message_id?: string }).message_id;
+    if (!messageId) {
+      throw new Error('Meta API did not return a message id');
+    }
+    return { messageId };
+  };
+
+  try {
+    return await post({ recipient, messaging_type: 'RESPONSE', message });
+  } catch (err) {
+    if (!isInstagramOutsideMessagingWindow(err)) throw err;
+    return await post({ recipient, messaging_type: 'MESSAGE_TAG', tag: 'HUMAN_AGENT', message });
+  }
+}
+
 type GraphMessageAttachment = {
   id?: string;
   mime_type?: string;

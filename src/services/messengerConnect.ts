@@ -53,7 +53,7 @@ export async function connectMessengerFromInstagramAccounts(
   const existingPageIds = new Set(existing.map((item) => item.pageId));
   const newConnections = targets.filter((item) => !existingPageIds.has(item.pageId)).length;
   if (newConnections > 0) {
-    await assertChannelCreateAllowed(workspaceId, newConnections);
+    await assertChannelCreateAllowed(workspaceId, newConnections, 'messenger');
   }
 
   const results: MessengerConnectResult[] = [];

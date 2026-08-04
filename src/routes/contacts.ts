@@ -20,6 +20,7 @@ import {
   unlinkContact,
 } from '../services/contactLink.service.js';
 import { deleteConversationThread } from '../services/conversation-delete.service.js';
+import { listWorkspaceTags, registerWorkspaceTags } from '../services/workspaceTags.service.js';
 
 import {
   buildGrowthBuckets,
@@ -172,13 +173,10 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     };
   });
 
+  /** Sourced from the WorkspaceTag registry (Settings → Automation → Tags), folder-grouped order. */
   fastify.get('/tags', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const rows = await prisma.contact.findMany({
-      where: { workspaceId },
-      select: { tags: true },
-    });
-    const tags = [...new Set(rows.flatMap((r) => r.tags))].filter(Boolean).sort((a, b) => a.localeCompare(b));
+    const { tags } = await listWorkspaceTags(workspaceId);
     return { tags };
   });
 
@@ -317,6 +315,8 @@ export default async function contactRoutes(fastify: FastifyInstance) {
       }),
     });
 
+    if (rest.tags?.length) void registerWorkspaceTags(workspaceId, rest.tags);
+
     void eventBus.emit('contact.created', {
       workspaceId,
       event: 'contact.created',
@@ -346,6 +346,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     let created = 0;
     let updated = 0;
     const errors: { row: number; phone: string; error: string }[] = [];
+    const allTags = new Set<string>();
 
     for (let i = 0; i < body.contacts.length; i++) {
       const row = body.contacts[i];
@@ -357,6 +358,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
       }
       const email = emailRaw.length > 0 ? emailRaw : undefined;
       const tags = row.tags?.map((t) => t.trim()).filter(Boolean) ?? [];
+      for (const tag of tags) allTags.add(tag);
       const source = row.source?.trim() || 'csv_import';
       try {
         const existing = await prisma.contact.findUnique({
@@ -401,6 +403,8 @@ export default async function contactRoutes(fastify: FastifyInstance) {
         });
       }
     }
+
+    if (allTags.size) void registerWorkspaceTags(workspaceId, [...allTags]);
 
     return reply.send({ created, updated, skipped: errors.length, errors });
   });
@@ -537,10 +541,11 @@ export default async function contactRoutes(fastify: FastifyInstance) {
   fastify.put('/:id', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    await prisma.contact.updateMany({
-      where: { id, workspaceId },
-      data: scopedUpdateData((request.body ?? {}) as Record<string, unknown>),
-    });
+    const data = scopedUpdateData((request.body ?? {}) as Record<string, unknown>);
+    await prisma.contact.updateMany({ where: { id, workspaceId }, data });
+    if (Array.isArray(data.tags) && data.tags.length) {
+      void registerWorkspaceTags(workspaceId, data.tags as string[]);
+    }
     const contact = await prisma.contact.findFirst({ where: { id, workspaceId } });
     if (contact) {
       getIo().to(workspaceId).emit('contact_updated', {

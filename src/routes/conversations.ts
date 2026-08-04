@@ -278,6 +278,24 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
       getIo().to(workspaceId).emit('conversation_updated', { conversationId: id });
     }
 
+    // Heal IG Ask Question waits if DMs arrived without webhook resume.
+    if (conv.channel === 'instagram' && conv.contactId) {
+      try {
+        const { getInstagramJourneyContainer } = await import(
+          '../modules/instagram-journey/container.js'
+        );
+        await getInstagramJourneyContainer(prisma).triggerService.recoverWaitingFromRecentReplies(
+          workspaceId,
+          conv.contactId
+        );
+      } catch (err) {
+        request.log.warn(
+          { err: err instanceof Error ? err.message : err },
+          'ig journey recover on messages failed'
+        );
+      }
+    }
+
     const limitRaw = Number(query.limit);
     const before = typeof query.before === 'string' ? query.before.trim() : '';
     const usePagination = Number.isFinite(limitRaw) && limitRaw > 0;

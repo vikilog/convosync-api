@@ -164,6 +164,78 @@ function renderTemplateBody(bodyPattern: string, values: string[]): string {
 
 export { renderTemplateBody };
 
+/** Reply buttons (max 3). Button id is returned as interactive.button_reply.id. */
+export async function sendWhatsAppReplyButtons(
+  waToken: string,
+  phoneNumberId: string,
+  to: string,
+  bodyText: string,
+  buttons: Array<{ id: string; title: string }>
+): Promise<SendWhatsAppResult> {
+  const recipient = normalizeWhatsAppRecipient(to);
+  const body = bodyText.trim();
+  if (!body) throw new Error('Message cannot be empty');
+  const btns = buttons
+    .map((b) => ({
+      type: 'reply' as const,
+      reply: {
+        id: String(b.id).trim().slice(0, 256),
+        title: String(b.title).trim().slice(0, 20),
+      },
+    }))
+    .filter((b) => b.reply.id && b.reply.title)
+    .slice(0, 3);
+  if (btns.length < 1) throw new Error('At least one button is required');
+
+  const apiUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+  const res = await axios.post(
+    apiUrl,
+    {
+      messaging_product: 'whatsapp',
+      to: recipient,
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        body: { text: body.slice(0, 1024) },
+        action: { buttons: btns },
+      },
+    },
+    { headers: { Authorization: `Bearer ${waToken}` } }
+  );
+
+  const data = res.data as {
+    messages?: Array<{ id: string }>;
+    contacts?: Array<{ wa_id: string }>;
+  };
+  const waMessageId = data.messages?.[0]?.id;
+  if (!waMessageId) throw new Error('Meta API did not return a message id');
+  return { waMessageId, waId: data.contacts?.[0]?.wa_id };
+}
+
+/**
+ * Typing indicator — requires an inbound WhatsApp message id.
+ * Auto-dismisses on send or after ~25s.
+ */
+export async function sendWhatsAppTypingIndicator(
+  waToken: string,
+  phoneNumberId: string,
+  inboundMessageId: string
+): Promise<void> {
+  const mid = inboundMessageId.trim();
+  if (!mid) return;
+  const apiUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+  await axios.post(
+    apiUrl,
+    {
+      messaging_product: 'whatsapp',
+      status: 'read',
+      message_id: mid,
+      typing_indicator: { type: 'text' },
+    },
+    { headers: { Authorization: `Bearer ${waToken}` } }
+  );
+}
+
 export async function sendWhatsAppCtaUrlMessage(
   waToken: string,
   phoneNumberId: string,

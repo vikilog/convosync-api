@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { companyAuth } from '../middleware/workspaceScope.js';
+import { planFeatureAuth } from '../middleware/planFeatureAuth.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { RazorpayService } from '../modules/billing/razorpay.service.js';
 import { WhatsAppPayService } from '../services/whatsappPay.service.js';
@@ -19,15 +19,16 @@ const createRequestSchema = z.object({
 export default async function whatsappPayRoutes(fastify: FastifyInstance) {
   const razorpayService = new RazorpayService(fastify);
   const service = new WhatsAppPayService(razorpayService);
+  const auth = planFeatureAuth('whatsappPay');
 
-  fastify.get('/summary', { onRequest: companyAuth.onRequest }, async (request, reply) => {
+  fastify.get('/summary', auth, async (request, reply) => {
     const user = getJwtUser(request);
     if (!user?.workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
     const summary = await service.getSummary(user.workspaceId);
     return reply.send(summary);
   });
 
-  fastify.get('/requests', { onRequest: companyAuth.onRequest }, async (request, reply) => {
+  fastify.get('/requests', auth, async (request, reply) => {
     const user = getJwtUser(request);
     if (!user?.workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
     const { status } = request.query as { status?: string };
@@ -35,7 +36,7 @@ export default async function whatsappPayRoutes(fastify: FastifyInstance) {
     return reply.send(result);
   });
 
-  fastify.post('/requests', { onRequest: companyAuth.onRequest }, async (request, reply) => {
+  fastify.post('/requests', auth, async (request, reply) => {
     const user = getJwtUser(request);
     if (!user?.workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
 
@@ -56,7 +57,7 @@ export default async function whatsappPayRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/requests/:id/send', { onRequest: companyAuth.onRequest }, async (request, reply) => {
+  fastify.post('/requests/:id/send', auth, async (request, reply) => {
     const user = getJwtUser(request);
     if (!user?.workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
     const { id } = request.params as { id: string };
@@ -71,41 +72,33 @@ export default async function whatsappPayRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post(
-    '/requests/:id/cancel',
-    { onRequest: companyAuth.onRequest },
-    async (request, reply) => {
-      const user = getJwtUser(request);
-      if (!user?.workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
-      const { id } = request.params as { id: string };
+  fastify.post('/requests/:id/cancel', auth, async (request, reply) => {
+    const user = getJwtUser(request);
+    if (!user?.workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
+    const { id } = request.params as { id: string };
 
-      try {
-        const result = await service.cancelRequest(user.workspaceId, id);
-        return reply.send(result);
-      } catch (err) {
-        return reply.code(400).send({
-          error: err instanceof Error ? err.message : 'Failed to cancel payment request',
-        });
-      }
+    try {
+      const result = await service.cancelRequest(user.workspaceId, id);
+      return reply.send(result);
+    } catch (err) {
+      return reply.code(400).send({
+        error: err instanceof Error ? err.message : 'Failed to cancel payment request',
+      });
     }
-  );
+  });
 
-  fastify.post(
-    '/requests/:id/refresh',
-    { onRequest: companyAuth.onRequest },
-    async (request, reply) => {
-      const user = getJwtUser(request);
-      if (!user?.workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
-      const { id } = request.params as { id: string };
+  fastify.post('/requests/:id/refresh', auth, async (request, reply) => {
+    const user = getJwtUser(request);
+    if (!user?.workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
+    const { id } = request.params as { id: string };
 
-      try {
-        const result = await service.refreshRequest(user.workspaceId, id);
-        return reply.send(result);
-      } catch (err) {
-        return reply.code(400).send({
-          error: err instanceof Error ? err.message : 'Failed to refresh payment request',
-        });
-      }
+    try {
+      const result = await service.refreshRequest(user.workspaceId, id);
+      return reply.send(result);
+    } catch (err) {
+      return reply.code(400).send({
+        error: err instanceof Error ? err.message : 'Failed to refresh payment request',
+      });
     }
-  );
+  });
 }

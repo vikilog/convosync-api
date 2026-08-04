@@ -45,7 +45,7 @@ export function emailBillableSends(params: {
   const sentBefore = Math.max(0, Math.round(params.sentBefore));
   const included = params.emailsIncluded;
   if (included <= 0) return sendCount;
-  if (included >= Number.MAX_SAFE_INTEGER) return 0;
+  if (included >= 2_147_483_647) return 0; // UNLIMITED_USAGE_LIMIT (INT4)
   const freeLeft = Math.max(0, included - sentBefore);
   return Math.max(0, sendCount - freeLeft);
 }
@@ -64,7 +64,7 @@ export function incrementalIncludedBillable(params: {
   const included = params.includedCredit;
   if (thisCharge <= 0) return 0;
   if (included <= 0) return Math.round(thisCharge * 100) / 100;
-  if (included >= Number.MAX_SAFE_INTEGER) return 0;
+  if (included >= 2_147_483_647) return 0; // UNLIMITED_USAGE_LIMIT (INT4)
   const billedBefore = Math.max(0, mtdBefore - included);
   const billedAfter = Math.max(0, mtdBefore + thisCharge - included);
   return Math.round((billedAfter - billedBefore) * 100) / 100;

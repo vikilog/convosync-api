@@ -39,6 +39,13 @@ const verifyOrderSchema = z.object({
 const createSubscriptionSchema = z.object({
   planId: z.string(),
   billingCycle: z.enum(['monthly', 'annual']).optional(),
+  couponCode: z.string().trim().min(1).max(40).optional(),
+});
+
+const validateCouponSchema = z.object({
+  code: z.string().trim().min(1).max(40),
+  amountPaise: z.number().int().positive(),
+  planId: z.string().optional(),
 });
 
 const verifySubscriptionSchema = z.object({
@@ -216,6 +223,19 @@ export class BillingController {
     try {
       const body = createSubscriptionSchema.parse(request.body);
       const result = await this.billing.createSubscription(workspaceId, body);
+      return reply.send(result);
+    } catch (err) {
+      return reply.code(400).send({ error: formatError(err) });
+    }
+  };
+
+  validateCoupon = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { workspaceId } = getJwtUser(request);
+    if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      const body = validateCouponSchema.parse(request.body);
+      const result = await this.billing.validateCoupon(body);
       return reply.send(result);
     } catch (err) {
       return reply.code(400).send({ error: formatError(err) });

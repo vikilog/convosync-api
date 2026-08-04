@@ -9,6 +9,11 @@ export class JourneyRepository {
       where: { workspaceId },
       include: {
         _count: { select: { executions: true, nodes: true } },
+        nodes: {
+          where: { type: 'TRIGGER' },
+          select: { data: true },
+          take: 1,
+        },
       },
       orderBy: { updatedAt: 'desc' },
     });

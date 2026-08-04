@@ -4,6 +4,15 @@ import type { JourneyRepository } from '../repositories/journey.repository.js';
 import type { MessagingProvider } from '../providers/messaging.provider.js';
 import { wrapMetaSendError } from '../providers/meta-cloud.messaging.provider.js';
 import { evaluateCondition, pickBranchEdge } from './condition-evaluator.service.js';
+import { getContactActivity, getWorkspaceTimezone } from './contact-activity.service.js';
+import {
+  normalizeRandomizerPaths,
+  pickWeightedEdge,
+} from './randomizer.service.js';
+import {
+  normalizeBusinessHours,
+  resolveWaitMs,
+} from './businessHours.service.js';
 import { executeWebhookNode } from './webhook-executor.service.js';
 import { applyWebhookResponseMappings } from './webhook-response-mapper.service.js';
 import { renderTemplateVariables, resolveSendMessageVariables } from './message-renderer.service.js';
@@ -11,14 +20,21 @@ import { delayMs, scheduleJourneyDelay } from '../queue/journey.queue.js';
 import {
   assignContactConversation,
   closeContactConversation,
+  mergeContactCustomFields,
   openContactConversation,
   updateContactField,
 } from './journey-contact-actions.service.js';
+import { upsertLeadForContact } from '../../../services/lead.service.js';
+import { registerWorkspaceTags } from '../../../services/workspaceTags.service.js';
 import type {
+  AddToFunnelNodeData,
   AskQuestionNodeData,
   AssignToNodeData,
+  ButtonsNodeData,
   CloseConversationNodeData,
   ConditionNodeData,
+  GotoStepNodeData,
+  RandomizerNodeData,
   SendMessageNodeData,
   TriggerJourneyNodeData,
   UpdateFieldNodeData,
@@ -28,6 +44,7 @@ import type {
   WebhookNodeData,
   ExecutionWaitContext,
 } from '../types/journey.types.js';
+import { GOTO_STEP_MAX_HOPS } from '../types/journey.types.js';
 
 export class JourneyEngine {
   constructor(
@@ -106,6 +123,9 @@ export class JourneyEngine {
         case 'ASK_QUESTION':
           await this.handleAskQuestion(execution, node.id, node.data as AskQuestionNodeData, node.outgoingEdges);
           break;
+        case 'BUTTONS':
+          await this.handleButtons(execution, node.id, node.data as ButtonsNodeData, node.outgoingEdges);
+          break;
         case 'ASSIGN_TO':
           await this.handleAssignTo(execution, node.id, node.data as AssignToNodeData, node.outgoingEdges);
           break;
@@ -115,6 +135,12 @@ export class JourneyEngine {
         case 'CONDITION':
           await this.handleCondition(execution, node.id, node.data as ConditionNodeData, node.outgoingEdges);
           break;
+        case 'RANDOMIZER':
+          await this.handleRandomizer(execution, node.id, node.data as RandomizerNodeData, node.outgoingEdges);
+          break;
+        case 'GOTO_STEP':
+          await this.handleGotoStep(execution, node.id, node.data as GotoStepNodeData);
+          break;
         case 'WEBHOOK':
           await this.handleWebhook(execution, node.id, node.data as WebhookNodeData, node.outgoingEdges);
           break;
@@ -123,6 +149,9 @@ export class JourneyEngine {
           break;
         case 'UPDATE_FIELD':
           await this.handleUpdateField(execution, node.id, node.data as UpdateFieldNodeData, node.outgoingEdges);
+          break;
+        case 'ADD_TO_FUNNEL':
+          await this.handleAddToFunnel(execution, node.id, node.data as AddToFunnelNodeData, node.outgoingEdges);
           break;
         case 'OPEN_CONVERSATION':
           await this.handleOpenConversation(execution, node.id, node.outgoingEdges);
@@ -195,6 +224,7 @@ export class JourneyEngine {
 
     const isTemplate =
       data.messageMode === 'template' || Boolean(data.templateName || data.templateId);
+    const isCtaUrl = !isTemplate && data.messageMode === 'cta_url';
     const variables = isTemplate
       ? resolveSendMessageVariables(data.variables, execution.contact)
       : [];
@@ -202,6 +232,10 @@ export class JourneyEngine {
       !isTemplate && data.text
         ? renderTemplateVariables(data.text, execution.contact)
         : undefined;
+
+    if (isCtaUrl && !data.ctaUrl?.trim()) {
+      throw new Error('Open website step needs a URL');
+    }
 
     try {
       const result = await this.messagingProvider.send({
@@ -213,6 +247,9 @@ export class JourneyEngine {
         language: data.language,
         variables,
         text,
+        ctaUrl: isCtaUrl ? data.ctaUrl!.trim() : undefined,
+        ctaButtonLabel: isCtaUrl ? data.ctaLabel : undefined,
+        simulateTyping: Boolean(data.simulateTyping) && !isTemplate,
         metadata: { executionId: execution.id, nodeId },
       });
 
@@ -260,6 +297,7 @@ export class JourneyEngine {
       contactId: execution.contactId,
       phone: execution.contact.phone,
       text: renderTemplateVariables(question, execution.contact),
+      simulateTyping: Boolean(data.simulateTyping),
       metadata: { executionId: execution.id, nodeId, action: 'ask_question' },
     });
 
@@ -290,6 +328,83 @@ export class JourneyEngine {
     });
   }
 
+  private async handleButtons(
+    execution: NonNullable<Awaited<ReturnType<JourneyExecutionRepository['findById']>>>,
+    nodeId: string,
+    data: ButtonsNodeData,
+    edges: Array<{ targetNodeId: string; conditionValue: string | null }>
+  ) {
+    if (!execution.contact) throw new Error('Contact missing on execution');
+    const text = data.text?.trim();
+    if (!text) throw new Error('Buttons node needs message text');
+    const buttons = (Array.isArray(data.buttons) ? data.buttons : [])
+      .map((b, i) => ({
+        id: String(b?.id ?? `btn_${i}`).trim() || `btn_${i}`,
+        title: String(b?.title ?? '').trim().slice(0, 20),
+      }))
+      .filter((b) => b.title)
+      .slice(0, 3);
+    if (buttons.length < 2) throw new Error('Buttons node needs at least 2 buttons');
+
+    const result = await this.messagingProvider.send({
+      workspaceId: execution.journey.workspaceId,
+      contactId: execution.contactId,
+      phone: execution.contact.phone,
+      text: renderTemplateVariables(text, execution.contact),
+      buttons,
+      simulateTyping: Boolean(data.simulateTyping),
+      metadata: { executionId: execution.id, nodeId, action: 'buttons' },
+    });
+
+    await this.executionRepo.updateProgress(execution.id, {
+      status: 'waiting',
+      currentNodeId: nodeId,
+      context: {
+        ...(execution.context as Record<string, unknown>),
+        waitKind: 'button',
+        buttonNodeId: nodeId,
+        nextNodeId: undefined,
+      } satisfies ExecutionWaitContext,
+    });
+
+    await this.executionRepo.appendLog({
+      executionId: execution.id,
+      nodeId,
+      status: 'pending',
+      payload: {
+        action: 'buttons',
+        messageId: result.messageId,
+        buttons: buttons.map((b) => b.id),
+        edgeCount: edges.length,
+      },
+    });
+  }
+
+  private async handleRandomizer(
+    execution: NonNullable<Awaited<ReturnType<JourneyExecutionRepository['findById']>>>,
+    nodeId: string,
+    data: RandomizerNodeData,
+    edges: Array<{ targetNodeId: string; conditionValue: string | null }>
+  ) {
+    const paths = normalizeRandomizerPaths(data.paths);
+    const next = pickWeightedEdge(edges, paths);
+    await this.executionRepo.appendLog({
+      executionId: execution.id,
+      nodeId,
+      status: 'success',
+      payload: {
+        action: 'randomizer',
+        picked: next?.conditionValue ?? null,
+        paths,
+      },
+    });
+    if (!next) {
+      await this.executionRepo.updateProgress(execution.id, { status: 'completed' });
+      return;
+    }
+    await this.executeNode(execution.id, next.targetNodeId);
+  }
+
   async resumeAfterReply(
     executionId: string,
     replyText: string,
@@ -297,6 +412,15 @@ export class JourneyEngine {
   ): Promise<void> {
     const execution = await this.executionRepo.findById(executionId);
     if (!execution || execution.status !== 'waiting') return;
+
+    const ctx = (execution.context ?? {}) as ExecutionWaitContext & {
+      saveReplyTo?: string;
+    };
+    if (ctx.saveReplyTo?.trim()) {
+      await mergeContactCustomFields(execution.contactId, {
+        [ctx.saveReplyTo.trim()]: replyText,
+      });
+    }
 
     await this.executionRepo.appendLog({
       executionId,
@@ -471,16 +595,36 @@ export class JourneyEngine {
       return;
     }
 
-    const waitMs = delayMs(data.amount ?? 1, data.unit ?? 'hours');
+    const baseMs = delayMs(data.amount ?? 0, data.unit ?? 'hours');
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: execution.journey.workspaceId },
+      select: { timezone: true },
+    });
+    const tz = workspace?.timezone?.trim() || 'Asia/Kolkata';
+    const businessHours = normalizeBusinessHours(data.businessHours);
+    const waitMs = resolveWaitMs(baseMs, businessHours, tz);
+
     await this.executionRepo.updateProgress(execution.id, {
       status: 'waiting',
       currentNodeId: nodeId,
+      context: {
+        ...(execution.context as Record<string, unknown>),
+        waitKind: 'delay',
+        nextNodeId: next.targetNodeId,
+      },
     });
     await this.executionRepo.appendLog({
       executionId: execution.id,
       nodeId,
       status: 'pending',
-      payload: { action: 'wait', waitMs, nextNodeId: next.targetNodeId },
+      payload: {
+        action: 'wait',
+        waitMs,
+        baseMs,
+        businessHours: businessHours?.enabled ?? false,
+        timezone: tz,
+        nextNodeId: next.targetNodeId,
+      },
     });
 
     await scheduleJourneyDelay(
@@ -493,13 +637,61 @@ export class JourneyEngine {
     );
   }
 
+  private async handleGotoStep(
+    execution: NonNullable<Awaited<ReturnType<JourneyExecutionRepository['findById']>>>,
+    nodeId: string,
+    data: GotoStepNodeData
+  ) {
+    const targetNodeId = data.targetNodeId?.trim();
+    if (!targetNodeId) {
+      await this.failExecution(execution.id, nodeId, 'Go to Step needs a target step');
+      return;
+    }
+    if (targetNodeId === nodeId) {
+      await this.failExecution(execution.id, nodeId, 'Go to Step cannot target itself');
+      return;
+    }
+
+    const target = await this.journeyRepo.getNodeWithEdges(execution.journeyId, targetNodeId);
+    if (!target) {
+      await this.failExecution(execution.id, nodeId, 'Go to Step target not found in this journey');
+      return;
+    }
+
+    const ctx = (execution.context as Record<string, unknown>) ?? {};
+    const hops = Number(ctx.gotoHops ?? 0) + 1;
+    if (hops > GOTO_STEP_MAX_HOPS) {
+      await this.failExecution(
+        execution.id,
+        nodeId,
+        `Go to Step loop limit (${GOTO_STEP_MAX_HOPS}) exceeded`
+      );
+      return;
+    }
+
+    await this.executionRepo.appendLog({
+      executionId: execution.id,
+      nodeId,
+      status: 'success',
+      payload: { action: 'goto_step', targetNodeId, hops },
+    });
+    await this.executionRepo.updateProgress(execution.id, {
+      status: 'running',
+      context: { ...ctx, gotoHops: hops },
+    });
+    await this.executeNode(execution.id, targetNodeId);
+  }
+
   private async handleCondition(
     execution: NonNullable<Awaited<ReturnType<JourneyExecutionRepository['findById']>>>,
     nodeId: string,
     data: ConditionNodeData,
     edges: Array<{ targetNodeId: string; conditionValue: string | null }>
   ) {
-    const result = evaluateCondition(execution.contact, data);
+    const result = await evaluateCondition(execution.contact, data, {
+      getContactActivity: (c) => getContactActivity(c),
+      getTimezone: () => getWorkspaceTimezone(execution.journey.workspaceId),
+    });
     const edge = pickBranchEdge(edges, result);
     await this.executionRepo.appendLog({
       executionId: execution.id,
@@ -569,12 +761,47 @@ export class JourneyEngine {
       where: { id: contact.id },
       data: { tags },
     });
+    if (data.action !== 'remove' && incoming.length) {
+      void registerWorkspaceTags(execution.journey.workspaceId, incoming);
+    }
 
     await this.executionRepo.appendLog({
       executionId: execution.id,
       nodeId,
       status: 'success',
       payload: { action: 'update_tag', tags },
+    });
+    await this.advance(execution.id, nodeId, edges);
+  }
+
+  private async handleAddToFunnel(
+    execution: NonNullable<Awaited<ReturnType<JourneyExecutionRepository['findById']>>>,
+    nodeId: string,
+    data: AddToFunnelNodeData,
+    edges: Array<{ targetNodeId: string; conditionValue: string | null }>
+  ) {
+    const funnelId = data.funnelId?.trim();
+    if (!funnelId) throw new Error('Select a lead funnel');
+
+    const result = await upsertLeadForContact({
+      workspaceId: execution.journey.workspaceId,
+      contactId: execution.contactId,
+      funnelId,
+      stageId: data.stageId?.trim() || undefined,
+      source: 'whatsapp',
+    });
+
+    await this.executionRepo.appendLog({
+      executionId: execution.id,
+      nodeId,
+      status: 'success',
+      payload: {
+        action: 'add_to_funnel',
+        funnelId,
+        stageId: data.stageId ?? null,
+        leadId: result.leadId,
+        created: result.created,
+      },
     });
     await this.advance(execution.id, nodeId, edges);
   }

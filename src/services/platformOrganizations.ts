@@ -286,6 +286,13 @@ function formatPlatformOrganization(
       isTrial: status === 'Trial',
       ownerName: owner?.name ?? '—',
       ownerEmail: owner?.email ?? workspace.email ?? '',
+      ownerPhone: owner?.phone ?? null,
+      website: workspace.website,
+      address: workspace.address,
+      city: workspace.city,
+      state: workspace.state,
+      postalCode: workspace.postalCode,
+      taxId: workspace.taxId,
       joinedDate: workspace.createdAt.toLocaleDateString('en-US', {
         month: 'short',
         day: 'numeric',

@@ -15,14 +15,19 @@ type MessagingEvent = {
 /** Instagram DMs (messages or messaging_seen with mid). */
 function isInstagramMessagingEvent(event: MessagingEvent): boolean {
   if (event.read?.mid) return true;
-  return event.message?.messaging_product === 'instagram';
+  if (!event.message) return false;
+  const product = event.message.messaging_product;
+  // Meta often omits messaging_product on IG DMs — treat missing as Instagram.
+  return product === 'instagram' || product == null;
 }
 
 /** Messenger DMs (messages or message_reads with watermark). */
 function isMessengerMessagingEvent(event: MessagingEvent): boolean {
   if (event.read?.watermark != null && !event.read?.mid) return true;
   if (event.read?.mid) return false; // Instagram seen uses mid
-  return event.message?.messaging_product !== 'instagram';
+  // Only explicit Facebook/Messenger product — never steal omitted-product IG DMs.
+  const product = event.message?.messaging_product;
+  return product === 'facebook' || product === 'messenger';
 }
 
 export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody) {
@@ -72,12 +77,7 @@ export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody)
     const instagramEntry = {
       ...entry,
       messaging: messaging.filter((event) => isInstagramMessagingEvent(event)),
-      standby: standby.filter(
-        (event) =>
-          isInstagramMessagingEvent(event) ||
-          // standby often omits messaging_product for IG; prefer IG when both apps exist
-          !event.message?.messaging_product
-      ),
+      standby: standby.filter((event) => isInstagramMessagingEvent(event)),
     };
     const messengerEntry = {
       ...entry,

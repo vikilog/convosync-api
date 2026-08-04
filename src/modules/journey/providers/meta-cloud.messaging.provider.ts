@@ -5,9 +5,13 @@ import { getWorkspaceWhatsAppCredentials } from '../../../services/whatsappCrede
 import {
   formatMetaSendError,
   renderTemplateBody,
+  sendWhatsAppCtaUrlMessage,
   sendWhatsAppMessage,
+  sendWhatsAppReplyButtons,
   sendWhatsAppTemplateMessage,
+  sendWhatsAppTypingIndicator,
 } from '../../../services/whatsapp.js';
+import { sleep, typingDelayMs } from '../services/typing-indicator.service.js';
 import {
   assertWhatsAppTemplateAffordable,
   chargeWhatsAppTemplateUsage,
@@ -121,13 +125,44 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
       if (!renderedBody) {
         throw new Error('Message text or template is required');
       }
-      const result = await sendWhatsAppMessage(
-        credentials.accessToken,
-        credentials.phoneNumberId,
-        contact.phone,
-        renderedBody
-      );
-      waMessageId = result.waMessageId;
+
+      if (input.simulateTyping) {
+        await maybeWhatsAppTyping(
+          credentials.accessToken,
+          credentials.phoneNumberId,
+          conversation.id,
+          renderedBody
+        );
+      }
+
+      if (input.ctaUrl) {
+        const result = await sendWhatsAppCtaUrlMessage(
+          credentials.accessToken,
+          credentials.phoneNumberId,
+          contact.phone,
+          renderedBody,
+          input.ctaButtonLabel || 'Open link',
+          input.ctaUrl
+        );
+        waMessageId = result.waMessageId;
+      } else if (input.buttons && input.buttons.length > 0) {
+        const result = await sendWhatsAppReplyButtons(
+          credentials.accessToken,
+          credentials.phoneNumberId,
+          contact.phone,
+          renderedBody,
+          input.buttons
+        );
+        waMessageId = result.waMessageId;
+      } else {
+        const result = await sendWhatsAppMessage(
+          credentials.accessToken,
+          credentials.phoneNumberId,
+          contact.phone,
+          renderedBody
+        );
+        waMessageId = result.waMessageId;
+      }
     }
 
     const message = await prisma.message.create({
@@ -136,7 +171,12 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
         sender: 'agent',
         senderName: 'Journey',
         content: renderedBody,
-        type: input.templateName || input.templateId ? 'template' : 'text',
+        type:
+          input.templateName || input.templateId
+            ? 'template'
+            : input.ctaUrl || input.buttons?.length
+              ? 'interactive'
+              : 'text',
         status: 'sent',
         waMessageId,
         metadata: {
@@ -186,4 +226,26 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
 
 export function wrapMetaSendError(err: unknown): Error {
   return new Error(formatMetaSendError(err));
+}
+
+/** WA typing needs a prior inbound mid; otherwise just delay. */
+async function maybeWhatsAppTyping(
+  token: string,
+  phoneNumberId: string,
+  conversationId: string,
+  text: string
+): Promise<void> {
+  const lastInbound = await prisma.message.findFirst({
+    where: { conversationId, sender: 'contact', waMessageId: { not: null } },
+    orderBy: { createdAt: 'desc' },
+    select: { waMessageId: true },
+  });
+  if (lastInbound?.waMessageId) {
+    try {
+      await sendWhatsAppTypingIndicator(token, phoneNumberId, lastInbound.waMessageId);
+    } catch (err) {
+      console.warn('[Journey] WA typing indicator failed', err);
+    }
+  }
+  await sleep(typingDelayMs(text));
 }

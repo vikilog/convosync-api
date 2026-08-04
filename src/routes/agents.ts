@@ -12,7 +12,7 @@ import { indexKnowledgeItemInBackground, knowledgeIndexService } from '../module
 import { invalidateWorkspaceCache } from '../modules/ai-agent/hybrid/redis-cache.js';
 import { getRetrievalStats } from '../modules/ai-agent/hybrid/analytics.js';
 import { DEFAULT_AGENT_ACTIONS } from '../constants/agent-actions.js';
-import { assertAiAgentCreateAllowed } from '../services/planUsageGuards.js';
+import { assertAiAgentCreateAllowed, PlanGateError } from '../services/planUsageGuards.js';
 import {
   PreviewSttError,
   synthesizePreviewSpeech,
@@ -141,6 +141,9 @@ export default async function agentRoutes(fastify: FastifyInstance) {
     try {
       await assertAiAgentCreateAllowed(workspaceId);
     } catch (err) {
+      if (err instanceof PlanGateError) {
+        return reply.code(403).send({ error: err.message, upgradePath: err.upgradePath });
+      }
       const message = err instanceof Error ? err.message : 'AI agent limit reached';
       return reply.code(400).send({ error: message });
     }
@@ -215,6 +218,9 @@ export default async function agentRoutes(fastify: FastifyInstance) {
     try {
       await assertAiAgentCreateAllowed(workspaceId);
     } catch (err) {
+      if (err instanceof PlanGateError) {
+        return reply.code(403).send({ error: err.message, upgradePath: err.upgradePath });
+      }
       const message = err instanceof Error ? err.message : 'AI agent limit reached';
       return reply.code(400).send({ error: message });
     }

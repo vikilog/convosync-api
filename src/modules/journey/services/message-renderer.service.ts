@@ -7,6 +7,7 @@ const CONTACT_FIELD_MAP: Record<string, (c: Contact) => unknown> = {
   name: (c) => c.name,
   phone: (c) => c.phone,
   email: (c) => c.email ?? '',
+  journeyStatus: (c) => c.journeyStatus ?? '',
 };
 
 function readCustomField(contact: Contact, key: string): unknown {

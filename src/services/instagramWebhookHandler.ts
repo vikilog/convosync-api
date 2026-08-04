@@ -26,10 +26,18 @@ type PageMessagingEvent = {
     text?: string;
     is_echo?: boolean;
     messaging_product?: 'instagram' | 'facebook';
+    /** Quick-reply tap — payload is what we configured; text is often the button title. */
+    quick_reply?: { payload?: string };
     attachments?: Array<{
       type?: string;
       payload?: { url?: string; title?: string; sticker_id?: number };
     }>;
+  };
+  /** Persistent menu / postback button */
+  postback?: {
+    mid?: string;
+    payload?: string;
+    title?: string;
   };
   /** Instagram messaging_seen / Messenger message_reads */
   read?: {
@@ -63,6 +71,33 @@ async function upsertInstagramInboundMessage(params: {
   });
   if (existing) {
     logInstagramWebhook('skip duplicate message', { messageId: params.messageId });
+    // Sync often wins the race and saves first — still resume waiting Ask Question.
+    try {
+      const convMeta = await prisma.conversation.findFirst({
+        where: { id: existing.conversationId },
+        select: { contactId: true, workspaceId: true },
+      });
+      if (convMeta?.contactId) {
+        const { getInstagramJourneyContainer } = await import(
+          '../modules/instagram-journey/container.js'
+        );
+        await getInstagramJourneyContainer(prisma).triggerService.resumeWaitingRepliesOnly({
+          workspaceId: convMeta.workspaceId,
+          event: 'dm.received',
+          contactId: convMeta.contactId,
+          text: params.parsed.content || existing.content,
+          payload: {
+            conversationId: existing.conversationId,
+            messageId: params.messageId,
+          },
+        });
+      }
+    } catch (igErr) {
+      logInstagramWebhook(
+        'instagram journey resume on duplicate failed',
+        igErr instanceof Error ? igErr.message : igErr
+      );
+    }
     return;
   }
 
@@ -211,6 +246,31 @@ async function upsertInstagramInboundMessage(params: {
       routeErr instanceof Error ? routeErr.message : routeErr
     );
   }
+
+  // Instagram Automation (separate from WhatsApp journeys) — event/keyword match
+  try {
+    const { getInstagramJourneyContainer } = await import(
+      '../modules/instagram-journey/container.js'
+    );
+    await getInstagramJourneyContainer(prisma).triggerService.handleDmReceived({
+      workspaceId: workspace.id,
+      event: 'dm.received',
+      contactId: contact.id,
+      text: params.parsed.content,
+      payload: {
+        conversationId: conv.id,
+        messageId: message.id,
+        // Prefer Meta mid for idempotency; buttonPayload helps BUTTONS matching
+        buttonPayload:
+          typeof params.parsed.content === 'string' ? params.parsed.content : undefined,
+      },
+    });
+  } catch (igErr) {
+    logInstagramWebhook(
+      'instagram journey trigger failed',
+      igErr instanceof Error ? igErr.message : igErr
+    );
+  }
 }
 
 export type PageMessagingWebhookBody = {
@@ -294,6 +354,25 @@ export async function handleInstagramWebhookBody(body: PageMessagingWebhookBody)
         continue;
       }
 
+      if (ours.has(senderId)) continue;
+
+      // Persistent menu / postback → treat as inbound text (payload)
+      if (event.postback?.payload) {
+        const mid =
+          event.postback.mid?.trim() ||
+          `postback_${senderId}_${event.timestamp ?? Date.now()}`;
+        const parsed = parseInboundInstagramMessage(event.postback.payload.trim());
+        await upsertInstagramInboundMessage({
+          pageId: account.pageId,
+          senderId,
+          messageId: mid,
+          parsed,
+          pageAccessToken,
+          fromStandby,
+        });
+        continue;
+      }
+
       const message = event.message;
       if (!message?.mid) {
         logInstagramWebhook('skip event missing message mid', {
@@ -305,9 +384,11 @@ export async function handleInstagramWebhookBody(body: PageMessagingWebhookBody)
         continue;
       }
       if (message.is_echo) continue;
-      if (ours.has(senderId)) continue;
 
-      const parsed = parseInboundInstagramMessage(message.text, message.attachments);
+      // Prefer quick_reply.payload so Branch can match configured payload (e.g. "custom")
+      const quickPayload = message.quick_reply?.payload?.trim();
+      const inboundText = quickPayload || message.text;
+      const parsed = parseInboundInstagramMessage(inboundText, message.attachments);
       await upsertInstagramInboundMessage({
         pageId: account.pageId,
         senderId,

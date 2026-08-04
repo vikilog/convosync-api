@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma.js';
 import { getIo } from '../../socket.js';
 import { config } from '../../config.js';
+import { registerWorkspaceTags } from '../../services/workspaceTags.service.js';
 
 /** Merge insight-driven tags onto Contact.tags (same pattern as rule-based flows). */
 export async function applyInsightTags(input: {
@@ -40,6 +41,8 @@ export async function applyInsightTags(input: {
   } catch (err) {
     console.warn('[contact-insight] tag socket emit failed', err);
   }
+
+  await registerWorkspaceTags(input.workspaceId, add);
 
   return add;
 }

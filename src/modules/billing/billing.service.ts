@@ -7,8 +7,9 @@ import {
 } from '../../utils/crypto.utils.js';
 import { normalizeRazorpayError } from '../../utils/razorpay-error.utils.js';
 import { readCustomPlanInput } from '../../services/customPlanPricing.js';
-import { seedSubscriptionPlans, type PlanFeatures } from '../../services/subscriptionPlans.js';
+import { seedSubscriptionPlans, campaignsLimitFromFeatures, channelsLimitFromLabel, type PlanFeatures } from '../../services/subscriptionPlans.js';
 import { isValidRazorpayPlanId, razorpayPlanIdsFromEnv, type PlanSlug } from '../../services/razorpayPlanSync.js';
+import { isUnlimitedUsageLimit, UNLIMITED_USAGE_LIMIT } from '../../services/usageLimits.js';
 import {
   computeTokenBillingCosts,
   getWorkspaceMonthlyTokenUsage,
@@ -23,7 +24,12 @@ import type {
 } from './billing.types.js';
 import { ADDON_CATALOG } from './billing.types.js';
 import { MIN_WALLET_TOPUP_PAISE } from '../../services/wallet.constants.js';
-import { creditWallet, getWalletSummary, updateWalletSettings } from '../../services/wallet.service.js';
+import {
+  creditPlanWalletCredits,
+  creditWallet,
+  getWalletSummary,
+  updateWalletSettings,
+} from '../../services/wallet.service.js';
 import {
   ensureRazorpayCustomer,
   extractPaymentCredentials,
@@ -31,6 +37,11 @@ import {
   persistWalletPaymentMethod,
   saveWalletPaymentCredentials,
 } from '../../services/razorpayCustomer.service.js';
+import {
+  recordCouponRedemption,
+  MIN_CHECKOUT_AMOUNT_PAISE,
+  validateDiscountCoupon,
+} from '../../services/discountCoupons.js';
 import type { RazorpayService } from './razorpay.service.js';
 import {
   webhookPaymentEntity,
@@ -85,7 +96,7 @@ function parseFeatureLimit(value: string | number | undefined, fallback: number)
   if (value == null) return fallback;
   if (typeof value === 'number') return value;
   const normalized = value.replace(/,/g, '').trim().toLowerCase();
-  if (normalized === 'unlimited' || normalized === 'custom') return Number.MAX_SAFE_INTEGER;
+  if (normalized === 'unlimited' || normalized === 'custom') return UNLIMITED_USAGE_LIMIT;
   const parsed = Number.parseInt(normalized, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
@@ -149,8 +160,18 @@ export class BillingService {
       }),
       ]);
 
+    const planForLimits = paidPlan ?? workspace.plan;
+    const planFeatures = planForLimits?.features as PlanFeatures | undefined;
+    const limitsForSnapshot =
+      workspace.usageLimits && planFeatures
+        ? {
+            ...workspace.usageLimits,
+            campaignsLimit: campaignsLimitFromFeatures(planFeatures),
+          }
+        : workspace.usageLimits;
+
     const [usageSnapshot, connectedChannels, wallet] = await Promise.all([
-      this.getUsageSnapshot(workspaceId, workspace.usageLimits),
+      this.getUsageSnapshot(workspaceId, limitsForSnapshot),
       this.getConnectedChannels(workspaceId),
       getWalletSummary(workspaceId),
     ]);
@@ -262,8 +283,8 @@ export class BillingService {
     const limitValue = (value: number | null | undefined, fallback: number) =>
       value == null ? fallback : value;
     const toSnapshotItem = (used: number, limit: number) => {
-      if (limit >= Number.MAX_SAFE_INTEGER) {
-        return { used, limit: Number.MAX_SAFE_INTEGER, pending: Number.MAX_SAFE_INTEGER };
+      if (isUnlimitedUsageLimit(limit)) {
+        return { used, limit: UNLIMITED_USAGE_LIMIT, pending: UNLIMITED_USAGE_LIMIT };
       }
       return { used, limit, pending: Math.max(0, limit - used) };
     };
@@ -280,8 +301,8 @@ export class BillingService {
       aiTokenLimit <= 0
         ? {
             used: aiCreditUsed,
-            limit: Number.MAX_SAFE_INTEGER,
-            pending: Number.MAX_SAFE_INTEGER,
+            limit: UNLIMITED_USAGE_LIMIT,
+            pending: UNLIMITED_USAGE_LIMIT,
             inputTokens: aiTokenUsage.inputTokens,
             outputTokens: aiTokenUsage.outputTokens,
             costInr: markedUpTokenCostInr,
@@ -301,9 +322,12 @@ export class BillingService {
       contacts: toSnapshotItem(contactsUsed, limitValue(limits?.contactsLimit, 1000)),
       teamMembers: toSnapshotItem(teamMembersUsed, limitValue(limits?.teamMembersLimit, 3)),
       aiAgents: toSnapshotItem(aiAgentsUsed, limitValue(limits?.aiAgentsLimit, 1)),
-      // ponytail: channel caps off — always report unlimited so Integrations UI does not block connect
-      channels: toSnapshotItem(channelsUsed, Number.MAX_SAFE_INTEGER),
-      campaigns: toSnapshotItem(campaignsUsed, limitValue(limits?.campaignsLimit, 3)),
+      // Report actual channel cap from workspace usage limits
+      channels: toSnapshotItem(channelsUsed, limitValue(limits?.channelsLimit, 1)),
+      campaigns: toSnapshotItem(
+        campaignsUsed,
+        limitValue(limits?.campaignsLimit, UNLIMITED_USAGE_LIMIT)
+      ),
       emails: toSnapshotItem(emailsUsed, limitValue(limits?.emailsLimit, 1000)),
       aiTokens: aiTokensSnapshot,
     };
@@ -534,8 +558,8 @@ export class BillingService {
       };
     }
 
-    if (!finalAmount || finalAmount < 100) {
-      throw new Error('Invalid order amount. Minimum is 100 paise (₹1).');
+    if (!finalAmount || finalAmount < MIN_CHECKOUT_AMOUNT_PAISE) {
+      throw new Error(`Invalid order amount. Minimum is ${MIN_CHECKOUT_AMOUNT_PAISE} paise (₹1).`);
     }
 
     const purposeKey = [
@@ -809,6 +833,14 @@ export class BillingService {
     */
   }
 
+  async validateCoupon(body: { code: string; amountPaise: number; planId?: string }) {
+    void body.planId; // ponytail: plan scoping deferred
+    return validateDiscountCoupon({
+      code: body.code,
+      amountPaise: body.amountPaise,
+    });
+  }
+
   async createSubscription(workspaceId: string, body: CreateSubscriptionBody) {
     const billingCycle: BillingCycle = body.billingCycle ?? 'monthly';
     let plan = await prisma.subscriptionPlan.findFirst({
@@ -842,7 +874,8 @@ export class BillingService {
 
     const hasValidRazorpayPlan = isValidRazorpayPlanId(razorpayPlanId);
 
-    if (config.razorpay.recurringEnabled && hasValidRazorpayPlan) {
+    // ponytail: coupons only apply on one-time order checkout, not Razorpay subscriptions
+    if (config.razorpay.recurringEnabled && hasValidRazorpayPlan && !body.couponCode?.trim()) {
       try {
         const workspace = await prisma.workspace.findUnique({
           where: { id: workspaceId },
@@ -895,16 +928,41 @@ export class BillingService {
       );
     }
 
-    return this.createPlanPurchaseOrder(workspaceId, plan, billingCycle, amountPaise);
+    return this.createPlanPurchaseOrder(workspaceId, plan, billingCycle, amountPaise, body.couponCode);
   }
 
   private async createPlanPurchaseOrder(
     workspaceId: string,
     plan: { id: string; slug: string; name: string; features: unknown },
     billingCycle: BillingCycle,
-    amountPaise: number
+    amountPaise: number,
+    couponCode?: string
   ) {
-    const purposeKey = `plan_purchase:${plan.id}:${billingCycle}:${amountPaise}`;
+    let chargePaise = amountPaise;
+    let couponMeta:
+      | {
+          couponId: string;
+          couponCode: string;
+          originalAmountPaise: number;
+          discountPaise: number;
+        }
+      | undefined;
+
+    if (couponCode?.trim()) {
+      const validated = await validateDiscountCoupon({ code: couponCode, amountPaise });
+      if (!validated.valid) throw new Error(validated.reason);
+      chargePaise = validated.finalAmountPaise;
+      couponMeta = {
+        couponId: validated.couponId,
+        couponCode: validated.code,
+        originalAmountPaise: validated.originalAmountPaise,
+        discountPaise: validated.discountPaise,
+      };
+    }
+
+    const purposeKey = couponMeta
+      ? `plan_purchase:${plan.id}:${billingCycle}:${chargePaise}:coupon:${couponMeta.couponId}`
+      : `plan_purchase:${plan.id}:${billingCycle}:${chargePaise}`;
     const idempotencyKey = buildServerIdempotencyKey(workspaceId, purposeKey);
 
     const existing = await this.checkoutFromExistingIntent(idempotencyKey);
@@ -927,7 +985,7 @@ export class BillingService {
         data: {
           idempotencyKey,
           workspaceId,
-          amount: amountPaise,
+          amount: chargePaise,
           currency: 'INR',
           status: 'pending',
         },
@@ -959,13 +1017,14 @@ export class BillingService {
     let order: { id: string };
     try {
       order = await this.razorpay.createOrder({
-        amountPaise,
+        amountPaise: chargePaise,
         receipt: `plan_${plan.slug}_${Date.now()}`,
         notes: {
           workspaceId,
           purpose: 'plan_purchase',
           planId: plan.id,
           billingCycle,
+          ...(couponMeta ? { couponId: couponMeta.couponId, couponCode: couponMeta.couponCode } : {}),
         },
       });
     } catch (err) {
@@ -988,11 +1047,15 @@ export class BillingService {
           workspaceId,
           razorpayOrderId: order.id,
           type: 'plan_purchase',
-          amountPaise,
+          amountPaise: chargePaise,
           currency: 'INR',
           status: 'created',
-          description: `${plan.name} plan (${billingCycle})`,
-          metadata: { planId: plan.id, billingCycle } as Prisma.InputJsonValue,
+          description: `${plan.name} plan (${billingCycle})${couponMeta ? ` · ${couponMeta.couponCode}` : ''}`,
+          metadata: {
+            planId: plan.id,
+            billingCycle,
+            ...(couponMeta ?? {}),
+          } as Prisma.InputJsonValue,
         },
       });
       await tx.paymentIntent.update({
@@ -1007,13 +1070,50 @@ export class BillingService {
     return {
       checkoutMode: 'order' as const,
       orderId: order.id,
-      amountPaise,
+      amountPaise: chargePaise,
       currency: 'INR' as const,
       keyId: this.razorpay.keyId,
       plan: { id: plan.id, name: plan.name, slug: plan.slug },
       billingCycle,
       recurring: false as const,
+      ...(couponMeta
+        ? {
+            coupon: {
+              code: couponMeta.couponCode,
+              discountPaise: couponMeta.discountPaise,
+              originalAmountPaise: couponMeta.originalAmountPaise,
+            },
+          }
+        : {}),
     };
+  }
+
+  private async ensurePlanPurchaseCouponRedemption(
+    tx: Prisma.TransactionClient,
+    invoice: {
+      id: string;
+      workspaceId: string;
+      metadata: Prisma.JsonValue | null;
+      paidAt?: Date | null;
+    },
+    options?: { incrementCount?: boolean }
+  ) {
+    const purchaseMeta = (invoice.metadata ?? {}) as {
+      couponId?: string;
+      discountPaise?: number;
+    };
+    if (!purchaseMeta.couponId) return;
+    await recordCouponRedemption(
+      {
+        couponId: purchaseMeta.couponId,
+        workspaceId: invoice.workspaceId,
+        discountAmountPaise: purchaseMeta.discountPaise ?? 0,
+        invoiceId: invoice.id,
+        incrementCount: options?.incrementCount,
+        createdAt: invoice.paidAt ?? undefined,
+      },
+      tx
+    );
   }
 
   private async activatePlanPurchase(
@@ -1132,6 +1232,18 @@ export class BillingService {
       });
 
       await this.syncPlanUsageLimits(tx, workspaceId, billingSub.plan.features as PlanFeatures);
+
+      await creditPlanWalletCredits({
+        workspaceId,
+        plan: {
+          name: billingSub.plan.name,
+          features: billingSub.plan.features as PlanFeatures,
+        },
+        billingCycle: billingSub.billingCycle as BillingCycle,
+        source: 'subscription_payment',
+        externalId: params.razorpay_payment_id,
+        tx,
+      });
     });
 
     await persistWalletPaymentMethod(
@@ -1392,6 +1504,9 @@ export class BillingService {
       : null;
 
     if (intent?.status === 'success' || invoice.status === 'paid') {
+      if (invoice.type === 'plan_purchase') {
+        await this.ensurePlanPurchaseCouponRedemption(tx, invoice, { incrementCount: false });
+      }
       return { alreadySettled: true };
     }
 
@@ -1462,6 +1577,24 @@ export class BillingService {
 
     if (invoice.type === 'plan_purchase') {
       await this.activatePlanPurchase(tx, workspaceId, invoice.metadata);
+      await this.ensurePlanPurchaseCouponRedemption(tx, invoice);
+      const purchaseMeta = (invoice.metadata ?? {}) as {
+        planId?: string;
+        billingCycle?: BillingCycle;
+      };
+      if (purchaseMeta.planId) {
+        const plan = await tx.subscriptionPlan.findUnique({ where: { id: purchaseMeta.planId } });
+        if (plan) {
+          await creditPlanWalletCredits({
+            workspaceId,
+            plan: { name: plan.name, features: plan.features as PlanFeatures },
+            billingCycle: purchaseMeta.billingCycle ?? 'monthly',
+            source: 'plan_purchase',
+            externalId: invoice.id,
+            tx,
+          });
+        }
+      }
     }
 
     if (invoice.type === 'wallet_topup') {
@@ -1608,6 +1741,18 @@ export class BillingService {
         where: { id: billingSub.workspaceId },
         data: { subscriptionStatus: 'active', planId: billingSub.planId },
       });
+
+      await creditPlanWalletCredits({
+        workspaceId: billingSub.workspaceId,
+        plan: {
+          name: billingSub.plan.name,
+          features: billingSub.plan.features as PlanFeatures,
+        },
+        billingCycle: billingSub.billingCycle as BillingCycle,
+        source: 'subscription_renewal',
+        externalId: payment.id as string,
+        tx,
+      });
     });
   }
 
@@ -1720,7 +1865,7 @@ export class BillingService {
         aiAgentsLimit: 1,
         channelsLimit: 2,
         aiTokensIncluded: 0,
-        campaignsLimit: 3,
+        campaignsLimit: UNLIMITED_USAGE_LIMIT,
         emailsLimit: 0,
       };
       const increment = this.addonIncrement(type, quantity);
@@ -1785,7 +1930,7 @@ export class BillingService {
     const value = features.emailsPerMonth;
     if (value == null) return 1000;
     if (typeof value === 'number') return value;
-    if (value === 'unlimited' || value === 'custom') return Number.MAX_SAFE_INTEGER;
+    if (value === 'unlimited' || value === 'custom') return UNLIMITED_USAGE_LIMIT;
     return 1000;
   }
 
@@ -1795,6 +1940,7 @@ export class BillingService {
     features: PlanFeatures
   ) {
     // Wallet bills every AI/email use — do not copy plan “included” amounts as free credit.
+    // ponytail: storageGb stays in plan.features until media gallery + usageLimits column land
     await tx.workspaceUsageLimits.upsert({
       where: { workspaceId },
       create: {
@@ -1802,28 +1948,18 @@ export class BillingService {
         contactsLimit: parseFeatureLimit(features.contacts, 1000),
         teamMembersLimit: parseFeatureLimit(features.teamMembers, 3),
         aiAgentsLimit: parseFeatureLimit(features.aiAgents, 1),
-        channelsLimit: parseFeatureLimit(features.channels, 2),
+        channelsLimit: channelsLimitFromLabel(features.channels, features.channelsUnlimited),
         aiTokensIncluded: 0,
-        campaignsLimit:
-          typeof features.campaigns === 'number'
-            ? features.campaigns
-            : features.campaigns === 'unlimited'
-              ? Number.MAX_SAFE_INTEGER
-              : 3,
+        campaignsLimit: campaignsLimitFromFeatures(features),
         emailsLimit: 0,
       },
       update: {
         contactsLimit: parseFeatureLimit(features.contacts, 1000),
         teamMembersLimit: parseFeatureLimit(features.teamMembers, 3),
         aiAgentsLimit: parseFeatureLimit(features.aiAgents, 1),
-        channelsLimit: parseFeatureLimit(features.channels, 2),
+        channelsLimit: channelsLimitFromLabel(features.channels, features.channelsUnlimited),
         aiTokensIncluded: 0,
-        campaignsLimit:
-          typeof features.campaigns === 'number'
-            ? features.campaigns
-            : features.campaigns === 'unlimited'
-              ? Number.MAX_SAFE_INTEGER
-              : 3,
+        campaignsLimit: campaignsLimitFromFeatures(features),
         emailsLimit: 0,
       },
     });

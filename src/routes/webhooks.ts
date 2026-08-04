@@ -12,7 +12,6 @@ import {
 } from '../services/instagramWebhookHandler.js';
 import { routeInboundWhatsApp } from '../services/conversation-inbound-router.service.js';
 import { findOrReopenConversationForInbound } from '../services/conversationThread.service.js';
-import { eventBus } from '../modules/journey/events/event-bus.js';
 import { handleResendEmailWebhook } from '../modules/email/services/resend-webhook.service.js';
 import {
   extractWhatsAppProfileName,
@@ -282,13 +281,7 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
                   );
                   fastify.log.error(flowErr);
                 }
-
-                void eventBus.emit('message.received', {
-                  workspaceId: workspace.id,
-                  event: 'message.received',
-                  contactId: contact.id,
-                  payload: { text: displayContent, conversationId: conv.id },
-                });
+                // Journey trigger emit lives in routeInboundConversation (journey assignee).
               }
             }
           }

@@ -64,7 +64,7 @@ export class EmailIntegrationService {
       return this.getStatus(workspaceId);
     }
 
-    await assertChannelCreateAllowed(workspaceId);
+    await assertChannelCreateAllowed(workspaceId, 1, 'email');
     await this.repo.setEmailIntegrationEnabled(workspaceId, true);
     const hasSetup = await this.repo.hasExistingEmailSetup(workspaceId);
     if (!hasSetup) {

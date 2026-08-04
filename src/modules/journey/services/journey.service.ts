@@ -9,7 +9,14 @@ export class JourneyService {
   ) {}
 
   list(workspaceId: string) {
-    return this.journeyRepo.listByWorkspace(workspaceId);
+    return this.journeyRepo.listByWorkspace(workspaceId).then((rows) =>
+      rows.map(({ nodes, ...journey }) => {
+        const data = (nodes[0]?.data ?? {}) as Record<string, unknown>;
+        const triggerEvent =
+          typeof data.event === 'string' && data.event ? data.event : null;
+        return { ...journey, triggerEvent };
+      })
+    );
   }
 
   get(workspaceId: string, id: string) {

@@ -9,6 +9,25 @@ import {
   chargeJourneyTriggerUsage,
 } from '../../../services/walletUsage.js';
 import { InsufficientWalletBalanceError } from '../../../services/wallet.service.js';
+import { isWorkspaceAutomationsPaused } from '../../../services/workspaceAutomationSettings.service.js';
+
+function resolveInboundChannel(
+  payload: Record<string, unknown> | undefined,
+  conversationChannel: string | null | undefined
+): string | null {
+  const fromPayload = payload?.channel;
+  if (fromPayload === 'whatsapp' || fromPayload === 'instagram' || fromPayload === 'messenger') {
+    return fromPayload;
+  }
+  if (
+    conversationChannel === 'whatsapp' ||
+    conversationChannel === 'instagram' ||
+    conversationChannel === 'messenger'
+  ) {
+    return conversationChannel;
+  }
+  return conversationChannel?.trim() || null;
+}
 
 export class JourneyTriggerService {
   private static listenersRegistered = false;
@@ -34,6 +53,7 @@ export class JourneyTriggerService {
   }
 
   private async handleMessageReceived(input: JourneyTriggerPayload): Promise<void> {
+    if (await isWorkspaceAutomationsPaused(input.workspaceId)) return;
     await this.resumeWaitingReplies(input);
     await this.handleEvent(input);
   }
@@ -45,8 +65,12 @@ export class JourneyTriggerService {
         : typeof input.payload?.message === 'string'
           ? input.payload.message
           : '';
+    const buttonPayload =
+      typeof input.payload?.buttonPayload === 'string'
+        ? input.payload.buttonPayload.trim()
+        : '';
 
-    if (!replyText.trim()) return;
+    if (!replyText.trim() && !buttonPayload) return;
 
     const waiting = await this.executionRepo.findWaitingForReply(
       input.workspaceId,
@@ -55,6 +79,36 @@ export class JourneyTriggerService {
 
     for (const execution of waiting) {
       const ctx = (execution.context ?? {}) as ExecutionWaitContext;
+
+      if (ctx.waitKind === 'button' && execution.currentNodeId) {
+        const node = await this.journeyRepo.getNodeWithEdges(
+          execution.journeyId,
+          execution.currentNodeId
+        );
+        if (!node || node.type !== 'BUTTONS') continue;
+        const matchKey = (buttonPayload || replyText).trim().toLowerCase();
+        const edge =
+          node.outgoingEdges.find(
+            (e) => e.conditionValue && e.conditionValue.toLowerCase() === matchKey
+          ) ??
+          node.outgoingEdges.find((e) => {
+            const data = node.data as { buttons?: Array<{ id?: string; title?: string }> };
+            const btn = (data.buttons ?? []).find(
+              (b) =>
+                String(b.id ?? '').toLowerCase() === matchKey ||
+                String(b.title ?? '').toLowerCase() === matchKey
+            );
+            return btn && e.conditionValue === btn.id;
+          });
+        if (!edge) continue;
+        await this.engine.resumeAfterReply(
+          execution.id,
+          replyText.trim() || buttonPayload,
+          edge.targetNodeId
+        );
+        break;
+      }
+
       if (ctx.waitKind !== 'reply' || !ctx.nextNodeId) continue;
 
       await this.engine.resumeAfterReply(execution.id, replyText.trim(), ctx.nextNodeId);
@@ -63,6 +117,8 @@ export class JourneyTriggerService {
   }
 
   async handleEvent(input: JourneyTriggerPayload): Promise<void> {
+    if (await isWorkspaceAutomationsPaused(input.workspaceId)) return;
+
     const conversation = await prisma.conversation.findFirst({
       where: {
         workspaceId: input.workspaceId,
@@ -70,7 +126,7 @@ export class JourneyTriggerService {
         status: { not: 'resolved' },
       },
       orderBy: { lastMessageAt: 'desc' },
-      select: { assigneeType: true, assigneeId: true },
+      select: { assigneeType: true, assigneeId: true, channel: true },
     });
 
     if (!conversation || conversation.assigneeType !== 'journey' || !conversation.assigneeId) {
@@ -83,7 +139,12 @@ export class JourneyTriggerService {
     );
     if (!journey) return;
 
-    await this.startJourneyExecution(journey, input);
+    const channel = resolveInboundChannel(input.payload, conversation.channel);
+    // WhatsApp journeys only — Instagram has its own InstagramJourney system
+    if (input.event === 'message.received' && channel && channel !== 'whatsapp') {
+      return;
+    }
+    await this.startJourneyExecution(journey, input, channel);
   }
 
   /** Start a specific published journey for a contact (inbox assignment). */
@@ -92,6 +153,7 @@ export class JourneyTriggerService {
     journeyId: string,
     contactId: string
   ): Promise<void> {
+    if (await isWorkspaceAutomationsPaused(workspaceId)) return;
     const journey = await this.journeyRepo.findPublishedById(workspaceId, journeyId);
     if (!journey) return;
 
@@ -105,12 +167,13 @@ export class JourneyTriggerService {
       event: 'manual.assigned',
       contactId,
       payload: { source: 'inbox_assignment' },
-    });
+    }, null);
   }
 
   private async startJourneyExecution(
     journey: Awaited<ReturnType<JourneyRepository['findPublishedById']>>,
-    input: JourneyTriggerPayload
+    input: JourneyTriggerPayload,
+    channel: string | null = null
   ): Promise<void> {
     if (!journey) return;
 
@@ -118,7 +181,12 @@ export class JourneyTriggerService {
       if (n.type !== 'TRIGGER') return false;
       if (input.event === 'manual.assigned') return true;
       const data = n.data as TriggerNodeData;
-      return data.event === input.event;
+      if (data.event !== input.event) return false;
+      // WhatsApp-only: ignore multi-channel filter leftovers; channel already gated above
+      if (input.event === 'message.received' && channel && channel !== 'whatsapp') {
+        return false;
+      }
+      return true;
     });
     if (!triggerNode) return;
 

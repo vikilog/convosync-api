@@ -7,6 +7,7 @@ import {
   mimeTypeFromStorageKey,
   publicObjectUrl,
   putObject,
+  sumObjectBytesUnderPrefix,
 } from '../../services/objectStorage.js';
 
 function extensionForMime(mimeType: string, fileName?: string): string {
@@ -80,6 +81,15 @@ export async function readMediaGalleryFile(storageKey: string): Promise<{
 export async function deleteMediaGalleryFile(storageKey?: string | null): Promise<void> {
   if (!storageKey) return;
   await deleteObject(storageKey);
+}
+
+export function mediaGalleryStoragePrefix(workspaceId: string): string {
+  return `${workspaceId}/media-gallery`;
+}
+
+/** Aggregate byte usage for a workspace's media gallery prefix in S3 (or local uploads). */
+export async function getMediaGalleryUsedBytes(workspaceId: string): Promise<number> {
+  return sumObjectBytesUnderPrefix(mediaGalleryStoragePrefix(workspaceId));
 }
 
 /**

@@ -7,11 +7,19 @@ import { companyAuth } from '../middleware/workspaceScope.js';
 import {
   MediaStorageError,
   deleteMediaGalleryFile,
+  getMediaGalleryUsedBytes,
   mediaTypeFromMime,
   readMediaGalleryFile,
   saveMediaGalleryFile,
 } from '../modules/media-gallery/media-storage.js';
 import { getPresignedGetUrl, isObjectStorageEnabled } from '../services/objectStorage.js';
+import {
+  assertMediaGalleryAllowed,
+  assertMediaStorageUploadAllowed,
+  getWorkspacePlanFeatures,
+  PlanGateError,
+  storageLimitBytesFromPlan,
+} from '../services/planUsageGuards.js';
 
 const SCOPE = z.enum(['customer', 'partner', 'both']);
 const TYPE = z.enum(['image', 'pdf', 'video', 'document']);
@@ -57,6 +65,18 @@ function parseTags(raw: string): string[] {
 function parseUsage(raw: string): string[] {
   const tags = parseTags(raw);
   return tags.length > 0 ? tags : ['agent'];
+}
+
+async function guardMediaGallery(request: FastifyRequest, reply: FastifyReply) {
+  const { workspaceId } = getJwtUser(request);
+  try {
+    await assertMediaGalleryAllowed(workspaceId);
+  } catch (err) {
+    if (err instanceof PlanGateError) {
+      return reply.code(403).send({ error: err.message, upgradePath: err.upgradePath });
+    }
+    throw err;
+  }
 }
 
 async function parseCreateMultipart(request: FastifyRequest) {
@@ -105,12 +125,27 @@ async function parseCreateMultipart(request: FastifyRequest) {
 /** Top-level Media Gallery — workspace-scoped (tenant = workspaceId). */
 export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
   const auth = companyAuth;
+  const galleryAuth = { onRequest: auth.onRequest, preHandler: guardMediaGallery };
 
   await fastify.register(multipart, {
     limits: { fileSize: 16 * 1024 * 1024, files: 1 },
   });
 
-  fastify.get('/', auth, async (request) => {
+  fastify.get('/usage', galleryAuth, async (request) => {
+    const { workspaceId } = getJwtUser(request);
+    const features = await getWorkspacePlanFeatures(workspaceId);
+    const [usedBytes, limitBytes] = await Promise.all([
+      getMediaGalleryUsedBytes(workspaceId),
+      Promise.resolve(storageLimitBytesFromPlan(features)),
+    ]);
+    return {
+      usedBytes,
+      limitBytes,
+      storageGb: features.storageGb,
+    };
+  });
+
+  fastify.get('/', galleryAuth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const q = request.query as {
       activeOnly?: string;
@@ -140,7 +175,7 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
     });
   });
 
-  fastify.get('/:mediaId/file', auth, async (request, reply) => {
+  fastify.get('/:mediaId/file', galleryAuth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { mediaId } = request.params as { mediaId: string };
     const row = await prisma.mediaAsset.findFirst({
@@ -162,7 +197,7 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
   });
 
   /** Presigned S3 GET — bucket is private so stored `url` alone breaks in <img>. */
-  fastify.get('/:mediaId/signed-url', auth, async (request, reply) => {
+  fastify.get('/:mediaId/signed-url', galleryAuth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { mediaId } = request.params as { mediaId: string };
     const query = request.query as { expiresIn?: string };
@@ -215,6 +250,19 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
           'S3 is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_BUCKET_NAME to upload media.',
         code: 'S3_NOT_CONFIGURED',
       });
+    }
+
+    try {
+      if (parsed.fileBuffer?.length) {
+        await assertMediaStorageUploadAllowed(workspaceId, parsed.fileBuffer.length);
+      } else {
+        await assertMediaGalleryAllowed(workspaceId);
+      }
+    } catch (err) {
+      if (err instanceof PlanGateError) {
+        return reply.code(403).send({ error: err.message, upgradePath: err.upgradePath });
+      }
+      throw err;
     }
 
     const scopeParsed = SCOPE.safeParse(parsed.scope || 'customer');
@@ -286,7 +334,7 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
     return reply.code(201).send(item);
   });
 
-  fastify.patch('/:mediaId', auth, async (request, reply) => {
+  fastify.patch('/:mediaId', galleryAuth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { mediaId } = request.params as { mediaId: string };
     const existing = await prisma.mediaAsset.findFirst({
@@ -302,7 +350,7 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
   });
 
   /** Hard-delete: remove DB row + S3 object */
-  fastify.delete('/:mediaId', auth, async (request, reply) => {
+  fastify.delete('/:mediaId', galleryAuth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { mediaId } = request.params as { mediaId: string };
     const existing = await prisma.mediaAsset.findFirst({

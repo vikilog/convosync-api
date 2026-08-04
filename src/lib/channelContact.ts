@@ -36,6 +36,13 @@ export function isMessengerSource(source: string | null | undefined): boolean {
 
 export type ContactChannelFilter = 'whatsapp' | 'instagram' | 'messenger';
 
+/** Channel implied by how the contact's `phone` identity column is encoded. */
+export function resolveContactChannel(contact: { phone: string }): ContactChannelFilter {
+  if (isInstagramPhone(contact.phone)) return 'instagram';
+  if (isMessengerPhone(contact.phone)) return 'messenger';
+  return 'whatsapp';
+}
+
 export function contactChannelWhere(channel: ContactChannelFilter): {
   OR?: Array<{ phone?: { startsWith: string }; source?: string }>;
   AND?: Array<{ NOT: { phone: { startsWith: string } } }>;

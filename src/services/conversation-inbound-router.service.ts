@@ -6,6 +6,10 @@ import {
   type InboundWhatsAppContext,
 } from './ruleBasedFlowEngine.js';
 import { prisma } from '../index.js';
+import { eventBus } from '../modules/journey/events/event-bus.js';
+import { isWorkspaceAutomationsPaused } from './workspaceAutomationSettings.service.js';
+import { maybeSendDefaultReply } from './defaultReply.service.js';
+import { tryAutoAssignInboundConversation } from './inboxAutoAssign.service.js';
 
 function logRoute(label: string, payload?: unknown) {
   const prefix = '[InboundRouter]';
@@ -39,24 +43,50 @@ export async function routeInboundConversation(ctx: InboundMessagingContext): Pr
     select: { assigneeType: true, assigneeId: true, status: true, channel: true },
   });
 
-  if (!conversation?.assigneeType) {
-    logRoute('skip — unassigned (no automation)');
-    return;
-  }
-
-  if (conversation.status === 'resolved') {
+  if (conversation?.status === 'resolved') {
     logRoute('skip — conversation resolved');
     return;
   }
 
-  const channel = resolveInboxChannel(ctx.channel, conversation.channel);
+  const channel = resolveInboxChannel(ctx.channel, conversation?.channel);
   const routed: InboundMessagingContext = { ...ctx, channel };
 
-  switch (conversation.assigneeType) {
-    case 'user':
-      logRoute('skip — assigned to human agent');
+  if (!conversation?.assigneeType) {
+    const autoAssigned = await tryAutoAssignInboundConversation({
+      workspaceId: ctx.workspaceId,
+      conversationId: ctx.conversationId,
+      contactId: ctx.contactId,
+      channel,
+    });
+    if (autoAssigned) {
+      logRoute('unassigned — auto-assigned to human agent');
       return;
+    }
 
+    logRoute('unassigned — try default reply');
+    await maybeSendDefaultReply({
+      workspaceId: ctx.workspaceId,
+      conversationId: ctx.conversationId,
+      contactId: ctx.contactId,
+      channel,
+    });
+    return;
+  }
+
+  if (conversation.assigneeType === 'user') {
+    logRoute('skip — assigned to human agent');
+    return;
+  }
+
+  // Kill switch: pause journeys / bots / AI auto-replies
+  if (await isWorkspaceAutomationsPaused(ctx.workspaceId)) {
+    logRoute('skip — workspace automations paused', {
+      assigneeType: conversation.assigneeType,
+    });
+    return;
+  }
+
+  switch (conversation.assigneeType) {
     case 'ai':
       logRoute('route → AI Copilot', { channel });
       await processAiInbound(routed);
@@ -76,7 +106,26 @@ export async function routeInboundConversation(ctx: InboundMessagingContext): Pr
       return;
 
     case 'journey':
-      logRoute('route → journey (via event bus)', { journeyId: conversation.assigneeId });
+      logRoute('route → journey (via event bus)', {
+        journeyId: conversation.assigneeId,
+        channel,
+      });
+      // Instagram automations start from IG webhook (assign + keyword). Don't fan into WA journeys.
+      if (channel === 'instagram') {
+        logRoute('skip — Instagram automation handled by IG journey trigger');
+        return;
+      }
+      void eventBus.emit('message.received', {
+        workspaceId: ctx.workspaceId,
+        event: 'message.received',
+        contactId: ctx.contactId,
+        payload: {
+          text: ctx.text,
+          buttonPayload: ctx.buttonPayload,
+          conversationId: ctx.conversationId,
+          channel,
+        },
+      });
       return;
 
     default:

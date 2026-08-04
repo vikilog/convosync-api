@@ -14,6 +14,7 @@ import {
   parseInstagramScopedUserId,
   parseMessengerPsid,
 } from '../lib/channelContact.js';
+import { registerWorkspaceTags } from './workspaceTags.service.js';
 
 export type AgentFlowNodeType =
   | 'ask_question'
@@ -341,6 +342,8 @@ async function applyAddTags(
     contactId: contact.id,
     tags: updated.tags,
   });
+
+  await registerWorkspaceTags(workspaceId, tagsToAdd);
 
   logFlow('tags applied', { contactId: contact.id, tags: tagsToAdd });
   return tagsToAdd;

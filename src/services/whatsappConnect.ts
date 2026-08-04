@@ -206,7 +206,7 @@ export async function connectWorkspaceWhatsApp(
     select: { id: true },
   });
   if (!existingInWorkspace) {
-    await assertChannelCreateAllowed(input.workspaceId);
+    await assertChannelCreateAllowed(input.workspaceId, 1, 'whatsapp');
   }
 
   await prisma.whatsAppPhoneAccount.upsert({

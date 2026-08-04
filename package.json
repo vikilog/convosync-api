@@ -12,12 +12,14 @@
     "db:studio": "prisma studio --schema=src/prisma/schema.prisma",
     "db:seed": "tsx src/seed.ts",
     "seed:admin": "tsx scripts/seed-super-admin.ts",
+    "plans:seed": "tsx src/scripts/seed-public-plans.ts",
     "razorpay:sync-plans": "tsx src/scripts/sync-razorpay-plans.ts",
     "razorpay:list-plans": "tsx src/scripts/list-razorpay-plans.ts",
     "db:reset": "tsx src/reset-db.ts",
     "wallet:simulate-debit": "tsx scripts/simulate-wallet-debit.ts",
     "wallet:test-auto-recharge": "tsx scripts/test-auto-recharge.ts",
-    "wallet:reset-auto-recharge": "tsx scripts/reset-auto-recharge.ts"
+    "wallet:reset-auto-recharge": "tsx scripts/reset-auto-recharge.ts",
+    "coupons:backfill-redemptions": "tsx scripts/backfill-coupon-redemptions.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1075.0",

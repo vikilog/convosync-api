@@ -1,5 +1,5 @@
 import type { Conversation } from '@prisma/client';
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import { getIo } from '../socket.js';
 import {
   normalizeWhatsAppContactPhone,

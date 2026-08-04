@@ -55,6 +55,22 @@ export function formatInstagramSendError(err: unknown): string {
   return 'Failed to send Instagram message';
 }
 
+/** Messenger Platform sender_action — works for Instagram Messaging too. */
+export async function sendInstagramTypingOn(
+  pageId: string,
+  pageAccessToken: string,
+  recipientInstagramScopedId: string
+): Promise<void> {
+  await axios.post(
+    `https://graph.facebook.com/v25.0/${pageId}/messages`,
+    {
+      recipient: { id: recipientInstagramScopedId },
+      sender_action: 'typing_on',
+    },
+    { params: { access_token: pageAccessToken } }
+  );
+}
+
 async function postInstagramMessage(
   actorId: string,
   pageAccessToken: string,
@@ -77,6 +93,8 @@ type SendInstagramOptions = {
   replyToMid?: string;
   /** IG professional account id — tried if Page-id send fails */
   instagramUserId?: string;
+  /** Instagram Messaging quick_replies (max 13, title ≤20 chars) */
+  quickReplies?: Array<{ title: string; payload?: string }>;
 };
 
 /**
@@ -94,7 +112,19 @@ export async function sendInstagramMessage(
     throw new Error('Message cannot be empty');
   }
 
-  const message = { text: body.slice(0, 1000) };
+  const quickReplies = (options?.quickReplies ?? [])
+    .map((q) => ({
+      content_type: 'text' as const,
+      title: q.title.trim().slice(0, 20),
+      payload: (q.payload?.trim() || q.title.trim()).slice(0, 1000),
+    }))
+    .filter((q) => q.title.length > 0)
+    .slice(0, 13);
+
+  const message: Record<string, unknown> = { text: body.slice(0, 1000) };
+  if (quickReplies.length) {
+    message.quick_replies = quickReplies;
+  }
   const recipient = { id: recipientInstagramScopedId };
   const replyTo = options?.replyToMid
     ? { reply_to: { mid: options.replyToMid } }

@@ -595,6 +595,35 @@ async function upsertSyncedThread(
 
   if (toCreate.length > 0) {
     await prisma.message.createMany({ data: toCreate });
+
+    // Sync path never hit the webhook — resume Ask Question waits for new contact replies.
+    const contactReplies = toCreate.filter((m) => m.sender === 'contact' && m.content?.trim());
+    if (contactReplies.length > 0) {
+      try {
+        const { getInstagramJourneyContainer } = await import(
+          '../modules/instagram-journey/container.js'
+        );
+        const trigger = getInstagramJourneyContainer(prisma).triggerService;
+        for (const reply of contactReplies) {
+          await trigger.resumeWaitingRepliesOnly({
+            workspaceId: account.workspaceId,
+            event: 'dm.received',
+            contactId: contact.id,
+            text: reply.content,
+            payload: {
+              conversationId: conv.id,
+              messageId: reply.waMessageId,
+              source: 'instagram_sync',
+            },
+          });
+        }
+      } catch (err) {
+        console.warn('[instagram-sync] journey resume failed', {
+          conversationId: conv.id,
+          err: err instanceof Error ? err.message : err,
+        });
+      }
+    }
   }
 
   if (pendingMedia.length > 0) {

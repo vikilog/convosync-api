@@ -32,6 +32,11 @@ type PageMessagingEvent = {
       payload?: { url?: string; title?: string; sticker_id?: number };
     }>;
   };
+  postback?: {
+    mid?: string;
+    payload?: string;
+    title?: string;
+  };
   read?: {
     mid?: string;
     watermark?: number;
@@ -272,10 +277,26 @@ export async function handleMessengerWebhookBody(body: PageMessagingWebhookBody)
         continue;
       }
 
+      if (senderId === account.pageId) continue;
+
+      if (event.postback?.payload) {
+        const mid =
+          event.postback.mid?.trim() ||
+          `postback_${senderId}_${event.timestamp ?? Date.now()}`;
+        const parsed = parseInboundInstagramMessage(event.postback.payload.trim());
+        await upsertMessengerInboundMessage({
+          pageId: account.pageId,
+          senderId,
+          messageId: mid,
+          parsed,
+          pageAccessToken,
+        });
+        continue;
+      }
+
       const message = event.message;
       if (!message?.mid) continue;
       if (message.is_echo) continue;
-      if (senderId === account.pageId) continue;
 
       const parsed = parseInboundInstagramMessage(message.text, message.attachments);
       await upsertMessengerInboundMessage({

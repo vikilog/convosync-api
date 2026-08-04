@@ -45,6 +45,7 @@ export default async function billingRoutes(fastify: FastifyInstance) {
   fastify.post('/billing/order/create', billingWrite, controller.createOrder);
   fastify.post('/billing/order/verify', billingWrite, controller.verifyOrder);
   fastify.post('/billing/subscription/create', billingWrite, controller.createSubscription);
+  fastify.post('/billing/coupon/validate', auth, controller.validateCoupon);
   fastify.post('/billing/subscription/verify', billingWrite, controller.verifySubscription);
   fastify.post('/billing/subscription/cancel', billingWrite, controller.cancelSubscription);
   fastify.post('/billing/subscription/pause', billingWrite, controller.pauseSubscription);

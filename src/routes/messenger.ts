@@ -13,6 +13,7 @@ import {
   syncMessengerConversationsForWorkspace,
   DEFAULT_MAX_CONVERSATION_PAGES,
 } from '../services/messengerSync.js';
+import { planGatePayload } from '../services/planUsageGuards.js';
 import { disconnectMessengerAccounts } from '../services/channelDisconnectCleanup.service.js';
 
 export default async function messengerRoutes(fastify: FastifyInstance) {
@@ -83,6 +84,9 @@ export default async function messengerRoutes(fastify: FastifyInstance) {
         webhookSubscribe: webhookResults[0],
       });
     } catch (err: unknown) {
+      const gate = planGatePayload(err);
+      if (gate) return reply.code(403).send(gate);
+
       const graphMessage =
         (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
           ?.message || (err as Error)?.message;

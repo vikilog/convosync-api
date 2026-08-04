@@ -5,15 +5,19 @@ export const JOURNEY_NODE_TYPES = [
   'TRIGGER',
   'SEND_MESSAGE',
   'ASK_QUESTION',
+  'BUTTONS',
   'ASSIGN_TO',
   'WAIT',
   'CONDITION',
+  'RANDOMIZER',
   'UPDATE_FIELD',
   'WEBHOOK',
   'UPDATE_TAG',
+  'ADD_TO_FUNNEL',
   'OPEN_CONVERSATION',
   'CLOSE_CONVERSATION',
   'TRIGGER_JOURNEY',
+  'GOTO_STEP',
   'UPDATE_LIFECYCLE',
   'SEND_CAPI',
   'SEND_TIKTOK',
@@ -41,26 +45,105 @@ export type EdgeCondition = (typeof EDGE_CONDITIONS)[number];
 export const CONDITION_OPERATORS = ['=', '!=', '>', '<', 'contains'] as const;
 export type ConditionOperator = (typeof CONDITION_OPERATORS)[number];
 
+/**
+ * Condition "kind" — drives which contact attribute a condition row reads and how its
+ * value input renders in the builder. `field` is the legacy generic field/operator/value
+ * row (free-text field name); every other kind is a friendlier preset over the same shape.
+ */
+export const CONDITION_TYPES = [
+  'field',
+  'tag',
+  'email_known',
+  'phone_known',
+  'follows_account',
+  'custom_field',
+  'channel',
+  'journey_status',
+  /** Generic "system field" preset — `field` holds a key into resolveSystemField (see condition-evaluator.service). */
+  'system_field',
+  /** `value` holds a JSON-encoded { startTime, endTime, daysOfWeek } window; checked against workspace-local time. */
+  'current_time',
+] as const;
+export type ConditionType = (typeof CONDITION_TYPES)[number];
+
+export type Condition = {
+  /** Defaults to 'field' when omitted (legacy rows never had a `type`). */
+  type?: ConditionType;
+  /** Generic field name, custom field key, or unused depending on `type`. */
+  field: string;
+  operator: ConditionOperator;
+  value: string | number;
+};
+
+export const DEFAULT_CONDITION: Condition = {
+  type: 'field',
+  field: 'contact.name',
+  operator: 'contains',
+  value: '',
+};
+
+export type ConditionCombinator = 'all' | 'any';
+
 export const ANALYTICS_METRICS = ['sent', 'delivered', 'read', 'clicked', 'replied'] as const;
 export type AnalyticsMetric = (typeof ANALYTICS_METRICS)[number];
 
 export type TriggerNodeData = {
   event: string;
+  /** Inbox channels this trigger accepts. Empty/missing = all (backward compatible). */
+  channels?: string[];
   filters?: Record<string, unknown>;
 };
 
+export const JOURNEY_TRIGGER_CHANNELS = ['whatsapp', 'instagram', 'messenger'] as const;
+export type JourneyTriggerChannel = (typeof JOURNEY_TRIGGER_CHANNELS)[number];
+
+/** Empty/missing channels ⇒ all channels (existing journeys keep working). */
+export function triggerAllowsChannel(
+  data: Pick<TriggerNodeData, 'channels'> | Record<string, unknown> | null | undefined,
+  channel: string | null | undefined
+): boolean {
+  if (!data || typeof data !== 'object') return true;
+  const raw = (data as TriggerNodeData).channels;
+  if (!Array.isArray(raw) || raw.length === 0) return true;
+  if (!channel) return true;
+  return raw.includes(channel);
+}
+
 export type SendMessageNodeData = {
-  messageMode?: 'text' | 'template';
+  messageMode?: 'text' | 'template' | 'cta_url';
   templateName?: string;
   templateId?: string;
   language?: string;
   variables?: Record<string, string> | string[];
   text?: string;
+  /** Show channel typing indicator before send (length-based delay). */
+  simulateTyping?: boolean;
+  /**
+   * `cta_url` mode: WhatsApp's `interactive.type: "cta_url"` message — the only Meta-accepted
+   * way to attach a link button (WA reply buttons and IG quick replies reject URL types).
+   */
+  ctaUrl?: string;
+  /** Button label shown on the CTA URL message (Meta limit: 20 chars). */
+  ctaLabel?: string;
 };
 
 export type AskQuestionNodeData = {
   text: string;
   saveReplyTo?: string;
+  simulateTyping?: boolean;
+  /** UI: compact “data capture” mode — same wait/resume as Ask Question */
+  quickCollect?: boolean;
+};
+
+export type ButtonsNodeData = {
+  text: string;
+  /** Max 3 on WhatsApp interactive; each id matches an outgoing edge conditionValue */
+  buttons: Array<{ id: string; title: string }>;
+  simulateTyping?: boolean;
+};
+
+export type RandomizerNodeData = {
+  paths: Array<{ id: string; label?: string; weight: number }>;
 };
 
 export type AssignToNodeData = {
@@ -71,13 +154,63 @@ export type AssignToNodeData = {
 export type WaitNodeData = {
   amount: number;
   unit: 'minutes' | 'hours' | 'days';
+  /** If enabled, resume only inside this daily window (workspace timezone). */
+  businessHours?: {
+    enabled?: boolean;
+    startTime?: string;
+    endTime?: string;
+    daysOfWeek?: number[];
+  };
 };
 
-export type ConditionNodeData = {
-  field: string;
-  operator: ConditionOperator;
-  value: string | number;
+export type GotoStepNodeData = {
+  targetNodeId: string;
 };
+
+/** Max same-flow GOTO_STEP hops per execution (infinite-loop guard). */
+export const GOTO_STEP_MAX_HOPS = 25;
+
+export type ConditionNodeData = {
+  /** Legacy single condition — still written for older clients/back-compat. */
+  field?: string;
+  operator?: ConditionOperator;
+  value?: string | number;
+  /** Preferred shape: one or more conditions combined with `combinator`. */
+  conditions?: Condition[];
+  combinator?: ConditionCombinator;
+};
+
+/**
+ * Normalize CONDITION node data → a non-empty condition list + combinator.
+ * Backward compatible: a lone legacy `{ field, operator, value }` object (no `conditions`
+ * array) becomes a 1-item list with combinator `"all"`, so old saved journeys keep evaluating
+ * exactly as before.
+ */
+export function normalizeConditionGroup(
+  data: ConditionNodeData | Record<string, unknown> | null | undefined
+): { conditions: Condition[]; combinator: ConditionCombinator } {
+  const d = (data ?? {}) as ConditionNodeData;
+  if (Array.isArray(d.conditions) && d.conditions.length > 0) {
+    return {
+      conditions: d.conditions,
+      combinator: d.combinator === 'any' ? 'any' : 'all',
+    };
+  }
+  if (d.field != null && d.field !== '') {
+    return {
+      conditions: [
+        {
+          type: 'field',
+          field: d.field,
+          operator: d.operator ?? '=',
+          value: d.value ?? '',
+        },
+      ],
+      combinator: 'all',
+    };
+  }
+  return { conditions: [], combinator: 'all' };
+}
 
 export type UpdateFieldNodeData = {
   field: 'name' | 'email' | 'phone' | 'journeyStatus' | 'custom';
@@ -107,6 +240,12 @@ export type WebhookNodeData = {
 export type UpdateTagNodeData = {
   action: 'add' | 'remove' | 'set';
   tags: string[];
+};
+
+export type AddToFunnelNodeData = {
+  funnelId: string;
+  /** Optional board; defaults to first/"New" stage */
+  stageId?: string;
 };
 
 export type CloseConversationNodeData = {
@@ -155,7 +294,9 @@ export type DelayJobData = {
 };
 
 export type ExecutionWaitContext = {
-  waitKind?: 'delay' | 'reply';
+  waitKind?: 'delay' | 'reply' | 'button';
   nextNodeId?: string;
   replyText?: string;
+  /** BUTTONS node: match inbound payload/text to edge conditionValue */
+  buttonNodeId?: string;
 };

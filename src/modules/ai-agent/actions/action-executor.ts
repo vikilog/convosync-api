@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { recordConversationEvent } from '../../../services/conversation-event.service.js';
+import { registerWorkspaceTags } from '../../../services/workspaceTags.service.js';
 
 export type AgentAction =
   | { type: 'close_conversations' }
@@ -25,52 +26,10 @@ export interface ActionResult {
   error?: string;
 }
 
-const SYSTEM_ESCALATION_FROM =
-  process.env.CONVOSYNC_SYSTEM_EMAIL_FROM || 'alerts@mail.convosync.io';
-
-// Lazy: email.service → planUsageGuards → src/index.ts (starts HTTP). Keep off the tags path.
-async function sendEscalationEmail(params: {
-  workspaceId: string;
-  to: string;
-  emailIntegrationEnabled: boolean;
-  subject: string;
-  text: string;
-}): Promise<void> {
-  if (params.emailIntegrationEnabled) {
-    const { getEmailService } = await import('../../email/container.js');
-    await getEmailService().sendEmail(params.workspaceId, {
-      to: params.to,
-      subject: params.subject,
-      text: params.text,
-    });
-    return;
-  }
-  const { ResendProvider } = await import('../../email/providers/resend.provider.js');
-  await new ResendProvider().sendEmail({
-    from: SYSTEM_ESCALATION_FROM,
-    fromName: 'ConvoSync Alerts',
-    to: params.to,
-    subject: params.subject,
-    text: params.text,
-  });
-}
-
 const KNOWN_CONTACT_COLUMNS = ['name', 'email', 'phone', 'source', 'journeyStatus'] as const;
 type KnownContactColumn = (typeof KNOWN_CONTACT_COLUMNS)[number];
 function isKnownColumn(key: string): key is KnownContactColumn {
   return (KNOWN_CONTACT_COLUMNS as readonly string[]).includes(key);
-}
-
-function escalationEmailBody(
-  ctx: ActionExecutionContext,
-  conv: { contact?: { name?: string | null; phone?: string | null } | null } | null
-): string {
-  return (
-    `AI agent escalated a conversation.\n\n` +
-    `Reason: ${ctx.triggerReason}\n` +
-    `Customer: ${conv?.contact?.name ?? 'Unknown'} (${conv?.contact?.phone ?? 'N/A'})\n` +
-    `Conversation ID: ${ctx.conversationId}`
-  );
 }
 
 export async function executeActions(
@@ -151,23 +110,27 @@ async function executeOne(action: AgentAction, ctx: ActionExecutionContext): Pro
           // socket optional outside HTTP server (scripts / early boot)
         }
 
-        const workspace = await ctx.prisma.workspace.findUnique({
-          where: { id: ctx.workspaceId },
-          select: { email: true, emailIntegrationEnabled: true },
-        });
-
-        if (workspace?.email) {
-          try {
-            await sendEscalationEmail({
-              workspaceId: ctx.workspaceId,
-              to: workspace.email,
-              emailIntegrationEnabled: workspace.emailIntegrationEnabled,
-              subject: `Human handoff needed — ${conv?.contact?.name ?? 'a customer'}`,
-              text: escalationEmailBody(ctx, conv),
-            });
-          } catch (emailErr) {
-            console.error('Escalation email failed:', (emailErr as Error).message);
-          }
+        try {
+          const { notifyWorkspaceEvent } = await import(
+            '../../../services/notificationPreferences.service.js'
+          );
+          await notifyWorkspaceEvent({
+            prisma: ctx.prisma,
+            workspaceId: ctx.workspaceId,
+            eventType: 'human_handoff',
+            payload: {
+              vars: {
+                customer_name: conv?.contact?.name?.trim() || 'a customer',
+                customer_phone: conv?.contact?.phone?.trim() || 'N/A',
+                reason: ctx.triggerReason,
+                conversation_id: ctx.conversationId,
+                agent_name: ctx.agentName?.trim() || 'AI agent',
+                intent: ctx.intent,
+              },
+            },
+          });
+        } catch (notifyErr) {
+          console.error('Escalation notify failed:', (notifyErr as Error).message);
         }
 
         return { type: action.type, success: true, detail: ctx.triggerReason };
@@ -183,6 +146,7 @@ async function executeOne(action: AgentAction, ctx: ActionExecutionContext): Pro
           where: { id: ctx.contactId },
           data: { tags: { set: merged } },
         });
+        void registerWorkspaceTags(ctx.workspaceId, action.config.tags);
         return { type: action.type, success: true, detail: action.config.tags.join(', ') };
       }
 

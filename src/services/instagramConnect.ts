@@ -519,7 +519,7 @@ export async function completeInstagramConnect(input: {
     select: { id: true },
   });
   if (!existingInWorkspace) {
-    await assertChannelCreateAllowed(input.workspaceId);
+    await assertChannelCreateAllowed(input.workspaceId, 1, 'instagram');
   }
 
   const now = new Date();

@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { initJourneyModule } from '../modules/journey/container.js';
+import { initInstagramJourneyModule } from '../modules/instagram-journey/container.js';
 import {
   isConversationAssigneeType,
   type ConversationAssigneePatch,
@@ -33,7 +34,7 @@ export async function applyConversationAssignee(
 ): Promise<void> {
   const conv = await prisma.conversation.findFirst({
     where: { id: conversationId, workspaceId },
-    select: { id: true, contactId: true, assigneeType: true, assigneeId: true },
+    select: { id: true, contactId: true, assigneeType: true, assigneeId: true, channel: true },
   });
   if (!conv) throw new ConversationAssigneeError('Conversation not found');
 
@@ -74,10 +75,23 @@ export async function applyConversationAssignee(
   }
 
   if (assigneeType === 'journey' && assigneeId) {
-    const journey = await prisma.journey.findFirst({
-      where: { id: assigneeId, workspaceId, status: 'published' },
-    });
-    if (!journey) throw new ConversationAssigneeError('Published journey not found');
+    if (conv.channel === 'instagram') {
+      const igJourney = await prisma.instagramJourney.findFirst({
+        where: { id: assigneeId, workspaceId, status: 'published' },
+      });
+      if (!igJourney) {
+        throw new ConversationAssigneeError('Published Instagram automation not found');
+      }
+    } else if (conv.channel === 'whatsapp' || !conv.channel) {
+      const journey = await prisma.journey.findFirst({
+        where: { id: assigneeId, workspaceId, status: 'published' },
+      });
+      if (!journey) throw new ConversationAssigneeError('Published WhatsApp automation not found');
+    } else {
+      throw new ConversationAssigneeError(
+        'Automations are only available for WhatsApp and Instagram chats'
+      );
+    }
   }
 
   if (assigneeType === 'ai') {
@@ -149,8 +163,13 @@ export async function applyConversationAssignee(
   }
 
   if (assigneeType === 'journey' && assigneeId) {
-    const { triggerService } = initJourneyModule(prisma);
-    await triggerService.startAssignedJourney(workspaceId, assigneeId, conv.contactId);
+    if (conv.channel === 'instagram') {
+      const { triggerService } = initInstagramJourneyModule(prisma);
+      await triggerService.startPublishedJourney(workspaceId, assigneeId, conv.contactId);
+    } else {
+      const { triggerService } = initJourneyModule(prisma);
+      await triggerService.startAssignedJourney(workspaceId, assigneeId, conv.contactId);
+    }
   }
 
   if (assigneeType === 'rule_based' && assigneeId) {

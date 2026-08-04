@@ -104,6 +104,7 @@ declare module 'razorpay' {
       resume(subscriptionId: string, params?: Record<string, unknown>): Promise<RazorpaySubscription>;
     };
     plans: {
+      create(params: Record<string, unknown>): Promise<RazorpayPlan>;
       all(params?: { count?: number; skip?: number }): Promise<{ items: RazorpayPlan[] }>;
       fetch(planId: string): Promise<RazorpayPlan>;
     };

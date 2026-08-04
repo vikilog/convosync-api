@@ -9,11 +9,30 @@ import {
 import { onboardingPayloadFromUser } from './onboarding.js';
 import { activateWorkspaceSubscription } from './trial.js';
 import { signSessionToken } from './userSecurity.js';
+import { updateUserProfile, validateAvatarValue } from './userProfile.js';
 import {
   getSubscriptionPlanBySlug,
   syncWorkspaceLimitsFromPlanFeatures,
   type PlanFeatures,
 } from './subscriptionPlans.js';
+
+export type PlatformCompanyUpdate = {
+  name?: string;
+  legalName?: string | null;
+  industry?: string | null;
+  website?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  postalCode?: string | null;
+  timezone?: string | null;
+  taxId?: string | null;
+  logoUrl?: string | null;
+  companySize?: string | null;
+};
 
 export async function suspendWorkspace(workspaceId: string) {
   const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
@@ -66,6 +85,8 @@ export async function updateWorkspaceLimits(
   });
 }
 
+const LIVE_BILLING_SUB_STATUSES = ['active', 'authenticated', 'paused'] as const;
+
 /** Attach a catalog (or custom) plan to a workspace and sync usage limits. */
 export async function assignPlanToWorkspace(workspaceId: string, planSlug: string) {
   const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
@@ -99,6 +120,174 @@ export async function assignPlanToWorkspace(workspaceId: string, planSlug: strin
         select: { subscriptionStatus: true },
       })
     ).subscriptionStatus,
+  };
+}
+
+/** Update workspace company profile fields (super-admin). */
+export async function updateOrganizationCompany(
+  workspaceId: string,
+  input: PlatformCompanyUpdate
+) {
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { id: true, email: true, phone: true },
+  });
+  if (!workspace) throw new Error('Workspace not found');
+
+  const data: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined) data[key] = value === '' ? null : value;
+  }
+  if ('logoUrl' in data) {
+    data.logoUrl = validateAvatarValue(data.logoUrl as string | null | undefined);
+  }
+  if ('name' in data && typeof data.name === 'string') {
+    const name = data.name.trim();
+    if (name.length < 2) throw new Error('Company name must be at least 2 characters');
+    data.name = name;
+  }
+  if ('email' in data) {
+    const next =
+      data.email == null ? null : String(data.email).trim().toLowerCase() || null;
+    data.email = next;
+    const prev = workspace.email?.trim().toLowerCase() ?? null;
+    if (next !== prev) data.emailVerifiedAt = null;
+  }
+  if ('phone' in data) {
+    const next =
+      data.phone == null ? null : String(data.phone).replace(/\D/g, '') || null;
+    data.phone = next;
+    const prev = workspace.phone?.replace(/\D/g, '') ?? null;
+    if (next !== prev) data.phoneVerifiedAt = null;
+  }
+
+  if (Object.keys(data).length === 0) throw new Error('Nothing to update');
+
+  return prisma.workspace.update({
+    where: { id: workspaceId },
+    data,
+    select: {
+      id: true,
+      name: true,
+      legalName: true,
+      industry: true,
+      website: true,
+      email: true,
+      phone: true,
+      address: true,
+      city: true,
+      state: true,
+      country: true,
+      postalCode: true,
+      timezone: true,
+      taxId: true,
+      logoUrl: true,
+      companySize: true,
+    },
+  });
+}
+
+/** Update primary owner user profile (super-admin). */
+export async function updateOrganizationOwner(
+  workspaceId: string,
+  input: { name?: string; phone?: string | null; email?: string }
+) {
+  const ownerUserId = await getWorkspaceOwnerUserId(workspaceId);
+  if (!ownerUserId) throw new Error('No owner user found for this workspace');
+
+  if (input.email !== undefined) {
+    const email = input.email.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error('Valid email is required');
+    }
+    const clash = await prisma.user.findFirst({
+      where: { email, NOT: { id: ownerUserId } },
+      select: { id: true },
+    });
+    if (clash) throw new Error('Email is already used by another account');
+
+    await prisma.user.update({
+      where: { id: ownerUserId },
+      data: { email },
+    });
+  }
+
+  if (input.name !== undefined || input.phone !== undefined) {
+    await updateUserProfile(ownerUserId, {
+      name: input.name,
+      phone: input.phone,
+    });
+  }
+
+  const user = await prisma.user.findUniqueOrThrow({
+    where: { id: ownerUserId },
+    select: { id: true, name: true, email: true, phone: true },
+  });
+
+  return { workspaceId, owner: user };
+}
+
+/**
+ * Strip plan from a workspace: clear planId, cancel live billing rows.
+ * Caller should cancel Razorpay subscriptions first when linked.
+ * Trial/suspended status is preserved; paid → cancelled.
+ */
+export async function removePlanFromWorkspace(workspaceId: string) {
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    include: { plan: { select: { slug: true, name: true } } },
+  });
+  if (!workspace) throw new Error('Workspace not found');
+
+  const liveSubs = await prisma.billingSubscription.findMany({
+    where: {
+      workspaceId,
+      status: { in: [...LIVE_BILLING_SUB_STATUSES] },
+    },
+    select: {
+      id: true,
+      razorpaySubscriptionId: true,
+    },
+  });
+
+  const hasCustomQuote = workspace.customPlanSelection != null;
+  if (!workspace.planId && liveSubs.length === 0 && !hasCustomQuote) {
+    throw new Error('No plan or billing subscription to remove');
+  }
+
+  if (liveSubs.length > 0) {
+    await prisma.billingSubscription.updateMany({
+      where: { id: { in: liveSubs.map((s) => s.id) } },
+      data: {
+        status: 'cancelled',
+        cancelAtPeriodEnd: false,
+        cancelledAt: new Date(),
+      },
+    });
+  }
+
+  const keepStatus =
+    workspace.subscriptionStatus === 'trial' || workspace.subscriptionStatus === 'suspended';
+  const nextStatus = keepStatus ? workspace.subscriptionStatus : 'cancelled';
+
+  await prisma.workspace.update({
+    where: { id: workspaceId },
+    data: {
+      planId: null,
+      customPlanSelection: Prisma.DbNull,
+      subscriptionStatus: nextStatus,
+    },
+  });
+
+  return {
+    workspaceId,
+    removedPlanSlug: workspace.plan?.slug ?? null,
+    removedPlanName: workspace.plan?.name ?? null,
+    cancelledBillingSubs: liveSubs.length,
+    razorpaySubscriptionIds: liveSubs
+      .map((s) => s.razorpaySubscriptionId)
+      .filter((id): id is string => Boolean(id)),
+    subscriptionStatus: nextStatus,
   };
 }
 

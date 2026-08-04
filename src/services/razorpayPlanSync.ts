@@ -2,7 +2,7 @@ import type Razorpay from 'razorpay';
 import { prisma } from '../lib/prisma.js';
 import { config } from '../config.js';
 
-export type PlanSlug = 'starter' | 'growth' | 'pro';
+export type PlanSlug = 'starter' | 'growth' | 'business' | 'enterprise';
 
 type RazorpayPlanItem = {
   id: string;
@@ -11,7 +11,7 @@ type RazorpayPlanItem = {
   item?: { amount?: number; currency?: string; name?: string };
 };
 
-const SLUGS: PlanSlug[] = ['starter', 'growth', 'pro'];
+const SLUGS: PlanSlug[] = ['starter', 'growth', 'business', 'enterprise'];
 
 /** Plan IDs from env override API matching. */
 export function razorpayPlanIdsFromEnv(slug: PlanSlug): {

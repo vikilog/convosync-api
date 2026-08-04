@@ -29,6 +29,8 @@ model Workspace {
   website     String?
   email       String?
   phone       String?
+  emailVerifiedAt DateTime?
+  phoneVerifiedAt DateTime?
   address     String?
   city        String?
   state       String?
@@ -61,6 +63,18 @@ model Workspace {
   metaUserToken   String?
   /// When true, workspace may send email via shared or custom domains.
   emailIntegrationEnabled Boolean @default(false)
+  /// Kill switch — skips journeys, AgentFlow, AI agent/copilot auto-replies.
+  automationsPaused Boolean @default(false)
+  /// Last-resort reply when inbound is unassigned and nothing else matched.
+  defaultReplyEnabled Boolean @default(false)
+  defaultReplyText    String? @db.Text
+  /// Auto-assignment for new inbound conversations: off | basic | advanced
+  inboxAssignmentMode String  @default("off")
+  /// Timezone for rule business-hours conditions; falls back to `timezone`, then Asia/Kolkata
+  inboxAssignmentTimezone String?
+  /// IG + Messenger persistent menu config (synced to Meta Profile API).
+  /// Shape: { enabled, items: [{ id, title, type: postback|web_url, payload?, url? }] }
+  persistentMenu Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -79,6 +93,7 @@ model Workspace {
   conversations     Conversation[]
   campaigns         Campaign[]
   journeys          Journey[]
+  instagramJourneys InstagramJourney[]
   agents            AiAgent[]
   agentFlowSessions AgentFlowSession[]
   mediaAssets       MediaAsset[]
@@ -119,6 +134,30 @@ model Workspace {
   walletTransactions      WalletTransaction[]
   callSessions            CallSession[]
   contactInsights         ContactInsight[]
+  notificationPreferences NotificationPreference[]
+  inboxTeamGroups         InboxTeamGroup[]
+  inboxAssignmentRules    InboxAssignmentRule[]
+  workspaceTags           WorkspaceTag[]
+  discountCouponRedemptions DiscountCouponRedemption[]
+}
+
+/// Per-event outbound notify prefs (email today; SMS/WA later via channels JSON).
+model NotificationPreference {
+  id          String   @id @default(cuid())
+  workspaceId String
+  /// e.g. "human_handoff", "wallet_low"
+  eventType   String
+  enabled     Boolean  @default(true)
+  /// { email: { enabled, recipients, subjectTemplate, bodyTemplate }, whatsapp: { enabled, phoneNumbers, userIds, templateId, variableMap }, inApp }
+  channels    Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, eventType])
+  @@index([workspaceId])
+  @@map("notification_preferences")
 }
 
 enum GoogleConnectionStatus {
@@ -606,6 +645,9 @@ model SocialListeningPostSetting {
   /// Funnel for leads from this post; required when autoResponseEnabled.
   leadFunnelId        String?
   leadFunnel          LeadFunnel? @relation(fields: [leadFunnelId], references: [id], onDelete: SetNull)
+  /// Published Instagram automation to start when this post gets a comment.
+  commentAutomationJourneyId String?
+  commentAutomationJourney   InstagramJourney? @relation(fields: [commentAutomationJourneyId], references: [id], onDelete: SetNull)
   interestedMode      String    @default("review")
   questionMode        String    @default("review")
   complaintMode       String    @default("review")
@@ -624,6 +666,7 @@ model SocialListeningPostSetting {
   @@unique([workspaceId, postId])
   @@index([workspaceId])
   @@index([leadFunnelId])
+  @@index([commentAutomationJourneyId])
 }
 
 model MessengerAccount {
@@ -655,10 +698,66 @@ model WorkspaceMembership {
   permissions String[]  @default([])
   /// When inbox permission is restricted: channel types and specific account IDs.
   inboxScope  Json?
+  /// Whether this member can receive inbound conversations from auto-assignment.
+  autoAssignEligible Boolean   @default(true)
+  /// Max open conversations this member can hold via auto-assignment; null = unlimited.
+  assignmentLimit    Int?
+  /// Last time auto-assignment picked this member — drives round-robin ordering.
+  lastAutoAssignedAt DateTime?
   createdAt   DateTime  @default(now())
+
+  groupMemberships InboxTeamGroupMember[]
 
   @@unique([userId, workspaceId])
   @@index([userId])
+}
+
+model InboxTeamGroup {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  members InboxTeamGroupMember[]
+  rules   InboxAssignmentRule[]
+
+  @@index([workspaceId])
+}
+
+model InboxTeamGroupMember {
+  id           String              @id @default(cuid())
+  groupId      String
+  group        InboxTeamGroup      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  membershipId String
+  membership   WorkspaceMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  createdAt    DateTime            @default(now())
+
+  @@unique([groupId, membershipId])
+  @@index([membershipId])
+}
+
+model InboxAssignmentRule {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  enabled     Boolean   @default(true)
+  /// Lower evaluates first.
+  priority    Int       @default(0)
+  /// { channels?: string[], contactTags?: string[] (any-of), businessHours?: { days: number[] (0=Sun..6=Sat), start: "HH:mm", end: "HH:mm", timezone?: string } }
+  conditions  Json      @default("{}")
+  /// group | user
+  actionType    String
+  actionGroupId String?
+  actionGroup   InboxTeamGroup? @relation(fields: [actionGroupId], references: [id], onDelete: SetNull)
+  /// User id when actionType = user
+  actionUserId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, priority])
 }
 
 model User {
@@ -670,6 +769,8 @@ model User {
   avatar      String?
   phone       String?
   jobTitle    String?
+  emailVerifiedAt DateTime?
+  phoneVerifiedAt DateTime?
   onboardingStep          Int      @default(7)
   onboardingCompleted     Boolean  @default(true)
   onboardingSkippedSteps  Int[]    @default([])
@@ -723,6 +824,7 @@ model Contact {
 
   conversations     Conversation[]
   journeyExecutions JourneyExecution[]
+  instagramJourneyExecutions InstagramJourneyExecution[]
   agentFlowSessions AgentFlowSession[]
   whatsappPaymentRequests WhatsAppPaymentRequest[]
   callSessions      CallSession[]
@@ -1081,6 +1183,95 @@ model JourneyExecutionLog {
 
   @@index([executionId])
   @@index([nodeId])
+}
+
+/// Instagram-only automation (separate from WhatsApp Journey).
+model InstagramJourney {
+  id          String   @id @default(cuid())
+  name        String
+  status      String   @default("draft") // draft | published
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  nodes      InstagramJourneyNode[]
+  edges      InstagramJourneyEdge[]
+  executions InstagramJourneyExecution[]
+  socialListeningPostSettings SocialListeningPostSetting[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@map("instagram_journeys")
+}
+
+model InstagramJourneyNode {
+  id        String  @id @default(cuid())
+  journeyId String
+  journey   InstagramJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  type      String
+  data      Json    @default("{}")
+  positionX Float   @default(0)
+  positionY Float   @default(0)
+
+  outgoingEdges InstagramJourneyEdge[]       @relation("IgJourneyEdgeSource")
+  incomingEdges InstagramJourneyEdge[]       @relation("IgJourneyEdgeTarget")
+  executionLogs InstagramJourneyExecutionLog[]
+
+  @@index([journeyId])
+  @@map("instagram_journey_nodes")
+}
+
+model InstagramJourneyEdge {
+  id             String      @id @default(cuid())
+  journeyId      String
+  journey        InstagramJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  sourceNodeId   String
+  sourceNode     InstagramJourneyNode @relation("IgJourneyEdgeSource", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  targetNodeId   String
+  targetNode     InstagramJourneyNode @relation("IgJourneyEdgeTarget", fields: [targetNodeId], references: [id], onDelete: Cascade)
+  conditionValue String?
+
+  @@index([journeyId])
+  @@index([sourceNodeId])
+  @@index([targetNodeId])
+  @@map("instagram_journey_edges")
+}
+
+model InstagramJourneyExecution {
+  id             String    @id @default(cuid())
+  journeyId      String
+  journey        InstagramJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  contactId      String
+  contact        Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  currentNodeId  String?
+  status         String    @default("running") // running | waiting | completed | failed | cancelled
+  context        Json?
+  startedAt      DateTime  @default(now())
+  lastExecutedAt DateTime?
+
+  logs InstagramJourneyExecutionLog[]
+
+  @@index([journeyId])
+  @@index([contactId])
+  @@index([status])
+  @@index([journeyId, contactId])
+  @@map("instagram_journey_executions")
+}
+
+model InstagramJourneyExecutionLog {
+  id          String            @id @default(cuid())
+  executionId String
+  execution   InstagramJourneyExecution  @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  nodeId      String?
+  node        InstagramJourneyNode?      @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+  status      String
+  payload     Json?
+  createdAt   DateTime          @default(now())
+
+  @@index([executionId])
+  @@index([nodeId])
+  @@map("instagram_journey_execution_logs")
 }
 
 model AiAgent {
@@ -1543,6 +1734,24 @@ model EmailTemplate {
   @@map("email_templates")
 }
 
+/// Central tag registry for a workspace (Settings → Automation → Tags). Contact.tags stores
+/// the actual values on each contact; this table is the curated name+folder list surfaced in
+/// tag pickers across the app.
+model WorkspaceTag {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  /// Freeform grouping label shown as a collapsible section in the Tags settings UI. Null = "Uncategorized".
+  folder      String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, folder])
+  @@map("workspace_tags")
+}
+
 model CannedResponse {
   id              String    @id @default(cuid())
   workspaceId     String
@@ -1776,6 +1985,24 @@ model DemoRequest {
   @@map("demo_requests")
 }
 
+/// Landing Help & Support form submissions.
+model SupportRequest {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  phone     String?
+  subject   String?
+  message   String
+  status    String   @default("new")
+  source    String   @default("landing")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([status])
+  @@map("support_requests")
+}
+
 /// Platform operators (super admin) — separate from tenant User records.
 model PlatformAdmin {
   id        String   @id @default(cuid())
@@ -1786,7 +2013,32 @@ model PlatformAdmin {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  trialExtensionLogs TrialExtensionLog[]
+  trialExtensionLogs   TrialExtensionLog[]
+  platformAuditLogs    PlatformAuditLog[]
+}
+
+/// Super-admin platform audit trail (org/plan/coupon/auth actions).
+model PlatformAuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actorEmail String?
+  actorRole  String?
+  action     String
+  entityType String?
+  entityId   String?
+  category   String   @default("system")
+  severity   String   @default("info")
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  platformAdmin PlatformAdmin? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([action])
+  @@index([category])
+  @@index([actorEmail])
+  @@map("platform_audit_logs")
 }
 
 /// Record of super-admin trial extensions (days + reason).
@@ -1818,6 +2070,49 @@ model PlatformConfig {
   updatedAt             DateTime @updatedAt
 
   @@map("platform_config")
+}
+
+/// Platform-wide discount coupons (super-admin managed; applied at plan checkout).
+model DiscountCoupon {
+  id                     String   @id @default(cuid())
+  code                   String   @unique
+  /// 0–100 inclusive
+  discountPercent        Int
+  /// Cap on discount in paise (percent applied first, then min with this cap). Null = no cap.
+  maxDiscountAmountPaise Int?
+  validFrom              DateTime
+  validUntil             DateTime
+  maxRedemptions         Int
+  redemptionCount        Int      @default(0)
+  /// Minimum order amount in paise before coupon applies; null = no minimum.
+  minOrderAmountPaise    Int?
+  isActive               Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  redemptions DiscountCouponRedemption[]
+
+  @@index([isActive])
+  @@index([validFrom, validUntil])
+  @@map("discount_coupons")
+}
+
+/// Ledger row when a coupon is redeemed on successful plan checkout.
+model DiscountCouponRedemption {
+  id                  String         @id @default(cuid())
+  couponId            String
+  coupon              DiscountCoupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  workspaceId         String
+  workspace           Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  discountAmountPaise Int
+  invoiceId           String         @unique
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  @@index([couponId])
+  @@index([workspaceId])
+  @@index([couponId, workspaceId])
+  @@map("discount_coupon_redemptions")
 }
 
 /// WhatsApp templates used by platform ops to message client organizations.

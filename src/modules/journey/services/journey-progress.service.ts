@@ -118,11 +118,10 @@ export class JourneyProgressService {
     contactId: string
   ): Promise<ContactJourneyProgress | null> {
     const executions = await this.executionRepo.findForContact(workspaceId, contactId, 5);
-    const execution = executions.find(
-      (e) => e.status === 'running' || e.status === 'waiting'
-    );
-
-    // Inbox sidebar shows live automation only — completed/failed history belongs in audits.
+    // Newest first — prefer live, else latest finished result (skip cancelled).
+    const execution =
+      executions.find((e) => e.status === 'running' || e.status === 'waiting') ??
+      executions.find((e) => e.status === 'failed' || e.status === 'completed');
     if (!execution) return null;
 
     const graph = await this.journeyRepo.getGraph(workspaceId, execution.journeyId);
