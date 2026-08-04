@@ -8,7 +8,7 @@ import { findInstagramAccountByEntryId } from './workspaceResolve.js';
 import { findMessengerAccountByPageId } from './workspaceResolve.js';
 
 type MessagingEvent = {
-  message?: { messaging_product?: 'instagram' | 'facebook' };
+  message?: { messaging_product?: 'instagram' | 'facebook' | 'messenger' };
   read?: { mid?: string; watermark?: number };
 };
 

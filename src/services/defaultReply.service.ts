@@ -61,6 +61,7 @@ export async function maybeSendDefaultReply(input: {
         input.workspaceId,
         conversation.channelAccountId
       );
+      if (!creds.phoneNumberId) return false;
       const result = await sendWhatsAppMessage(
         creds.accessToken,
         creds.phoneNumberId,

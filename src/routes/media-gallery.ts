@@ -1,5 +1,5 @@
 import multipart from '@fastify/multipart';
-import { FastifyInstance, FastifyRequest } from 'fastify';
+import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';

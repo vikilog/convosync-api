@@ -85,7 +85,7 @@ export class InstagramJourneyTriggerService {
         select: { content: true, waMessageId: true },
       });
       const text = reply?.content?.trim();
-      if (!text) continue;
+      if (!reply || !text) continue;
 
       await this.resumeWaitingReplies({
         workspaceId,

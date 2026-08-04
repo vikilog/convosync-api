@@ -41,7 +41,7 @@ export function parsePersistentMenu(raw: unknown): PersistentMenuConfig {
             url: type === 'web_url' ? String(row.url ?? '').trim() : undefined,
           };
         })
-        .filter((x): x is PersistentMenuItem => Boolean(x))
+        .filter((x) => x != null)
         .slice(0, 5)
     : [];
   return { enabled: Boolean(obj.enabled), items };
