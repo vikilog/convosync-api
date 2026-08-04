@@ -17,6 +17,7 @@ import {
   removePlanFromWorkspace,
   setWorkspaceAgentEnabled,
   suspendWorkspace,
+  creditOrganizationWallet,
   updateOrganizationCompany,
   updateOrganizationOwner,
   updateWorkspaceLimits,
@@ -380,6 +381,52 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
       return await getWorkspaceAuditTrail(id);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load audit trail';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  fastify.post('/:id/credit-wallet', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = z
+      .object({
+        amountCc: z.coerce.number().positive().max(1_000_000),
+        note: z.string().trim().max(500).optional(),
+        idempotencyKey: z.string().trim().min(8).max(128).optional(),
+      })
+      .parse(request.body);
+    const admin = getJwtUser(request);
+    const ip = getRequestIp(request);
+
+    try {
+      const result = await creditOrganizationWallet(id, {
+        amountCc: body.amountCc,
+        note: body.note,
+        platformAdminId: admin.platformAdminId!,
+        idempotencyKey: body.idempotencyKey,
+      });
+
+      if (!result.alreadyApplied) {
+        recordAuditEvent({
+          action: PLATFORM_AUDIT_ACTIONS.ORG_WALLET_CREDIT,
+          actor: { id: admin.platformAdminId, role: admin.role },
+          entityType: 'workspace',
+          entityId: id,
+          category: 'billing',
+          severity: 'info',
+          ipAddress: ip,
+          metadata: {
+            details: `Added ${result.amountCc} CC to wallet`,
+            amountCc: result.amountCc,
+            amountPaise: result.amountPaise,
+            invoiceId: result.invoiceId,
+            note: body.note ?? null,
+          },
+        });
+      }
+
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to credit wallet';
       return reply.code(400).send({ error: message });
     }
   });

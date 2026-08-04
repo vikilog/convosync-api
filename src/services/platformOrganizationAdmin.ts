@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../index.js';
+import { ccToDebitPaise } from './usageCost.constants.js';
+import { creditWallet, getWalletSummary } from './wallet.service.js';
 import { config } from '../config.js';
 import {
   getWorkspaceOwnerUserId,
@@ -387,5 +389,115 @@ export async function createWorkspaceImpersonationSession(
     },
     workspace: { id: workspace.id, name: workspace.name },
     activeWorkspaceId: workspaceId,
+  };
+}
+
+export async function creditOrganizationWallet(
+  workspaceId: string,
+  params: {
+    amountCc: number;
+    note?: string | null;
+    platformAdminId: string;
+    idempotencyKey?: string | null;
+  }
+) {
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { id: true, name: true },
+  });
+  if (!workspace) throw new Error('Workspace not found');
+
+  const amountCc = Math.round(params.amountCc);
+  if (amountCc <= 0) throw new Error('Credit amount must be at least 1 CC');
+
+  const amountPaise = ccToDebitPaise(amountCc);
+  const note = params.note?.trim() || null;
+  const walletIdempotencyKey = params.idempotencyKey?.trim()
+    ? `platform-manual:${params.idempotencyKey.trim()}`
+    : undefined;
+
+  if (walletIdempotencyKey) {
+    const existingTx = await prisma.walletTransaction.findUnique({
+      where: { idempotencyKey: walletIdempotencyKey },
+      select: { referenceId: true },
+    });
+    if (existingTx?.referenceId) {
+      const invoice = await prisma.billingInvoice.findUnique({
+        where: { id: existingTx.referenceId },
+      });
+      if (invoice) {
+        const wallet = await getWalletSummary(workspaceId);
+        return {
+          ok: true as const,
+          alreadyApplied: true,
+          workspaceId,
+          invoiceId: invoice.id,
+          amountCc,
+          amountPaise,
+          wallet,
+        };
+      }
+    }
+  }
+
+  const description = note
+    ? `Wallet top-up (manual) — ${note}`
+    : 'Wallet top-up (manual)';
+
+  const result = await prisma.$transaction(async (tx) => {
+    const invoice = await tx.billingInvoice.create({
+      data: {
+        workspaceId,
+        type: 'wallet_topup_manual',
+        amountPaise,
+        currency: 'INR',
+        status: 'paid',
+        description,
+        paidAt: new Date(),
+        metadata: {
+          purpose: 'wallet_topup_manual',
+          creditAmountPaise: amountPaise,
+          amountCc,
+          note,
+          platformAdminId: params.platformAdminId,
+          source: 'platform_admin',
+          ...(params.idempotencyKey?.trim()
+            ? { idempotencyKey: params.idempotencyKey.trim() }
+            : {}),
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    const { wallet } = await creditWallet({
+      workspaceId,
+      amountPaise,
+      category: 'wallet_topup',
+      description: note ? `Manual credit — ${note}` : 'Manual ConvoCoins credit',
+      referenceType: 'invoice',
+      referenceId: invoice.id,
+      idempotencyKey: walletIdempotencyKey ?? `manual-topup:${invoice.id}`,
+      metadata: {
+        platformAdminId: params.platformAdminId,
+        amountCc,
+      },
+      tx,
+    });
+
+    return { invoice, wallet };
+  });
+
+  const wallet = await getWalletSummary(workspaceId);
+
+  return {
+    ok: true as const,
+    alreadyApplied: false,
+    workspaceId,
+    invoiceId: result.invoice.id,
+    amountCc,
+    amountPaise,
+    wallet: {
+      balancePaise: wallet.balancePaise,
+      balanceInr: wallet.balanceInr,
+    },
   };
 }
