@@ -8,7 +8,10 @@ import {
   computeFinalAmountPaise,
   countUniqueWorkspacesByCoupon,
   deriveCouponStatus,
+  couponBonusIdempotencyKey,
+  isCouponApplicableToPlan,
   MIN_CHECKOUT_AMOUNT_PAISE,
+  normalizeApplicablePlanSlugs,
   normalizeCouponCode,
   parseCouponCodeFromInvoiceDescription,
 } from './discountCoupons.js';
@@ -70,5 +73,26 @@ const uniqueCounts = countUniqueWorkspacesByCoupon([
 assert.equal(uniqueCounts.get('c1'), 2);
 assert.equal(uniqueCounts.get('c2'), 1);
 assert.equal(uniqueCounts.get('missing'), undefined);
+
+assert.deepEqual(normalizeApplicablePlanSlugs([' Starter ', 'growth', 'starter']), [
+  'starter',
+  'growth',
+]);
+assert.throws(() => normalizeApplicablePlanSlugs(['enterprise']), /Invalid plan slug/);
+
+assert.equal(isCouponApplicableToPlan({ applicablePlanSlugs: [] }, 'starter'), true);
+assert.equal(isCouponApplicableToPlan({ applicablePlanSlugs: ['starter'] }, 'starter'), true);
+assert.equal(isCouponApplicableToPlan({ applicablePlanSlugs: ['starter'] }, 'growth'), false);
+assert.equal(isCouponApplicableToPlan({ applicablePlanSlugs: ['starter'] }, 'business'), false);
+assert.equal(
+  isCouponApplicableToPlan({ applicablePlanSlugs: ['starter', 'growth'] }, 'business'),
+  false
+);
+assert.equal(
+  isCouponApplicableToPlan({ applicablePlanSlugs: ['starter', 'growth'] }, 'growth'),
+  true
+);
+
+assert.equal(couponBonusIdempotencyKey('inv_abc'), 'coupon-bonus:inv_abc');
 
 console.log('discountCoupons check ok');

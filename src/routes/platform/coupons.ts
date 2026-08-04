@@ -23,6 +23,8 @@ const couponWriteSchema = z.object({
   validUntil: z.string().datetime({ offset: true }).or(z.string().date()),
   maxRedemptions: z.number().int().min(1),
   minOrderAmountPaise: z.number().int().min(0).nullable().optional(),
+  applicablePlanSlugs: z.array(z.string().trim().min(1)).optional(),
+  bonusWalletCreditsCc: z.number().int().min(0).nullable().optional(),
   isActive: z.boolean().optional(),
 });
 
@@ -61,6 +63,8 @@ export default async function platformCouponRoutes(fastify: FastifyInstance) {
         validUntil: parseCouponDate(body.validUntil),
         maxRedemptions: body.maxRedemptions,
         minOrderAmountPaise: body.minOrderAmountPaise ?? null,
+        applicablePlanSlugs: body.applicablePlanSlugs,
+        bonusWalletCreditsCc: body.bonusWalletCreditsCc,
         isActive: body.isActive,
       });
       recordAuditEvent({
@@ -102,6 +106,12 @@ export default async function platformCouponRoutes(fastify: FastifyInstance) {
         ...(body.maxRedemptions != null ? { maxRedemptions: body.maxRedemptions } : {}),
         ...(body.minOrderAmountPaise !== undefined
           ? { minOrderAmountPaise: body.minOrderAmountPaise }
+          : {}),
+        ...(body.applicablePlanSlugs !== undefined
+          ? { applicablePlanSlugs: body.applicablePlanSlugs }
+          : {}),
+        ...(body.bonusWalletCreditsCc !== undefined
+          ? { bonusWalletCreditsCc: body.bonusWalletCreditsCc }
           : {}),
         ...(body.isActive != null ? { isActive: body.isActive } : {}),
       });

@@ -50,6 +50,8 @@ const planWriteSchema = z.object({
   labelColor: z.string().optional(),
   borderColor: z.string().optional(),
   editButtonStyle: z.enum(['gray', 'purple', 'blue', 'dark']).optional(),
+  razorpayPlanIdMonthly: z.string().trim().min(1).nullable().optional(),
+  razorpayPlanIdAnnual: z.string().trim().min(1).nullable().optional(),
 });
 
 export default async function platformPlanRoutes(fastify: FastifyInstance) {
@@ -146,6 +148,8 @@ export default async function platformPlanRoutes(fastify: FastifyInstance) {
         labelColor: body.labelColor,
         borderColor: body.borderColor,
         editButtonStyle: body.editButtonStyle,
+        razorpayPlanIdMonthly: body.razorpayPlanIdMonthly,
+        razorpayPlanIdAnnual: body.razorpayPlanIdAnnual,
       });
       return { plan: serializeSubscriptionPlan(plan) };
     } catch (err) {

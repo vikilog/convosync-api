@@ -38,6 +38,7 @@ import {
   saveWalletPaymentCredentials,
 } from '../../services/razorpayCustomer.service.js';
 import {
+  creditCouponBonusWalletCredits,
   recordCouponRedemption,
   MIN_CHECKOUT_AMOUNT_PAISE,
   validateDiscountCoupon,
@@ -834,10 +835,18 @@ export class BillingService {
   }
 
   async validateCoupon(body: { code: string; amountPaise: number; planId?: string }) {
-    void body.planId; // ponytail: plan scoping deferred
+    let planSlug: string | undefined;
+    if (body.planId) {
+      const plan = await prisma.subscriptionPlan.findFirst({
+        where: { OR: [{ id: body.planId }, { slug: body.planId }] },
+        select: { slug: true },
+      });
+      planSlug = plan?.slug;
+    }
     return validateDiscountCoupon({
       code: body.code,
       amountPaise: body.amountPaise,
+      planSlug,
     });
   }
 
@@ -949,7 +958,11 @@ export class BillingService {
       | undefined;
 
     if (couponCode?.trim()) {
-      const validated = await validateDiscountCoupon({ code: couponCode, amountPaise });
+      const validated = await validateDiscountCoupon({
+        code: couponCode,
+        amountPaise,
+        planSlug: plan.slug,
+      });
       if (!validated.valid) throw new Error(validated.reason);
       chargePaise = validated.finalAmountPaise;
       couponMeta = {
@@ -1114,6 +1127,12 @@ export class BillingService {
       },
       tx
     );
+    await creditCouponBonusWalletCredits({
+      couponId: purchaseMeta.couponId,
+      workspaceId: invoice.workspaceId,
+      invoiceId: invoice.id,
+      tx,
+    });
   }
 
   private async activatePlanPurchase(

@@ -1,5 +1,7 @@
-import type { DiscountCoupon } from '@prisma/client';
+import type { DiscountCoupon, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
+import { ccToDebitPaise } from './usageCost.constants.js';
+import { creditWallet } from './wallet.service.js';
 
 export type CouponUiStatus = 'active' | 'paused' | 'expired' | 'scheduled';
 
@@ -14,12 +16,49 @@ export type SerializedDiscountCoupon = {
   redemptionCount: number;
   uniqueWorkspaceCount: number;
   minOrderAmountPaise: number | null;
+  applicablePlanSlugs: string[];
+  bonusWalletCreditsCc: number | null;
   isActive: boolean;
   status: CouponUiStatus;
   usesRemaining: number;
   createdAt: string;
   updatedAt: string;
 };
+
+/** Self-serve checkout plans eligible for coupon scoping in super-admin. */
+export const COUPON_SELF_SERVE_PLAN_SLUGS = ['starter', 'growth', 'business'] as const;
+
+export type CouponSelfServePlanSlug = (typeof COUPON_SELF_SERVE_PLAN_SLUGS)[number];
+
+export function normalizeApplicablePlanSlugs(slugs: string[] | undefined | null): string[] {
+  if (!slugs?.length) return [];
+  const normalized = [...new Set(slugs.map((s) => s.trim().toLowerCase()).filter(Boolean))];
+  const allowed = new Set<string>(COUPON_SELF_SERVE_PLAN_SLUGS);
+  const invalid = normalized.filter((s) => !allowed.has(s));
+  if (invalid.length) {
+    throw new Error(`Invalid plan slug(s): ${invalid.join(', ')}`);
+  }
+  return normalized;
+}
+
+/** Empty applicablePlanSlugs = all plans (backward compatible). */
+export function isCouponApplicableToPlan(
+  coupon: Pick<DiscountCoupon, 'applicablePlanSlugs'>,
+  planSlug: string
+): boolean {
+  if (!coupon.applicablePlanSlugs.length) return true;
+  return coupon.applicablePlanSlugs.includes(planSlug.trim().toLowerCase());
+}
+
+export function formatApplicablePlanLabels(slugs: string[]): string {
+  if (!slugs.length) return 'All plans';
+  const labels: Record<string, string> = {
+    starter: 'Starter',
+    growth: 'Growth',
+    business: 'Business',
+  };
+  return slugs.map((s) => labels[s] ?? s).join(', ');
+}
 
 export type SerializedDiscountCouponRedemption = {
   id: string;
@@ -88,6 +127,8 @@ export function serializeDiscountCoupon(
     redemptionCount: coupon.redemptionCount,
     uniqueWorkspaceCount,
     minOrderAmountPaise: coupon.minOrderAmountPaise,
+    applicablePlanSlugs: coupon.applicablePlanSlugs,
+    bonusWalletCreditsCc: coupon.bonusWalletCreditsCc,
     isActive: coupon.isActive,
     status,
     usesRemaining: Math.max(0, coupon.maxRedemptions - coupon.redemptionCount),
@@ -169,6 +210,8 @@ export type CreateDiscountCouponInput = {
   validUntil: Date;
   maxRedemptions: number;
   minOrderAmountPaise?: number | null;
+  applicablePlanSlugs?: string[];
+  bonusWalletCreditsCc?: number | null;
   isActive?: boolean;
 };
 
@@ -187,6 +230,7 @@ function assertCouponNumbers(input: {
   maxDiscountAmountPaise?: number | null;
   maxRedemptions: number;
   minOrderAmountPaise?: number | null;
+  bonusWalletCreditsCc?: number | null;
 }) {
   if (input.discountPercent < 0 || input.discountPercent > 100) {
     throw new Error('Discount percent must be between 0 and 100');
@@ -200,6 +244,9 @@ function assertCouponNumbers(input: {
   if (input.minOrderAmountPaise != null && input.minOrderAmountPaise < 0) {
     throw new Error('Minimum order amount must be zero or greater');
   }
+  if (input.bonusWalletCreditsCc != null && input.bonusWalletCreditsCc < 0) {
+    throw new Error('Bonus ConvoCoins must be zero or greater');
+  }
 }
 
 export async function createDiscountCoupon(input: CreateDiscountCouponInput) {
@@ -207,6 +254,12 @@ export async function createDiscountCoupon(input: CreateDiscountCouponInput) {
   if (!code) throw new Error('Coupon code is required');
   assertCouponDates(input.validFrom, input.validUntil);
   assertCouponNumbers(input);
+
+  const applicablePlanSlugs = normalizeApplicablePlanSlugs(input.applicablePlanSlugs);
+  const bonusWalletCreditsCc =
+    input.bonusWalletCreditsCc != null && input.bonusWalletCreditsCc > 0
+      ? input.bonusWalletCreditsCc
+      : null;
 
   const row = await prisma.discountCoupon.create({
     data: {
@@ -217,6 +270,8 @@ export async function createDiscountCoupon(input: CreateDiscountCouponInput) {
       validUntil: input.validUntil,
       maxRedemptions: input.maxRedemptions,
       minOrderAmountPaise: input.minOrderAmountPaise ?? null,
+      applicablePlanSlugs,
+      bonusWalletCreditsCc,
       isActive: input.isActive ?? true,
     },
   });
@@ -241,7 +296,22 @@ export async function updateDiscountCoupon(id: string, input: UpdateDiscountCoup
       input.minOrderAmountPaise !== undefined
         ? input.minOrderAmountPaise
         : existing.minOrderAmountPaise,
+    bonusWalletCreditsCc:
+      input.bonusWalletCreditsCc !== undefined
+        ? input.bonusWalletCreditsCc
+        : existing.bonusWalletCreditsCc,
   });
+
+  const applicablePlanSlugs =
+    input.applicablePlanSlugs !== undefined
+      ? normalizeApplicablePlanSlugs(input.applicablePlanSlugs)
+      : existing.applicablePlanSlugs;
+  const bonusWalletCreditsCc =
+    input.bonusWalletCreditsCc !== undefined
+      ? input.bonusWalletCreditsCc != null && input.bonusWalletCreditsCc > 0
+        ? input.bonusWalletCreditsCc
+        : null
+      : existing.bonusWalletCreditsCc;
 
   const row = await prisma.discountCoupon.update({
     where: { id },
@@ -257,6 +327,8 @@ export async function updateDiscountCoupon(id: string, input: UpdateDiscountCoup
       ...(input.minOrderAmountPaise !== undefined
         ? { minOrderAmountPaise: input.minOrderAmountPaise }
         : {}),
+      ...(input.applicablePlanSlugs !== undefined ? { applicablePlanSlugs } : {}),
+      ...(input.bonusWalletCreditsCc !== undefined ? { bonusWalletCreditsCc } : {}),
       ...(input.isActive != null ? { isActive: input.isActive } : {}),
     },
   });
@@ -286,6 +358,7 @@ export type ValidateCouponResult =
 export async function validateDiscountCoupon(params: {
   code: string;
   amountPaise: number;
+  planSlug?: string;
   at?: Date;
 }): Promise<ValidateCouponResult> {
   const normalized = normalizeCouponCode(params.code);
@@ -300,6 +373,15 @@ export async function validateDiscountCoupon(params: {
   if (status === 'paused') return { valid: false, reason: 'This coupon is not active' };
   if (status === 'scheduled') return { valid: false, reason: 'This coupon is not valid yet' };
   if (status === 'expired') return { valid: false, reason: 'This coupon has expired' };
+
+  if (coupon.applicablePlanSlugs.length) {
+    if (!params.planSlug) {
+      return { valid: false, reason: 'This coupon requires a plan to be selected' };
+    }
+    if (!isCouponApplicableToPlan(coupon, params.planSlug)) {
+      return { valid: false, reason: 'This coupon does not apply to the selected plan' };
+    }
+  }
 
   if (coupon.minOrderAmountPaise != null && params.amountPaise < coupon.minOrderAmountPaise) {
     return { valid: false, reason: 'Order amount does not meet the minimum for this coupon' };
@@ -369,6 +451,33 @@ export async function recordCouponRedemption(
     });
   }
   return true;
+}
+
+export function couponBonusIdempotencyKey(invoiceId: string) {
+  return `coupon-bonus:${invoiceId}`;
+}
+
+/** Idempotent bonus CC credit when a plan-scoped coupon is redeemed. */
+export async function creditCouponBonusWalletCredits(params: {
+  couponId: string;
+  workspaceId: string;
+  invoiceId: string;
+  tx?: Prisma.TransactionClient;
+}) {
+  const db = params.tx ?? prisma;
+  const coupon = await db.discountCoupon.findUnique({ where: { id: params.couponId } });
+  if (!coupon?.bonusWalletCreditsCc || coupon.bonusWalletCreditsCc <= 0) return null;
+
+  return creditWallet({
+    workspaceId: params.workspaceId,
+    amountPaise: ccToDebitPaise(coupon.bonusWalletCreditsCc),
+    category: 'adjustment',
+    description: `Coupon bonus ConvoCoins — ${coupon.code} (${coupon.bonusWalletCreditsCc} CC)`,
+    referenceType: 'coupon_bonus',
+    referenceId: params.invoiceId,
+    idempotencyKey: couponBonusIdempotencyKey(params.invoiceId),
+    tx: params.tx,
+  });
 }
 
 /** Extract coupon code from plan invoice description: "Starter plan (monthly) · WELCOME". */

@@ -385,6 +385,8 @@ export type PlanWriteInput = {
   labelColor?: string;
   borderColor?: string;
   editButtonStyle?: string;
+  razorpayPlanIdMonthly?: string | null;
+  razorpayPlanIdAnnual?: string | null;
 };
 
 export type PlanCreateKind = 'public' | 'custom';
@@ -598,6 +600,12 @@ export async function updateSubscriptionPlan(slug: string, input: PlanWriteInput
     editButtonStyle: input.editButtonStyle ?? existing.editButtonStyle,
     popular: input.popular ?? existing.popular,
     features: features as Prisma.InputJsonValue,
+    ...(input.razorpayPlanIdMonthly !== undefined
+      ? { razorpayPlanIdMonthly: input.razorpayPlanIdMonthly }
+      : {}),
+    ...(input.razorpayPlanIdAnnual !== undefined
+      ? { razorpayPlanIdAnnual: input.razorpayPlanIdAnnual }
+      : {}),
   };
 
   // Don't churn planCode on edit — uniqueness fights the same code

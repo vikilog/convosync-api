@@ -2086,6 +2086,10 @@ model DiscountCoupon {
   redemptionCount        Int      @default(0)
   /// Minimum order amount in paise before coupon applies; null = no minimum.
   minOrderAmountPaise    Int?
+  /// Self-serve plan slugs this coupon applies to; empty = all plans.
+  applicablePlanSlugs    String[] @default([])
+  /// Bonus ConvoCoins credited to wallet on redeem; null/0 = none.
+  bonusWalletCreditsCc   Int?
   isActive               Boolean  @default(true)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
