@@ -56,8 +56,9 @@ export default async function authRoutes(fastify: FastifyInstance) {
       workspaceName: z.string().min(2).optional(),
     });
     const body = schema.parse(request.body);
+    const email = body.email.trim().toLowerCase();
 
-    const existing = await prisma.user.findUnique({ where: { email: body.email } });
+    const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) return reply.code(409).send({ error: 'Email already registered' });
 
     const placeholderWorkspaceName = body.workspaceName?.trim() || `${body.name.trim()}'s Workspace`;
@@ -66,7 +67,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       data: {
         name: placeholderWorkspaceName,
         slug,
-        email: body.email,
+        email,
         ...newCustomerTrialFields(),
       },
     });
@@ -74,7 +75,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
     const user = await prisma.user.create({
       data: {
         name: body.name,
-        email: body.email,
+        email,
         password: await bcrypt.hash(body.password, 12),
         role: 'admin',
         workspaceId: workspace.id,
@@ -124,9 +125,10 @@ export default async function authRoutes(fastify: FastifyInstance) {
       workspaceId: z.string().optional(),
     });
     const body = schema.parse(request.body);
+    const email = body.email.trim().toLowerCase();
 
     const user = await prisma.user.findUnique({
-      where: { email: body.email },
+      where: { email },
       include: { workspace: true },
     });
     if (!user || !(await bcrypt.compare(body.password, user.password))) {

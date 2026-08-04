@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { prisma } from '../index.js';
+import { config } from '../config.js';
 import { isSuperAdminWorkspace } from './superAdminWorkspace.js';
 import {
   normalizePermissions,
@@ -164,6 +165,30 @@ async function resolveMemberInboxScope(input: {
   return validateInboxScopeForWorkspace(input.workspaceId, input.inboxScope);
 }
 
+async function sendTeamInviteEmail(input: {
+  to: string;
+  name: string;
+  workspaceName: string;
+  password: string;
+}) {
+  const { ResendProvider } = await import('../modules/email/providers/resend.provider.js');
+  const loginUrl = `${config.frontendUrl}/login`;
+  await new ResendProvider().sendEmail({
+    from: config.contactOtp.emailFrom,
+    fromName: 'ConvoSync',
+    to: [input.to],
+    subject: `You've been added to ${input.workspaceName} on ConvoSync`,
+    text:
+      `Hi ${input.name},\n\n` +
+      `You've been added to ${input.workspaceName} on ConvoSync.\n\n` +
+      `Sign in: ${loginUrl}\n` +
+      `Email: ${input.to}\n` +
+      `Password: ${input.password}\n\n` +
+      `Change your password after your first login in Settings.\n\n` +
+      `If you weren't expecting this, contact your workspace admin.`,
+  });
+}
+
 export async function addWorkspaceMember(input: {
   workspaceId: string;
   email: string;
@@ -279,6 +304,25 @@ export async function addWorkspaceMember(input: {
   });
 
   const ownerUserId = await getWorkspaceOwnerUserId(input.workspaceId);
+
+  try {
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: input.workspaceId },
+      select: { name: true },
+    });
+    await sendTeamInviteEmail({
+      to: email,
+      name,
+      workspaceName: workspace?.name ?? 'your workspace',
+      password,
+    });
+  } catch (err) {
+    console.error(
+      '[invite] welcome email failed:',
+      err instanceof Error ? err.message : 'unknown error'
+    );
+  }
+
   return {
     member: formatWorkspaceMember(membership, ownerUserId),
     createdUser: true,
