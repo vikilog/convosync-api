@@ -50,6 +50,7 @@ assert.equal(landing.comparison.aiCopilot, true);
 assert.equal(landing.comparison.storage, '1 GB');
 assert.ok(landing.highlights.some((h) => h.includes('CC wallet')));
 assert.ok(landing.highlights.some((h) => h.includes('storage')));
-assert.ok(!landing.highlights.some((h) => h.includes(' · ') && h.includes('emails')));
+assert.ok(!landing.highlights.some((h) => /email/i.test(h)));
+assert.ok(!('emails' in landing.comparison));
 
 console.log('subscriptionPlans.landing check ok');

@@ -46,6 +46,7 @@ export async function requireWritableSubscription(
         subscriptionStatus: true,
         trialStartedAt: true,
         trialEndsAt: true,
+        planId: true,
       },
     });
 

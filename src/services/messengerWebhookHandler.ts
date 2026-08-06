@@ -3,6 +3,7 @@ import { getIo } from '../socket.js';
 import { decryptSecret } from '../lib/field-encryption.js';
 import { findOrReopenConversationForInbound } from './conversationThread.service.js';
 import { formatMessengerContactPhone } from '../lib/channelContact.js';
+import { findOrCreateMessengerContact } from '../lib/messengerContact.js';
 import {
   fetchMessengerUserProfile,
   resolveMessengerContactName,
@@ -71,32 +72,14 @@ export async function upsertMessengerInboundMessage(params: {
   }
 
   const profile = await fetchMessengerUserProfile(params.senderId, params.pageAccessToken);
-  const contactPhone = formatMessengerContactPhone(params.senderId);
   const contactName = resolveMessengerContactName(profile, params.senderId);
-
-  let contact = await prisma.contact.findFirst({
-    where: { phone: contactPhone, workspaceId: workspace.id },
+  const contact = await findOrCreateMessengerContact({
+    db: prisma,
+    workspaceId: workspace.id,
+    psid: params.senderId,
+    name: contactName,
+    avatar: profile.profile_pic,
   });
-
-  if (!contact) {
-    contact = await prisma.contact.create({
-      data: {
-        name: contactName,
-        phone: contactPhone,
-        workspaceId: workspace.id,
-        source: 'Messenger',
-        avatar: profile.profile_pic,
-      },
-    });
-  } else {
-    await prisma.contact.update({
-      where: { id: contact.id },
-      data: {
-        name: contact.name === contactPhone ? contactName : contact.name,
-        avatar: contact.avatar || profile.profile_pic || undefined,
-      },
-    });
-  }
 
   const { conversation: conv } = await findOrReopenConversationForInbound({
     workspaceId: workspace.id,

@@ -19,8 +19,17 @@ function resolveTrialWindow(workspace: {
   trialEndsAt: Date | null;
   createdAt: Date;
   plan: { trialDays: number } | null;
+  planId?: string | null;
 }) {
   const startedAt = workspace.trialStartedAt ?? workspace.createdAt;
+  // Don't invent a trial end for paid workspaces (activation clears trialEndsAt)
+  const paid =
+    workspace.subscriptionStatus === 'active' ||
+    workspace.subscriptionStatus === 'authenticated' ||
+    (Boolean(workspace.planId) && workspace.subscriptionStatus === 'trial');
+  if (paid) {
+    return { trialStartedAt: startedAt, trialEndsAt: workspace.trialEndsAt };
+  }
   const endsAt =
     workspace.trialEndsAt ??
     addDays(startedAt, resolveTrialDays(workspace.plan));
@@ -237,6 +246,7 @@ function formatPlatformOrganization(
       subscriptionStatus: workspace.subscriptionStatus,
       trialStartedAt: trialWindow.trialStartedAt,
       trialEndsAt: trialWindow.trialEndsAt,
+      planId: workspace.planId ?? workspace.plan?.id ?? null,
     };
     const status: SubscriptionDisplayStatus = subscriptionDisplayStatus(trialWorkspace);
     const daysLeft = trialDaysLeft(trialWorkspace);
@@ -276,7 +286,7 @@ function formatPlatformOrganization(
       customPlanPayment: customPlanFields.customPlanPayment,
       subscriptionStatus: workspace.subscriptionStatus,
       trialStartedAt: trialWindow.trialStartedAt.toISOString(),
-      trialEndsAt: trialWindow.trialEndsAt.toISOString(),
+      trialEndsAt: trialWindow.trialEndsAt?.toISOString() ?? null,
       trialDaysLeft: daysLeft,
       mrr,
       whatsappStatus: wa,

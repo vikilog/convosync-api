@@ -7,7 +7,12 @@ import {
 } from '../../utils/crypto.utils.js';
 import { normalizeRazorpayError } from '../../utils/razorpay-error.utils.js';
 import { readCustomPlanInput } from '../../services/customPlanPricing.js';
-import { seedSubscriptionPlans, campaignsLimitFromFeatures, channelsLimitFromLabel, type PlanFeatures } from '../../services/subscriptionPlans.js';
+import {
+  seedSubscriptionPlans,
+  campaignsLimitFromFeatures,
+  syncWorkspaceLimitsFromPlanFeatures,
+  type PlanFeatures,
+} from '../../services/subscriptionPlans.js';
 import { isValidRazorpayPlanId, razorpayPlanIdsFromEnv, type PlanSlug } from '../../services/razorpayPlanSync.js';
 import { isUnlimitedUsageLimit, UNLIMITED_USAGE_LIMIT } from '../../services/usageLimits.js';
 import {
@@ -43,6 +48,7 @@ import {
   MIN_CHECKOUT_AMOUNT_PAISE,
   validateDiscountCoupon,
 } from '../../services/discountCoupons.js';
+import { paidActivationWorkspaceFields } from '../../services/trial.js';
 import type { RazorpayService } from './razorpay.service.js';
 import {
   webhookPaymentEntity,
@@ -91,15 +97,6 @@ function walletTopupCreditPaise(invoice: {
     return meta.creditAmountPaise;
   }
   return invoice.amountPaise;
-}
-
-function parseFeatureLimit(value: string | number | undefined, fallback: number): number {
-  if (value == null) return fallback;
-  if (typeof value === 'number') return value;
-  const normalized = value.replace(/,/g, '').trim().toLowerCase();
-  if (normalized === 'unlimited' || normalized === 'custom') return UNLIMITED_USAGE_LIMIT;
-  const parsed = Number.parseInt(normalized, 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 export class BillingService {
@@ -1169,12 +1166,11 @@ export class BillingService {
       where: { id: workspaceId },
       data: {
         planId: plan.id,
-        subscriptionStatus: 'active',
-        trialEndsAt: null,
+        ...paidActivationWorkspaceFields(),
       },
     });
 
-    await this.syncPlanUsageLimits(tx, workspaceId, plan.features as PlanFeatures);
+    await syncWorkspaceLimitsFromPlanFeatures(workspaceId, plan.features as PlanFeatures, tx);
   }
 
   async verifySubscriptionPayment(
@@ -1245,12 +1241,15 @@ export class BillingService {
         where: { id: workspaceId },
         data: {
           planId: billingSub.planId,
-          subscriptionStatus: 'active',
-          trialEndsAt: null,
+          ...paidActivationWorkspaceFields(),
         },
       });
 
-      await this.syncPlanUsageLimits(tx, workspaceId, billingSub.plan.features as PlanFeatures);
+      await syncWorkspaceLimitsFromPlanFeatures(
+        workspaceId,
+        billingSub.plan.features as PlanFeatures,
+        tx
+      );
 
       await creditPlanWalletCredits({
         workspaceId,
@@ -1377,7 +1376,7 @@ export class BillingService {
 
     await prisma.workspace.update({
       where: { id: workspaceId },
-      data: { subscriptionStatus: 'active' },
+      data: paidActivationWorkspaceFields(),
     });
 
     return { ok: true, status: rzSub.status };
@@ -1590,7 +1589,7 @@ export class BillingService {
       }
       await tx.workspace.update({
         where: { id: workspaceId },
-        data: { subscriptionStatus: 'active' },
+        data: paidActivationWorkspaceFields(),
       });
     }
 
@@ -1698,10 +1697,16 @@ export class BillingService {
     ) {
       await prisma.workspace.update({
         where: { id: workspaceId },
-        data: { planId: billingSub.planId, subscriptionStatus: 'active', trialEndsAt: null },
+        data: {
+          planId: billingSub.planId,
+          ...paidActivationWorkspaceFields(),
+        },
       });
       if (billingSub.plan) {
-        await this.syncPlanUsageLimits(prisma, workspaceId, billingSub.plan.features as PlanFeatures);
+        await syncWorkspaceLimitsFromPlanFeatures(
+          workspaceId,
+          billingSub.plan.features as PlanFeatures
+        );
       }
     }
 
@@ -1758,7 +1763,10 @@ export class BillingService {
 
       await tx.workspace.update({
         where: { id: billingSub.workspaceId },
-        data: { subscriptionStatus: 'active', planId: billingSub.planId },
+        data: {
+          planId: billingSub.planId,
+          ...paidActivationWorkspaceFields(),
+        },
       });
 
       await creditPlanWalletCredits({
@@ -1945,42 +1953,4 @@ export class BillingService {
     });
   }
 
-  private parseEmailsLimit(features: PlanFeatures): number {
-    const value = features.emailsPerMonth;
-    if (value == null) return 1000;
-    if (typeof value === 'number') return value;
-    if (value === 'unlimited' || value === 'custom') return UNLIMITED_USAGE_LIMIT;
-    return 1000;
-  }
-
-  private async syncPlanUsageLimits(
-    tx: Prisma.TransactionClient,
-    workspaceId: string,
-    features: PlanFeatures
-  ) {
-    // Wallet bills every AI/email use — do not copy plan “included” amounts as free credit.
-    // ponytail: storageGb stays in plan.features until media gallery + usageLimits column land
-    await tx.workspaceUsageLimits.upsert({
-      where: { workspaceId },
-      create: {
-        workspaceId,
-        contactsLimit: parseFeatureLimit(features.contacts, 1000),
-        teamMembersLimit: parseFeatureLimit(features.teamMembers, 3),
-        aiAgentsLimit: parseFeatureLimit(features.aiAgents, 1),
-        channelsLimit: channelsLimitFromLabel(features.channels, features.channelsUnlimited),
-        aiTokensIncluded: 0,
-        campaignsLimit: campaignsLimitFromFeatures(features),
-        emailsLimit: 0,
-      },
-      update: {
-        contactsLimit: parseFeatureLimit(features.contacts, 1000),
-        teamMembersLimit: parseFeatureLimit(features.teamMembers, 3),
-        aiAgentsLimit: parseFeatureLimit(features.aiAgents, 1),
-        channelsLimit: channelsLimitFromLabel(features.channels, features.channelsUnlimited),
-        aiTokensIncluded: 0,
-        campaignsLimit: campaignsLimitFromFeatures(features),
-        emailsLimit: 0,
-      },
-    });
-  }
 }

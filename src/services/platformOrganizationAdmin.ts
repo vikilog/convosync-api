@@ -89,18 +89,27 @@ export async function updateWorkspaceLimits(
 
 const LIVE_BILLING_SUB_STATUSES = ['active', 'authenticated', 'paused'] as const;
 
-/** Attach a catalog (or custom) plan to a workspace and sync usage limits. */
+/**
+ * Attach a catalog (or custom) plan to a workspace and sync usage limits.
+ * Same entitlement sync as Razorpay verify/webhook — no BillingSubscription row.
+ */
 export async function assignPlanToWorkspace(workspaceId: string, planSlug: string) {
   const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
   if (!workspace) throw new Error('Workspace not found');
+  if (workspace.subscriptionStatus === 'suspended') {
+    throw new Error('Reactivate the workspace before assigning a plan');
+  }
 
   const plan = await getSubscriptionPlanBySlug(planSlug);
   if (!plan || !plan.isActive) throw new Error('Plan not found or inactive');
 
+  // Mirror paid verify path workspace fields (minus BillingSubscription / wallet credit)
   await prisma.workspace.update({
     where: { id: workspaceId },
     data: {
       planId: plan.id,
+      subscriptionStatus: 'active',
+      trialEndsAt: null,
       // Clear builder quote so org shows as this plan, not Custom quote
       customPlanSelection: Prisma.DbNull,
     },
@@ -108,20 +117,11 @@ export async function assignPlanToWorkspace(workspaceId: string, planSlug: strin
 
   await syncWorkspaceLimitsFromPlanFeatures(workspaceId, plan.features as PlanFeatures);
 
-  if (workspace.subscriptionStatus === 'trial' || workspace.subscriptionStatus === 'cancelled') {
-    await activateWorkspaceSubscription(workspaceId);
-  }
-
   return {
     workspaceId,
     planSlug: plan.slug,
     planName: plan.name,
-    subscriptionStatus: (
-      await prisma.workspace.findUniqueOrThrow({
-        where: { id: workspaceId },
-        select: { subscriptionStatus: true },
-      })
-    ).subscriptionStatus,
+    subscriptionStatus: 'active' as const,
   };
 }
 

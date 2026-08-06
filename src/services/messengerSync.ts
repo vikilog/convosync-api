@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { io, prisma } from '../index.js';
-import { formatMessengerContactPhone } from '../lib/channelContact.js';
 import { decryptSecret } from '../lib/field-encryption.js';
+import { findOrCreateMessengerContact } from '../lib/messengerContact.js';
 import {
   fetchMessengerUserProfile,
   resolveMessengerContactName,
@@ -243,34 +243,15 @@ async function upsertSyncedThread(
   if (!customer?.id) return null;
 
   const senderId = customer.id;
-  const contactPhone = formatMessengerContactPhone(senderId);
-
-  let contact = await prisma.contact.findFirst({
-    where: { phone: contactPhone, workspaceId: account.workspaceId },
-  });
-
   const profile = await fetchMessengerUserProfile(senderId, account.pageAccessToken);
   const contactName = resolveMessengerContactName(profile, senderId);
-
-  if (!contact) {
-    contact = await prisma.contact.create({
-      data: {
-        name: customer.name || contactName,
-        phone: contactPhone,
-        workspaceId: account.workspaceId,
-        source: 'Messenger',
-        avatar: profile.profile_pic,
-      },
-    });
-  } else {
-    await prisma.contact.update({
-      where: { id: contact.id },
-      data: {
-        name: contact.name === contactPhone ? contactName : contact.name,
-        avatar: contact.avatar || profile.profile_pic || undefined,
-      },
-    });
-  }
+  const contact = await findOrCreateMessengerContact({
+    db: prisma,
+    workspaceId: account.workspaceId,
+    psid: senderId,
+    name: customer.name || contactName,
+    avatar: profile.profile_pic,
+  });
 
   const { conversation: conv } = await findOrReopenConversationForInbound({
     workspaceId: account.workspaceId,

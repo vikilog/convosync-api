@@ -612,14 +612,16 @@ export async function updateSubscriptionPlan(slug: string, input: PlanWriteInput
   return prisma.subscriptionPlan.update({ where: { slug }, data });
 }
 
+/** Shared plan → WorkspaceUsageLimits sync (admin assign + Razorpay verify/webhook). */
 export async function syncWorkspaceLimitsFromPlanFeatures(
   workspaceId: string,
-  features: PlanFeatures
+  features: PlanFeatures,
+  db: Prisma.TransactionClient | typeof prisma = prisma
 ) {
   // ponytail: storageGb lives in plan.features only — gallery enforcement + usageLimits column later
   const campaignsLimit = campaignsLimitFromFeatures(features);
 
-  return prisma.workspaceUsageLimits.upsert({
+  return db.workspaceUsageLimits.upsert({
     where: { workspaceId },
     create: {
       workspaceId,
@@ -678,6 +680,8 @@ export function serializeSubscriptionPlan(plan: Awaited<ReturnType<typeof listSu
     razorpayPlanIdAnnual: plan.razorpayPlanIdAnnual ?? null,
     emailsPerMonth: features.emailsPerMonth,
     walletCredits: features.walletCredits,
+    // Top-level channels for PlanFeatureFlags UI gates (Integrations / tabs)
+    channels: features.channels,
     aiCopilot: features.aiCopilot,
     socialListening: features.socialListening,
     voiceAgent: features.voiceAgent,
@@ -710,20 +714,12 @@ export function serializeTenantSubscriptionPlan(
   return rest;
 }
 
-function formatEmailsForLanding(value: PlanFeatures['emailsPerMonth']): string {
-  if (value == null) return '—';
-  if (value === 'unlimited') return 'Unlimited';
-  if (value === 'custom') return 'Custom';
-  return value.toLocaleString('en-IN');
-}
-
 function formatStorageForLanding(value: PlanFeatures['storageGb']): string {
   if (value == null) return 'Custom';
   return `${value} GB`;
 }
 
 function buildLandingHighlights(features: PlanFeatures): string[] {
-  const emails = formatEmailsForLanding(features.emailsPerMonth);
   const wallet = features.walletCredits ?? '—';
   const storage = formatStorageForLanding(features.storageGb);
   const seatsLine = `${features.teamMembers} seats · ${features.aiAgents} AI Agent${
@@ -732,9 +728,6 @@ function buildLandingHighlights(features: PlanFeatures): string[] {
   const lines: string[] = [features.channels, seatsLine];
 
   if (features.aiCopilot) lines.push('AI Copilot included');
-
-  if (emails === 'Custom') lines.push('Negotiated email volume');
-  else if (emails !== '—') lines.push(`${emails} emails / mo`);
 
   if (wallet === 'Custom') lines.push('Negotiated CC wallet');
   else if (wallet !== '—') lines.push(`${wallet} wallet`);
@@ -793,7 +786,6 @@ export function serializeLandingPlan(
       channels: features.channels,
       seats: features.teamMembers,
       aiAgents: features.aiAgents,
-      emails: formatEmailsForLanding(features.emailsPerMonth),
       walletCredits: features.walletCredits ?? '—',
       aiCopilot: features.aiCopilot ?? false,
       socialListening: features.socialListening ?? false,
