@@ -165,7 +165,7 @@ export async function upsertMessengerInboundMessage(params: {
       workspaceId: workspace.id,
       conversationId: conv.id,
       contactId: contact.id,
-      contactPhone,
+      contactPhone: contact.phone,
       text: params.parsed.content,
       channel: 'messenger',
     });
