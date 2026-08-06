@@ -31,6 +31,11 @@ import {
   type MessageMediaMetadata,
 } from '../services/whatsappMedia.js';
 import { getWorkspaceWhatsAppCredentials } from '../services/whatsappCredentials.js';
+import {
+  mergeWhatsAppStatusMetadata,
+  normalizeWhatsAppStatusErrors,
+  type WhatsAppStatusUpdate,
+} from '../lib/whatsappStatusErrors.js';
 
 function logWebhook(label: string, payload: unknown) {
   const line = `[WhatsApp Webhook] ${label}`;
@@ -89,7 +94,7 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
         contacts?: WhatsAppWebhookContact[];
         messages?: Array<Record<string, unknown> & { id: string; from: string }>;
         message_echoes?: Array<Record<string, unknown> & { id: string; to: string }>;
-        statuses?: Array<{ id: string; status: string }>;
+        statuses?: WhatsAppStatusUpdate[];
         metadata?: { phone_number_id?: string };
         state_sync?: Array<Record<string, unknown>>;
         history?: Array<Record<string, unknown>>;
@@ -291,24 +296,51 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
 
       if (value?.statuses?.[0]) {
         const statusUpdate = value.statuses[0];
-        logWebhook('POST → status update', statusUpdate);
+        const statusErrors = normalizeWhatsAppStatusErrors(statusUpdate.errors);
+        logWebhook('POST → status update', {
+          id: statusUpdate.id,
+          status: statusUpdate.status,
+          timestamp: statusUpdate.timestamp,
+          recipient_id: statusUpdate.recipient_id,
+          errors: statusErrors,
+        });
         const message = await prisma.message.findFirst({
           where: { waMessageId: statusUpdate.id },
           include: { conversation: true },
         });
         if (message?.conversation?.workspaceId) {
+          const metadata = mergeWhatsAppStatusMetadata(message.metadata, statusUpdate);
           await prisma.message.update({
             where: { id: message.id },
-            data: { status: statusUpdate.status },
+            data: {
+              status: statusUpdate.status,
+              ...(metadata ? { metadata: metadata as object } : {}),
+            },
           });
           getIo().to(message.conversation.workspaceId).emit('message_status', {
             messageId: message.id,
             status: statusUpdate.status,
+            ...(statusErrors.length ? { errors: statusErrors } : {}),
           });
-          logWebhook('POST → status applied', { messageId: message.id, status: statusUpdate.status });
+          logWebhook('POST → status applied', {
+            messageId: message.id,
+            status: statusUpdate.status,
+            errorCount: statusErrors.length,
+            errorCode: statusErrors[0]?.code,
+          });
         } else {
-          logWebhook('POST → status (no local message)', statusUpdate);
+          logWebhook('POST → status (no local message)', {
+            id: statusUpdate.id,
+            status: statusUpdate.status,
+            errors: statusErrors,
+          });
         }
+      }
+
+      // Subscribed field; delivery failures are the main persist path above.
+      // Template approval sync still happens via Templates → Refresh status.
+      if (field === 'message_template_status_update') {
+        logWebhook('POST → message_template_status_update (not persisted)', value);
       }
 
       if (!value?.messages?.[0] && !value?.statuses?.[0]) {
