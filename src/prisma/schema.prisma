@@ -2041,6 +2041,25 @@ model PlatformAuditLog {
   @@map("platform_audit_logs")
 }
 
+/// Inbound webhook debug log for Super Admin (WhatsApp / Meta / etc.).
+/// workspaceId is best-effort — no FK (unknown or deleted workspaces still keep the row).
+model WebhookEventLog {
+  id          String   @id @default(cuid())
+  source      String // whatsapp | instagram | messenger | meta | …
+  eventType   String // messages | statuses | message_template_status_update | …
+  object      String? // Meta object: whatsapp_business_account | page | instagram
+  workspaceId String?
+  summary     String?
+  payload     Json?
+  error       String?
+  receivedAt  DateTime @default(now())
+
+  @@index([receivedAt])
+  @@index([source, receivedAt])
+  @@index([eventType])
+  @@map("webhook_event_logs")
+}
+
 /// Record of super-admin trial extensions (days + reason).
 model TrialExtensionLog {
   id              String         @id @default(cuid())

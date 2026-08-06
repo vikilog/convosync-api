@@ -1,0 +1,196 @@
+import type { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
+import { resolveWorkspaceByPhoneNumberId } from './workspaceResolve.js';
+
+/** Cap stored JSON so huge media-adjacent payloads don't bloat the table. */
+export const WEBHOOK_PAYLOAD_MAX_CHARS = 32_000;
+
+export function truncateJsonPayload(payload: unknown): Prisma.InputJsonValue | undefined {
+  if (payload === undefined) return undefined;
+  try {
+    const raw = JSON.stringify(payload);
+    if (raw == null) return undefined;
+    if (raw.length <= WEBHOOK_PAYLOAD_MAX_CHARS) {
+      return payload as Prisma.InputJsonValue;
+    }
+    // ponytail: ceiling = 32k preview; upgrade = object storage / sampling
+    return {
+      _truncated: true,
+      chars: raw.length,
+      preview: raw.slice(0, WEBHOOK_PAYLOAD_MAX_CHARS),
+    };
+  } catch {
+    return { _error: 'unserializable' };
+  }
+}
+
+type MetaWebhookBody = {
+  object?: string;
+  entry?: Array<{
+    id?: string;
+    changes?: Array<{ field?: string; value?: Record<string, unknown> }>;
+    messaging?: unknown[];
+  }>;
+};
+
+export function describeMetaWebhook(body: MetaWebhookBody): {
+  source: string;
+  eventType: string;
+  object: string | null;
+  summary: string;
+  phoneNumberId: string | null;
+} {
+  const object = body?.object ?? null;
+
+  if (object === 'page' || object === 'instagram') {
+    const entry = body.entry?.[0];
+    const changeField = entry?.changes?.[0]?.field;
+    const hasMessaging = Array.isArray(entry?.messaging) && entry!.messaging!.length > 0;
+    const eventType = changeField || (hasMessaging ? 'messaging' : 'webhook');
+    return {
+      source: object === 'instagram' ? 'instagram' : 'messenger',
+      eventType,
+      object,
+      summary: `${object} ${eventType}`,
+      phoneNumberId: null,
+    };
+  }
+
+  const change = body?.entry?.[0]?.changes?.[0];
+  const field = change?.field ?? 'unknown';
+  const value = (change?.value ?? {}) as Record<string, unknown>;
+  const metadata = value.metadata as { phone_number_id?: string } | undefined;
+  const phoneNumberId = metadata?.phone_number_id ?? null;
+
+  const statuses = value.statuses as
+    | Array<{
+        status?: string;
+        recipient_id?: string;
+        errors?: Array<{ code?: number; message?: string; title?: string }>;
+      }>
+    | undefined;
+  const messages = value.messages as Array<{ type?: string; from?: string }> | undefined;
+
+  let eventType = field;
+  if (statuses?.[0] && !messages?.[0] && field === 'messages') {
+    eventType = 'statuses';
+  }
+
+  let summary = field;
+  if (statuses?.[0]) {
+    const s = statuses[0];
+    const err = s.errors?.[0];
+    summary = err
+      ? `status=${s.status ?? '?'} error=${err.code ?? '?'} ${err.message || err.title || ''}`.trim()
+      : `status=${s.status ?? '?'} recipient=${s.recipient_id ?? ''}`;
+  } else if (messages?.[0]) {
+    summary = `inbound type=${messages[0].type ?? '?'} from=${messages[0].from ?? '?'}`;
+  } else if (field === 'message_template_status_update') {
+    const name = (value.message_template_name || value.message_template_id || '?') as string;
+    const st = (value.event || value.message_template_status || '?') as string;
+    summary = `template=${name} status=${st}`;
+  }
+
+  return {
+    source: 'whatsapp',
+    eventType,
+    object,
+    summary,
+    phoneNumberId,
+  };
+}
+
+export async function recordWebhookEventLog(input: {
+  source: string;
+  eventType: string;
+  object?: string | null;
+  workspaceId?: string | null;
+  summary?: string | null;
+  payload?: unknown;
+  error?: string | null;
+}): Promise<void> {
+  try {
+    await prisma.webhookEventLog.create({
+      data: {
+        source: input.source,
+        eventType: input.eventType,
+        object: input.object ?? null,
+        workspaceId: input.workspaceId ?? null,
+        summary: input.summary ? input.summary.slice(0, 500) : null,
+        payload: truncateJsonPayload(input.payload),
+        error: input.error ? input.error.slice(0, 2000) : null,
+      },
+    });
+  } catch (err) {
+    console.error('[webhookEventLog] persist failed', err);
+  }
+}
+
+/** Best-effort: describe + resolve workspace + insert. Never throws. */
+export async function recordInboundMetaWebhook(
+  body: MetaWebhookBody,
+  opts?: { error?: string | null }
+): Promise<void> {
+  const desc = describeMetaWebhook(body);
+  let workspaceId: string | null = null;
+  if (desc.phoneNumberId) {
+    try {
+      const ws = await resolveWorkspaceByPhoneNumberId(desc.phoneNumberId);
+      workspaceId = ws?.id ?? null;
+    } catch {
+      // ignore resolve failures — still log the event
+    }
+  }
+  await recordWebhookEventLog({
+    source: desc.source,
+    eventType: desc.eventType,
+    object: desc.object,
+    workspaceId,
+    summary: desc.summary,
+    payload: body,
+    error: opts?.error,
+  });
+}
+
+export async function listWebhookEventLogs(opts: {
+  page: number;
+  pageSize: number;
+  source?: string;
+  eventType?: string;
+}) {
+  const where: Prisma.WebhookEventLogWhereInput = {};
+  if (opts.source) where.source = opts.source;
+  if (opts.eventType) where.eventType = opts.eventType;
+
+  const [total, items] = await Promise.all([
+    prisma.webhookEventLog.count({ where }),
+    prisma.webhookEventLog.findMany({
+      where,
+      orderBy: { receivedAt: 'desc' },
+      skip: (opts.page - 1) * opts.pageSize,
+      take: opts.pageSize,
+    }),
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(total / opts.pageSize));
+
+  return {
+    items: items.map((row) => ({
+      id: row.id,
+      source: row.source,
+      eventType: row.eventType,
+      object: row.object,
+      workspaceId: row.workspaceId,
+      summary: row.summary,
+      payload: row.payload,
+      error: row.error,
+      receivedAt: row.receivedAt.toISOString(),
+    })),
+    pagination: {
+      page: opts.page,
+      pageSize: opts.pageSize,
+      total,
+      totalPages,
+    },
+  };
+}

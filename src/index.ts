@@ -43,6 +43,7 @@ import platformOrganizationRoutes from './routes/platform/organizations.js';
 import platformPlanRoutes from './routes/platform/plans.js';
 import platformCouponRoutes from './routes/platform/coupons.js';
 import platformAuditLogRoutes from './routes/platform/audit-logs.js';
+import platformWebhookLogRoutes from './routes/platform/webhook-logs.js';
 import publicPlanRoutes from './routes/public/plans.js';
 import platformSettingsRoutes from './routes/platform/settings.js';
 import platformDemoRequestRoutes from './routes/platform/demo-requests.js';
@@ -148,6 +149,7 @@ async function start() {
   await fastify.register(platformPlanRoutes, { prefix: '/api/platform/plans' });
   await fastify.register(platformCouponRoutes, { prefix: '/api/platform/coupons' });
   await fastify.register(platformAuditLogRoutes, { prefix: '/api/platform/audit-logs' });
+  await fastify.register(platformWebhookLogRoutes, { prefix: '/api/platform/webhook-logs' });
   await fastify.register(platformSettingsRoutes, { prefix: '/api/platform/settings' });
   await fastify.register(platformDemoRequestRoutes, { prefix: '/api/platform/demo-requests' });
   await fastify.register(platformSupportRequestRoutes, { prefix: '/api/platform/support-requests' });

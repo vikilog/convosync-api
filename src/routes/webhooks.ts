@@ -36,6 +36,7 @@ import {
   normalizeWhatsAppStatusErrors,
   type WhatsAppStatusUpdate,
 } from '../lib/whatsappStatusErrors.js';
+import { recordInboundMetaWebhook } from '../services/webhookEventLog.service.js';
 
 function logWebhook(label: string, payload: unknown) {
   const line = `[WhatsApp Webhook] ${label}`;
@@ -69,6 +70,9 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
       entry?: Array<{ changes?: Array<{ field?: string; value?: Record<string, unknown> }> }>;
     };
 
+    // One row per delivery (incl. ignored fields like message_template_status_update).
+    let processError: string | null = null;
+    try {
     // Meta Page / Instagram webhooks sometimes hit the WhatsApp callback URL by misconfig.
     if (body?.object === 'page' || body?.object === 'instagram') {
       logWebhook('POST → forwarding Page/Instagram payload to Meta messaging handler', {
@@ -77,7 +81,8 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
       try {
         await handleMetaMessagingWebhook(body as PageMessagingWebhookBody);
       } catch (err) {
-        logWebhook('POST → Meta messaging forward error', err instanceof Error ? err.message : err);
+        processError = err instanceof Error ? err.message : String(err);
+        logWebhook('POST → Meta messaging forward error', processError);
         fastify.log.error(err);
       }
       logWebhook('POST → response', 'ok');
@@ -86,7 +91,6 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
 
     logWebhook('POST payload', body);
 
-    try {
       const entry = body?.entry?.[0];
       const changes = entry?.changes?.[0];
       const field = changes?.field;
@@ -337,10 +341,10 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Subscribed field; delivery failures are the main persist path above.
+      // Subscribed field; raw event is persisted to WebhookEventLog (finally).
       // Template approval sync still happens via Templates → Refresh status.
       if (field === 'message_template_status_update') {
-        logWebhook('POST → message_template_status_update (not persisted)', value);
+        logWebhook('POST → message_template_status_update', value);
       }
 
       if (!value?.messages?.[0] && !value?.statuses?.[0]) {
@@ -350,8 +354,11 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
         });
       }
     } catch (err) {
-      logWebhook('POST → error', err instanceof Error ? err.message : err);
+      processError = err instanceof Error ? err.message : String(err);
+      logWebhook('POST → error', processError);
       fastify.log.error(err);
+    } finally {
+      await recordInboundMetaWebhook(body, { error: processError });
     }
 
     logWebhook('POST → response', 'ok');
@@ -388,11 +395,15 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
 
     logInstagramWebhook('POST payload', body);
 
+    let processError: string | null = null;
     try {
       await handleMetaMessagingWebhook(body);
     } catch (err) {
-      logInstagramWebhook('POST → error', err instanceof Error ? err.message : err);
+      processError = err instanceof Error ? err.message : String(err);
+      logInstagramWebhook('POST → error', processError);
       fastify.log.error(err);
+    } finally {
+      await recordInboundMetaWebhook(body, { error: processError });
     }
 
     logInstagramWebhook('POST → response', 'ok');
