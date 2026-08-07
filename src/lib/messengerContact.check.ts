@@ -3,10 +3,23 @@
  */
 import assert from 'node:assert/strict';
 import { Prisma } from '@prisma/client';
-import { formatMessengerContactPhone } from './channelContact.js';
+import {
+  formatMessengerContactPhone,
+  normalizeMessengerPsid,
+  parseMessengerPsid,
+} from './channelContact.js';
 import { isPrismaUniqueViolation } from './messengerContact.js';
 
-assert.equal(formatMessengerContactPhone('1234567890'), 'fb:1234567890');
+assert.equal(formatMessengerContactPhone('1234567890123456'), 'fb:1234567890123456');
+assert.equal(normalizeMessengerPsid('fb:123'), '123');
+assert.equal(normalizeMessengerPsid('ig:123'), '123');
+assert.equal(normalizeMessengerPsid(' 999 '), '999');
+
+assert.equal(parseMessengerPsid('fb:36586673007584588'), '36586673007584588');
+// Legacy bare PSID (no fb:) — long digit ids only
+assert.equal(parseMessengerPsid('36586673007584588'), '36586673007584588');
+assert.equal(parseMessengerPsid('919992492168'), null, 'WA-length digits are not PSIDs');
+assert.equal(parseMessengerPsid('ig:36586673007584588'), null);
 
 const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
   code: 'P2002',

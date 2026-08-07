@@ -142,13 +142,19 @@ export async function resolveWhatsAppConversationForOutbound(
 
 function conversationInboxKey(conv: {
   id?: string;
+  channel?: string;
   channelAccountId?: string | null;
   contact?: { id?: string } | null;
 }): string {
   const contactId = conv.contact?.id;
   if (!contactId) return '';
+  // Channel must be part of the key — IG + Messenger can share a pageId and
+  // (legacy) even a contact row; collapsing them hides one inbox tab.
+  const channel = conv.channel || 'whatsapp';
   const accountId = conv.channelAccountId ? String(conv.channelAccountId) : '';
-  return accountId ? `${contactId}:${accountId}` : `${contactId}:${conv.id ?? ''}`;
+  return accountId
+    ? `${channel}:${contactId}:${accountId}`
+    : `${channel}:${contactId}:${conv.id ?? ''}`;
 }
 
 /** Pick one inbox row when duplicate rows exist for the same contact + inbox account. */

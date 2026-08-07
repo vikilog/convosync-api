@@ -2,7 +2,7 @@ import { prisma } from '../index.js';
 import { getIo } from '../socket.js';
 import { decryptSecret } from '../lib/field-encryption.js';
 import { findOrReopenConversationForInbound } from './conversationThread.service.js';
-import { formatInstagramContactPhone } from '../lib/channelContact.js';
+import { findOrCreateInstagramContact } from '../lib/instagramContact.js';
 import { resolveInstagramContactName } from '../lib/instagramProfile.js';
 import { refreshInstagramContactProfile } from './instagramContactProfile.js';
 import { findInstagramAccountByEntryId } from './workspaceResolve.js';
@@ -101,22 +101,12 @@ async function upsertInstagramInboundMessage(params: {
     return;
   }
 
-  const contactPhone = formatInstagramContactPhone(params.senderId);
-
-  let contact = await prisma.contact.findFirst({
-    where: { phone: contactPhone, workspaceId: workspace.id },
+  // ig:{id} only — never reuse Messenger fb:/bare-PSID contacts for IG threads.
+  let contact = await findOrCreateInstagramContact({
+    db: prisma,
+    workspaceId: workspace.id,
+    scopedUserId: params.senderId,
   });
-
-  if (!contact) {
-    contact = await prisma.contact.create({
-      data: {
-        name: `Instagram ${params.senderId.slice(-6)}`,
-        phone: contactPhone,
-        workspaceId: workspace.id,
-        source: 'Instagram',
-      },
-    });
-  }
 
   const profile = await refreshInstagramContactProfile({
     contact,
@@ -330,7 +320,13 @@ export async function handleInstagramWebhookBody(body: PageMessagingWebhookBody)
     }
 
     for (const { event, fromStandby } of events) {
-      if (event.message?.messaging_product === 'facebook') continue;
+      // Page webhook can still deliver Messenger events when only IG is connected.
+      if (
+        event.message?.messaging_product === 'facebook' ||
+        event.message?.messaging_product === 'messenger'
+      ) {
+        continue;
+      }
 
       const senderId = event.sender?.id;
       if (!senderId) {

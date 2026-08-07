@@ -1,5 +1,8 @@
 import { Prisma, type Contact, type PrismaClient } from '@prisma/client';
-import { formatMessengerContactPhone } from './channelContact.js';
+import {
+  formatMessengerContactPhone,
+  normalizeMessengerPsid,
+} from './channelContact.js';
 
 export function isPrismaUniqueViolation(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
@@ -7,6 +10,7 @@ export function isPrismaUniqueViolation(err: unknown): boolean {
 
 /**
  * Find-or-create Messenger contact by `(phone, workspaceId)` where phone is `fb:{psid}`.
+ * Also heals legacy rows that stored the bare PSID (no fb: prefix).
  * Catches P2002 from concurrent webhook/sync creates and re-fetches.
  */
 export async function findOrCreateMessengerContact(params: {
@@ -16,13 +20,42 @@ export async function findOrCreateMessengerContact(params: {
   name: string;
   avatar?: string | null;
 }): Promise<Contact> {
-  const { db, workspaceId, psid, name } = params;
+  const { db, workspaceId, name } = params;
+  const psid = normalizeMessengerPsid(params.psid);
+  if (!psid) {
+    throw new Error('Messenger PSID is required');
+  }
   const phone = formatMessengerContactPhone(psid);
   const avatar = params.avatar || undefined;
 
   let contact = await db.contact.findUnique({
     where: { phone_workspaceId: { phone, workspaceId } },
   });
+
+  // Legacy: sync/webhook once stored raw PSID without fb: — reuse + heal.
+  if (!contact) {
+    contact = await db.contact.findUnique({
+      where: { phone_workspaceId: { phone: psid, workspaceId } },
+    });
+    if (contact) {
+      try {
+        contact = await db.contact.update({
+          where: { id: contact.id },
+          data: {
+            phone,
+            source: contact.source === 'Instagram' ? 'Messenger' : contact.source || 'Messenger',
+          },
+        });
+      } catch (err) {
+        // fb:{psid} already taken — use that row (bare legacy becomes orphan).
+        if (!isPrismaUniqueViolation(err)) throw err;
+        contact = await db.contact.findUnique({
+          where: { phone_workspaceId: { phone, workspaceId } },
+        });
+        if (!contact) throw err;
+      }
+    }
+  }
 
   if (!contact) {
     try {
@@ -45,10 +78,14 @@ export async function findOrCreateMessengerContact(params: {
     }
   }
 
-  const data: { name?: string; avatar?: string } = {};
-  if (contact.name === phone) data.name = name;
+  const data: { name?: string; avatar?: string; phone?: string; source?: string } = {};
+  if (contact.phone !== phone) data.phone = phone;
+  if (contact.source === 'Instagram') data.source = 'Messenger';
+  if (contact.name === phone || contact.name === psid || contact.name === contact.phone) {
+    data.name = name;
+  }
   if (!contact.avatar && avatar) data.avatar = avatar;
-  if (!data.name && !data.avatar) return contact;
+  if (!data.name && !data.avatar && !data.phone && !data.source) return contact;
 
   return db.contact.update({ where: { id: contact.id }, data });
 }

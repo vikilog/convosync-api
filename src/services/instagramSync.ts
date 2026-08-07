@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { io, prisma } from '../index.js';
-import { formatInstagramContactPhone } from '../lib/channelContact.js';
+import { findOrCreateInstagramContact } from '../lib/instagramContact.js';
 import { decryptSecret } from '../lib/field-encryption.js';
 import { resolveInstagramContactName } from '../lib/instagramProfile.js';
 import { refreshInstagramContactProfile } from './instagramContactProfile.js';
@@ -432,24 +432,14 @@ async function upsertSyncedThread(
   }
 
   const senderId = customer.id;
-  const contactPhone = formatInstagramContactPhone(senderId);
-
-  let contact = await prisma.contact.findFirst({
-    where: { phone: contactPhone, workspaceId: account.workspaceId },
+  let contact = await findOrCreateInstagramContact({
+    db: prisma,
+    workspaceId: account.workspaceId,
+    scopedUserId: senderId,
+    name:
+      customer.name ||
+      (customer.username ? `@${customer.username}` : undefined),
   });
-
-  if (!contact) {
-    contact = await prisma.contact.create({
-      data: {
-        name:
-          customer.name ||
-          (customer.username ? `@${customer.username}` : `Instagram ${senderId.slice(-6)}`),
-        phone: contactPhone,
-        workspaceId: account.workspaceId,
-        source: 'Instagram',
-      },
-    });
-  }
 
   const profile = await refreshInstagramContactProfile({
     contact,
