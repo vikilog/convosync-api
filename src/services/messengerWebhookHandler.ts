@@ -11,6 +11,7 @@ import {
 import { findMessengerAccountByPageId } from './workspaceResolve.js';
 import { applyMessagingReadReceipt } from './messagingReadReceipt.service.js';
 import { routeInboundConversation } from './conversation-inbound-router.service.js';
+import { isMessengerMessagingEvent } from './metaMessagingRoute.js';
 import {
   downloadInstagramMediaUrl,
   parseInboundInstagramMessage,
@@ -18,6 +19,8 @@ import {
   type MessageMediaMetadata,
   type ParsedInboundInstagram,
 } from './instagramMedia.js';
+
+export { isMessengerMessagingEvent } from './metaMessagingRoute.js';
 
 type PageMessagingEvent = {
   sender?: { id?: string };
@@ -184,15 +187,6 @@ export type PageMessagingWebhookBody = {
     messaging?: PageMessagingEvent[];
   }>;
 };
-
-export function isMessengerMessagingEvent(event: PageMessagingEvent): boolean {
-  if (event.read?.watermark != null && !event.read?.mid) return true;
-  if (event.read?.mid) return false;
-  const product = event.message?.messaging_product;
-  if (product === 'instagram') return false;
-  if (product === 'facebook') return true;
-  return true;
-}
 
 export async function handleMessengerWebhookBody(body: PageMessagingWebhookBody) {
   if (body.object !== 'page') {

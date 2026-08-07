@@ -1,40 +1,63 @@
 /**
- * Runnable check: Meta IG vs Messenger event routing (omitted messaging_product).
+ * Runnable check: Meta IG vs Messenger event routing on object=page.
  * Run: npx tsx src/services/metaMessagingWebhook.routing.check.ts
  */
 import assert from 'node:assert/strict';
+import {
+  isInstagramMessagingEvent,
+  isMessengerMessagingEvent,
+} from './metaMessagingRoute.js';
 
-type MessagingEvent = {
-  message?: { messaging_product?: 'instagram' | 'facebook' };
-  read?: { mid?: string; watermark?: number };
-};
+const igCtx = { pageId: 'page-1', instagramUserId: 'ig-biz-1' };
 
-function isInstagramMessagingEvent(event: MessagingEvent): boolean {
-  if (event.read?.mid) return true;
-  if (!event.message) return false;
-  const product = event.message.messaging_product;
-  return product === 'instagram' || product == null;
-}
+// Classic Messenger Page DM — no messaging_product
+assert.equal(isInstagramMessagingEvent({ message: {} }, igCtx), false, 'omitted ↛ IG');
+assert.equal(isMessengerMessagingEvent({ message: {} }, igCtx), true, 'omitted → Messenger');
 
-function isMessengerMessagingEvent(event: MessagingEvent): boolean {
-  if (event.read?.watermark != null && !event.read?.mid) return true;
-  if (event.read?.mid) return false;
-  const product = event.message?.messaging_product;
-  return product === 'facebook' || product === 'messenger';
-}
-
-assert.equal(isInstagramMessagingEvent({ message: {} }), true, 'omitted product → IG');
-assert.equal(isMessengerMessagingEvent({ message: {} }), false, 'omitted product ↛ Messenger');
 assert.equal(
-  isInstagramMessagingEvent({ message: { messaging_product: 'instagram' } }),
+  isInstagramMessagingEvent({ message: { messaging_product: 'instagram' } }, igCtx),
   true
 );
 assert.equal(
-  isMessengerMessagingEvent({ message: { messaging_product: 'facebook' } }),
+  isMessengerMessagingEvent({ message: { messaging_product: 'instagram' } }, igCtx),
+  false
+);
+assert.equal(
+  isMessengerMessagingEvent({ message: { messaging_product: 'facebook' } }, igCtx),
   true
 );
 assert.equal(
-  isInstagramMessagingEvent({ message: { messaging_product: 'facebook' } }),
+  isInstagramMessagingEvent({ message: { messaging_product: 'facebook' } }, igCtx),
+  false
+);
+
+// Omitted product but addressed to IG business id → Instagram
+assert.equal(
+  isInstagramMessagingEvent(
+    { recipient: { id: 'ig-biz-1' }, message: {} },
+    igCtx
+  ),
+  true,
+  'recipient IG id → IG'
+);
+assert.equal(
+  isMessengerMessagingEvent(
+    { recipient: { id: 'ig-biz-1' }, message: {} },
+    igCtx
+  ),
+  false,
+  'recipient IG id ↛ Messenger'
+);
+
+// Reads
+assert.equal(isInstagramMessagingEvent({ read: { mid: 'm1' } }, igCtx), true);
+assert.equal(isMessengerMessagingEvent({ read: { mid: 'm1' } }, igCtx), false);
+assert.equal(
+  isMessengerMessagingEvent({ read: { watermark: 123 } }, igCtx),
+  true
+);
+assert.equal(
+  isInstagramMessagingEvent({ read: { watermark: 123 } }, igCtx),
   false
 );
 

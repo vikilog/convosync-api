@@ -6,29 +6,18 @@ import { handleMessengerWebhookBody } from './messengerWebhookHandler.js';
 import { handleInstagramCommentWebhookBody } from './instagramCommentWebhook.service.js';
 import { findInstagramAccountByEntryId } from './workspaceResolve.js';
 import { findMessengerAccountByPageId } from './workspaceResolve.js';
+import {
+  isInstagramMessagingEvent,
+  isMessengerMessagingEvent,
+  type MetaMessagingRouteCtx,
+} from './metaMessagingRoute.js';
 
-type MessagingEvent = {
-  message?: { messaging_product?: 'instagram' | 'facebook' | 'messenger' };
-  read?: { mid?: string; watermark?: number };
-};
-
-/** Instagram DMs (messages or messaging_seen with mid). */
-function isInstagramMessagingEvent(event: MessagingEvent): boolean {
-  if (event.read?.mid) return true;
-  if (!event.message) return false;
-  const product = event.message.messaging_product;
-  // Meta often omits messaging_product on IG DMs — treat missing as Instagram.
-  return product === 'instagram' || product == null;
-}
-
-/** Messenger DMs (messages or message_reads with watermark). */
-function isMessengerMessagingEvent(event: MessagingEvent): boolean {
-  if (event.read?.watermark != null && !event.read?.mid) return true;
-  if (event.read?.mid) return false; // Instagram seen uses mid
-  // Only explicit Facebook/Messenger product — never steal omitted-product IG DMs.
-  const product = event.message?.messaging_product;
-  return product === 'facebook' || product === 'messenger';
-}
+export {
+  isInstagramMessagingEvent,
+  isMessengerMessagingEvent,
+  type MetaMessagingEvent,
+  type MetaMessagingRouteCtx,
+} from './metaMessagingRoute.js';
 
 export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody) {
   // ponytail: temporary — inspect raw Meta IG/Page webhook payload
@@ -70,18 +59,22 @@ export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody)
       continue;
     }
 
-    // Both connected — split by messaging_product; seen/reads by mid vs watermark
+    // Both connected — split by messaging_product / recipient / read shape
+    const routeCtx: MetaMessagingRouteCtx = {
+      pageId: messengerAccount!.pageId || instagramAccount!.pageId,
+      instagramUserId: instagramAccount!.instagramUserId,
+    };
     const messaging = entry.messaging || [];
     const standby = entry.standby || [];
 
     const instagramEntry = {
       ...entry,
-      messaging: messaging.filter((event) => isInstagramMessagingEvent(event)),
-      standby: standby.filter((event) => isInstagramMessagingEvent(event)),
+      messaging: messaging.filter((event) => isInstagramMessagingEvent(event, routeCtx)),
+      standby: standby.filter((event) => isInstagramMessagingEvent(event, routeCtx)),
     };
     const messengerEntry = {
       ...entry,
-      messaging: messaging.filter((event) => isMessengerMessagingEvent(event)),
+      messaging: messaging.filter((event) => isMessengerMessagingEvent(event, routeCtx)),
       standby: [] as typeof standby,
     };
 
