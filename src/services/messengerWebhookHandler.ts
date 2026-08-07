@@ -30,7 +30,7 @@ type PageMessagingEvent = {
     mid?: string;
     text?: string;
     is_echo?: boolean;
-    messaging_product?: 'instagram' | 'facebook';
+    messaging_product?: 'instagram' | 'facebook' | 'messenger';
     attachments?: Array<{
       type?: string;
       payload?: { url?: string; title?: string; sticker_id?: number };

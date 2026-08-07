@@ -25,7 +25,7 @@ type PageMessagingEvent = {
     mid?: string;
     text?: string;
     is_echo?: boolean;
-    messaging_product?: 'instagram' | 'facebook';
+    messaging_product?: 'instagram' | 'facebook' | 'messenger';
     /** Quick-reply tap — payload is what we configured; text is often the button title. */
     quick_reply?: { payload?: string };
     attachments?: Array<{
@@ -226,7 +226,7 @@ async function upsertInstagramInboundMessage(params: {
       workspaceId: workspace.id,
       conversationId: conv.id,
       contactId: contact.id,
-      contactPhone,
+      contactPhone: contact.phone,
       text: params.parsed.content,
       channel: 'instagram',
     });
