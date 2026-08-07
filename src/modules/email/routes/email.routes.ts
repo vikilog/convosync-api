@@ -28,10 +28,15 @@ export default async function emailRoutes(fastify: FastifyInstance) {
 
   fastify.get('/providers', auth, controller.listProviders);
   fastify.post('/providers', auth, controller.createProvider);
+  // Static /ses/* before /:id so "ses" is not captured as an id.
+  fastify.post('/providers/ses/refresh-identities', auth, controller.refreshSesIdentitiesPreview);
+  fastify.post('/providers/ses/test-send', auth, controller.testSesSendPreview);
   fastify.patch('/providers/:id', auth, controller.updateProvider);
   fastify.delete('/providers/:id', auth, controller.deleteProvider);
   fastify.post('/providers/:id/default', auth, controller.setDefaultProvider);
   fastify.post('/providers/:id/test', auth, controller.testProvider);
+  fastify.post('/providers/:id/refresh-identities', auth, controller.refreshSesIdentities);
+  fastify.post('/providers/:id/test-send', auth, controller.testSesSend);
 
   fastify.get('/templates', auth, controller.listEmailTemplates);
   fastify.get('/templates/:id', auth, controller.getEmailTemplate);

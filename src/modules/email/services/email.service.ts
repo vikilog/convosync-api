@@ -11,6 +11,12 @@ import {
   chargeEmailSendUsage,
 } from '../../../services/walletUsage.js';
 import { InsufficientWalletBalanceError } from '../../../services/wallet.service.js';
+import { WorkspaceEmailConfigService } from './workspace-email-config.service.js';
+import { prisma } from '../../../lib/prisma.js';
+import {
+  domainFromEmail,
+  pickActiveSendingEmail,
+} from '../utils/active-sending-identity.js';
 
 function domainNeedsProviderSync(row: EmailDomain): boolean {
   if (!row.providerDomainId) return false;
@@ -121,7 +127,10 @@ export class EmailDomainService {
 }
 
 export class EmailSenderService {
-  constructor(private readonly repo: EmailRepository) {}
+  constructor(
+    private readonly repo: EmailRepository,
+    private readonly providerConfigService?: EmailProviderConfigService
+  ) {}
 
   private async workspaceBrand(workspaceId: string) {
     const ws = await this.repo.getWorkspaceBrand(workspaceId);
@@ -135,24 +144,68 @@ export class EmailSenderService {
     const brand = await this.workspaceBrand(workspaceId);
     const defs = getSharedSenderDefinitions(brand);
     const enabled = await this.repo.isEmailIntegrationEnabled(workspaceId);
+    const platformSharedEmail = defs.find((s) => s.isDefault)?.email ?? defs[0]?.email ?? null;
 
     if (!enabled) {
-      const sharedDefault = defs.find((s) => s.isDefault);
       return {
         enabled: false,
         shared: [],
         custom: [],
         companyName: brand.name,
-        defaultSenderEmail: sharedDefault?.email ?? null,
+        defaultSenderEmail: platformSharedEmail,
+        activeDomain: domainFromEmail(platformSharedEmail),
       };
     }
+
+    const providerSender =
+      (await this.providerConfigService?.getDefaultProviderSender(workspaceId)) ?? null;
+    const activeEmail = pickActiveSendingEmail({
+      defaultProviderType: providerSender?.provider ?? null,
+      defaultProviderStatus: providerSender?.status ?? null,
+      defaultProviderSenderEmail: providerSender?.email ?? null,
+      platformSharedEmail,
+    });
+    const providerIsActiveDefault =
+      Boolean(providerSender?.email) &&
+      activeEmail === providerSender!.email.toLowerCase();
 
     const custom = await this.repo.listAddresses(workspaceId);
     const defaultRow = custom.find((a) => a.isDefault);
     const customIsDefault =
+      !providerIsActiveDefault &&
       Boolean(defaultRow) &&
       !isSharedSenderEmail(defaultRow!.email) &&
       !defaultRow!.isShared;
+
+    // When SES (or other BYO) is the default provider, that From is the only
+    // "Your domain" / default — do not keep advertising the platform shared address.
+    if (providerIsActiveDefault && providerSender) {
+      const email = providerSender.email.toLowerCase();
+      const domain = domainFromEmail(email);
+      const localPart = email.split('@')[0] ?? '';
+      return {
+        enabled: true,
+        shared: [
+          {
+            id: `provider-default:${email}`,
+            workspaceId,
+            domainId: null as string | null,
+            email,
+            displayName: domain ?? brand.name,
+            isDefault: true,
+            isShared: false as const,
+            localPart,
+            createdAt: new Date(0),
+            updatedAt: new Date(0),
+            domain: domain ? { domain, status: 'verified' as const } : null,
+          },
+        ],
+        custom: custom.filter((a) => !isSharedSenderEmail(a.email)),
+        companyName: brand.name,
+        defaultSenderEmail: email,
+        activeDomain: domain,
+      };
+    }
 
     const shared = defs.map((s) => {
       const branded = s.email.toLowerCase();
@@ -175,8 +228,19 @@ export class EmailSenderService {
     });
 
     const customOnly = custom.filter((a) => !isSharedSenderEmail(a.email));
+    const defaultSenderEmail =
+      (customIsDefault ? defaultRow!.email : null) ??
+      activeEmail ??
+      platformSharedEmail;
 
-    return { enabled: true, shared, custom: customOnly, companyName: brand.name };
+    return {
+      enabled: true,
+      shared,
+      custom: customOnly,
+      companyName: brand.name,
+      defaultSenderEmail,
+      activeDomain: domainFromEmail(defaultSenderEmail),
+    };
   }
 
   async setDefaultSender(workspaceId: string, email: string) {
@@ -297,6 +361,17 @@ export class EmailService {
   }> {
     const normalized = fromEmail.toLowerCase().trim();
     const { transportName } = await this.providerConfigService.getDefaultForSending(workspaceId);
+
+    const byoSes = await new WorkspaceEmailConfigService(prisma).resolveActiveSes(workspaceId);
+    if (byoSes && byoSes.senderEmail.toLowerCase() === normalized) {
+      return {
+        email: normalized,
+        displayName: null,
+        provider: 'ses',
+        isShared: false,
+      };
+    }
+
     const brand = await this.repo.getWorkspaceBrand(workspaceId);
     const workspace = {
       slug: brand?.slug ?? 'workspace',
@@ -341,6 +416,14 @@ export class EmailService {
   }
 
   async resolveDefaultSender(workspaceId: string): Promise<string> {
+    // Providers-tab default is source of truth (SES From > platform shared).
+    const providerSender =
+      await this.providerConfigService.getDefaultProviderSender(workspaceId);
+    if (providerSender?.email) return providerSender.email;
+
+    const byoSes = await new WorkspaceEmailConfigService(prisma).resolveActiveSes(workspaceId);
+    if (byoSes) return byoSes.senderEmail;
+
     const addresses = await this.repo.listAddresses(workspaceId);
     const customDefault = addresses.find((a) => a.isDefault);
     if (customDefault) return customDefault.email;

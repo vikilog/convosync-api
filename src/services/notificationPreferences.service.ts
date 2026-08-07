@@ -1,5 +1,4 @@
 import type { PrismaClient } from '@prisma/client';
-import { config } from '../config.js';
 
 export const NOTIFICATION_EVENT_TYPES = ['human_handoff'] as const;
 export type NotificationEventType = (typeof NOTIFICATION_EVENT_TYPES)[number];
@@ -328,6 +327,7 @@ async function sendAlertEmail(params: {
   text: string;
 }): Promise<void> {
   if (params.to.length === 0) return;
+  // Logged/billed channel send when email integration is on (also honors BYO SES).
   if (params.emailIntegrationEnabled) {
     const { getEmailService } = await import('../modules/email/container.js');
     await getEmailService().sendEmail(params.workspaceId, {
@@ -337,13 +337,16 @@ async function sendAlertEmail(params: {
     });
     return;
   }
-  const { ResendProvider } = await import('../modules/email/providers/resend.provider.js');
-  await new ResendProvider().sendEmail({
-    from: config.contactOtp.emailFrom,
-    fromName: 'ConvoSync Alerts',
+  // Shared helper: WorkspaceEmailConfig SES if active, else platform Resend.
+  const { sendWorkspaceEmail } = await import(
+    '../modules/email/services/send-workspace-email.js'
+  );
+  await sendWorkspaceEmail({
+    workspaceId: params.workspaceId,
     to: params.to,
     subject: params.subject,
     text: params.text,
+    fromName: 'ConvoSync Alerts',
   });
 }
 

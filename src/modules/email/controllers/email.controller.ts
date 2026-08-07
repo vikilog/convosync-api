@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getJwtUser } from '../../../middleware/auth.js';
+import { prisma } from '../../../lib/prisma.js';
 import type { EmailContainer } from '../container.js';
 import {
   createDomainSchema,
@@ -8,6 +9,7 @@ import {
   setDefaultSenderSchema,
   listLogsSchema,
   sendEmailSchema,
+  sesCredentialsDraftSchema,
   updateProviderSchema,
   upsertEmailTemplateSchema,
   updateEmailTemplateSchema,
@@ -242,6 +244,112 @@ export class EmailController {
     } catch (err) {
       return reply.code(400).send({
         error: err instanceof Error ? err.message : 'Connection test failed',
+      });
+    }
+  };
+
+  refreshSesIdentitiesPreview = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { workspaceId } = getJwtUser(request);
+    const parsed = sesCredentialsDraftSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: parsed.error.issues[0]?.message ?? 'Invalid SES credentials',
+      });
+    }
+    try {
+      return await this.container.providerConfigService.refreshSesIdentities(workspaceId, {
+        draft: parsed.data,
+      });
+    } catch (err) {
+      return reply.code(400).send({
+        error: err instanceof Error ? err.message : 'Failed to refresh SES identities',
+      });
+    }
+  };
+
+  refreshSesIdentities = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const parsed = sesCredentialsDraftSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: parsed.error.issues[0]?.message ?? 'Invalid SES credentials',
+      });
+    }
+    try {
+      return await this.container.providerConfigService.refreshSesIdentities(workspaceId, {
+        providerId: id,
+        draft: parsed.data,
+      });
+    } catch (err) {
+      return reply.code(400).send({
+        error: err instanceof Error ? err.message : 'Failed to refresh SES identities',
+      });
+    }
+  };
+
+  private async adminTestRecipient(request: FastifyRequest, reply: FastifyReply) {
+    const { userId } = getJwtUser(request);
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true },
+    });
+    const to = user?.email?.trim();
+    if (!to) {
+      void reply.code(400).send({
+        error: 'Your account has no email address to receive the test.',
+      });
+      return null;
+    }
+    return to;
+  }
+
+  testSesSendPreview = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { workspaceId } = getJwtUser(request);
+    const parsed = sesCredentialsDraftSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: parsed.error.issues[0]?.message ?? 'Invalid SES credentials',
+      });
+    }
+    const to = await this.adminTestRecipient(request, reply);
+    if (!to) return;
+    try {
+      const result = await this.container.providerConfigService.testSesSend(workspaceId, {
+        to,
+        draft: parsed.data,
+      });
+      if (!result.ok) return reply.code(400).send(result);
+      return result;
+    } catch (err) {
+      return reply.code(400).send({
+        error: err instanceof Error ? err.message : 'SES test send failed',
+      });
+    }
+  };
+
+  testSesSend = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const parsed = sesCredentialsDraftSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: parsed.error.issues[0]?.message ?? 'Invalid SES credentials',
+      });
+    }
+    const to = await this.adminTestRecipient(request, reply);
+    if (!to) return;
+    try {
+      const result = await this.container.providerConfigService.testSesSend(workspaceId, {
+        to,
+        providerId: id,
+        draft: parsed.data,
+      });
+      if (!result.ok) return reply.code(400).send(result);
+      return result;
+    } catch (err) {
+      return reply.code(400).send({
+        error: err instanceof Error ? err.message : 'SES test send failed',
       });
     }
   };

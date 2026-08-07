@@ -166,16 +166,18 @@ async function resolveMemberInboxScope(input: {
 }
 
 async function sendTeamInviteEmail(input: {
+  workspaceId: string;
   to: string;
   name: string;
   workspaceName: string;
   password: string;
 }) {
-  const { ResendProvider } = await import('../modules/email/providers/resend.provider.js');
+  const { sendWorkspaceEmail } = await import(
+    '../modules/email/services/send-workspace-email.js'
+  );
   const loginUrl = `${config.frontendUrl}/login`;
-  await new ResendProvider().sendEmail({
-    from: config.contactOtp.emailFrom,
-    fromName: 'ConvoSync',
+  await sendWorkspaceEmail({
+    workspaceId: input.workspaceId,
     to: [input.to],
     subject: `You've been added to ${input.workspaceName} on ConvoSync`,
     text:
@@ -311,6 +313,7 @@ export async function addWorkspaceMember(input: {
       select: { name: true },
     });
     await sendTeamInviteEmail({
+      workspaceId: input.workspaceId,
       to: email,
       name,
       workspaceName: workspace?.name ?? 'your workspace',

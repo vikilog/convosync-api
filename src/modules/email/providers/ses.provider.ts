@@ -2,6 +2,7 @@ import {
   GetIdentityDkimAttributesCommand,
   GetIdentityVerificationAttributesCommand,
   GetSendQuotaCommand,
+  ListIdentitiesCommand,
   SendEmailCommand,
   SESClient,
   VerifyDomainDkimCommand,
@@ -18,6 +19,12 @@ import type {
   SendEmailResult,
 } from '../types/email.types.js';
 import type { SesProviderConfig } from '../types/provider-config.types.js';
+import { formatSesSendError } from '../utils/ses-errors.js';
+import {
+  filterVerifiedIdentities,
+  mergeIdentityNames,
+  type SesVerifiedIdentity,
+} from '../utils/ses-verified-identities.js';
 
 export function getPlatformSesConfig(): SesProviderConfig {
   return {
@@ -151,31 +158,78 @@ export class SesProvider implements EmailProvider {
     }
   }
 
+  /**
+   * Classic SES ListIdentities: IdentityType filters the result set.
+   * EmailAddress-only calls omit domains — always fetch EmailAddress + Domain.
+   * (Omit IdentityType also returns both; dual typed calls are explicit + safe.)
+   * Rate limit is ~1 ListIdentities/sec — pause between type passes / pages.
+   * Then GetIdentityVerificationAttributes (batches of 100); keep Success only.
+   */
+  async listVerifiedIdentities(): Promise<SesVerifiedIdentity[]> {
+    const client = this.requireClient();
+    const pages: string[][] = [];
+
+    for (const identityType of ['EmailAddress', 'Domain'] as const) {
+      if (pages.length > 0) await sleep(1100);
+      let nextToken: string | undefined;
+      do {
+        if (nextToken) await sleep(1100);
+        const page = await client.send(
+          new ListIdentitiesCommand({
+            IdentityType: identityType,
+            MaxItems: 1000,
+            NextToken: nextToken,
+          })
+        );
+        pages.push(page.Identities ?? []);
+        nextToken = page.NextToken;
+      } while (nextToken);
+    }
+
+    const identities = mergeIdentityNames(...pages);
+
+    const attributes: Record<string, { VerificationStatus?: string } | undefined> = {};
+    for (let i = 0; i < identities.length; i += 100) {
+      const chunk = identities.slice(i, i + 100);
+      if (chunk.length === 0) continue;
+      const res = await client.send(
+        new GetIdentityVerificationAttributesCommand({ Identities: chunk })
+      );
+      Object.assign(attributes, res.VerificationAttributes ?? {});
+    }
+
+    return filterVerifiedIdentities(identities, attributes);
+  }
+
   async sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
     const client = this.requireClient();
     const to = Array.isArray(input.to) ? input.to : [input.to];
     const html = input.html ?? (input.text ? `<pre>${input.text}</pre>` : '<p></p>');
 
-    const { MessageId } = await client.send(
-      new SendEmailCommand({
-        Source: input.fromName ? `${input.fromName} <${input.from}>` : input.from,
-        Destination: { ToAddresses: to },
-        Message: {
-          Subject: { Data: input.subject, Charset: 'UTF-8' },
-          Body: {
-            Html: { Data: html, Charset: 'UTF-8' },
-            ...(input.text ? { Text: { Data: input.text, Charset: 'UTF-8' } } : {}),
+    try {
+      const { MessageId } = await client.send(
+        new SendEmailCommand({
+          Source: input.fromName ? `${input.fromName} <${input.from}>` : input.from,
+          Destination: { ToAddresses: to },
+          Message: {
+            Subject: { Data: input.subject, Charset: 'UTF-8' },
+            Body: {
+              Html: { Data: html, Charset: 'UTF-8' },
+              ...(input.text ? { Text: { Data: input.text, Charset: 'UTF-8' } } : {}),
+            },
           },
-        },
-        ReplyToAddresses: input.replyTo ? [input.replyTo] : undefined,
-      })
-    );
+          ReplyToAddresses: input.replyTo ? [input.replyTo] : undefined,
+        })
+      );
 
-    if (!MessageId) {
-      throw new Error('SES did not return a message id');
+      if (!MessageId) {
+        throw new Error('SES did not return a message id');
+      }
+
+      return { messageId: MessageId, provider: 'ses' };
+    } catch (err) {
+      throw new Error(formatSesSendError(err));
     }
-
-    return { messageId: MessageId, provider: 'ses' };
   }
 
   async createDomain(domain: string): Promise<CreateDomainResult> {

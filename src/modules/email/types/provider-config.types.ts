@@ -1,3 +1,5 @@
+import type { SesVerifiedIdentity } from '../utils/ses-verified-identities.js';
+
 /** Stored provider types for BYOP configuration. */
 export const EMAIL_PROVIDER_CONFIG_TYPES = [
   'CONVOSYNC_MANAGED',
@@ -32,6 +34,10 @@ export type SesProviderConfig = {
   accessKeyId: string;
   secretAccessKey: string;
   region: string;
+  /** Default From for transactional/alert sends (must match a verified identity). */
+  senderEmail?: string;
+  verifiedIdentities?: SesVerifiedIdentity[];
+  identitiesFetchedAt?: string | null;
 };
 
 export type SendGridProviderConfig = {
@@ -62,6 +68,13 @@ export type EmailProviderConfigPublic = {
   hasCredentials: boolean;
   createdAt: Date;
   updatedAt: Date;
+  /** Present for AWS_SES only (non-secret metadata for the edit form). */
+  region?: string | null;
+  senderEmail?: string | null;
+  accessKeyIdMasked?: string | null;
+  verifiedIdentities?: SesVerifiedIdentity[];
+  identitiesFetchedAt?: string | null;
+  sesConsoleUrl?: string | null;
 };
 
 export type ProviderConnectionTestResult = {

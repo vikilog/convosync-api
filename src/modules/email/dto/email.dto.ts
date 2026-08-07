@@ -81,11 +81,20 @@ export const updateProviderSchema = z.object({
   config: z.record(z.unknown()).optional(),
 });
 
+/** Draft SES credentials for identity refresh / test-send (Add form or Edit overrides). */
+export const sesCredentialsDraftSchema = z.object({
+  accessKeyId: z.string().min(1).max(200).optional(),
+  secretAccessKey: z.string().min(1).max(500).optional(),
+  region: z.string().min(1).max(64).optional(),
+  senderEmail: z.string().email().max(320).optional(),
+});
+
 export type CreateDomainDto = z.infer<typeof createDomainSchema>;
 export type VerifyDomainDto = z.infer<typeof verifyDomainSchema>;
 export type CreateSenderDto = z.infer<typeof createSenderSchema>;
 export type SendEmailDto = z.infer<typeof sendEmailSchema>;
 export type CreateProviderDto = z.infer<typeof createProviderSchema>;
 export type UpdateProviderDto = z.infer<typeof updateProviderSchema>;
+export type SesCredentialsDraftDto = z.infer<typeof sesCredentialsDraftSchema>;
 export type UpsertEmailTemplateDto = z.infer<typeof upsertEmailTemplateSchema>;
 export type UpdateEmailTemplateDto = z.infer<typeof updateEmailTemplateSchema>;

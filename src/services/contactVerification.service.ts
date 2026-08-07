@@ -129,11 +129,12 @@ async function bumpAttemptOrClear(
   );
 }
 
-async function sendOtpEmail(to: string, code: string) {
-  const { ResendProvider } = await import('../modules/email/providers/resend.provider.js');
-  await new ResendProvider().sendEmail({
-    from: config.contactOtp.emailFrom,
-    fromName: 'ConvoSync',
+async function sendOtpEmail(workspaceId: string, to: string, code: string) {
+  const { sendWorkspaceEmail } = await import(
+    '../modules/email/services/send-workspace-email.js'
+  );
+  await sendWorkspaceEmail({
+    workspaceId,
     to: [to],
     subject: `${code} is your ConvoSync verification code`,
     text:
@@ -222,7 +223,7 @@ export async function sendVerificationOtp(input: {
     await assertSendAllowed(userId, target);
     const code = generateOtpCode();
     await storeOtp(userId, target, code, user.email.toLowerCase());
-    await sendOtpEmail(user.email, code);
+    await sendOtpEmail(workspaceId, user.email, code);
     return {
       sent: true,
       alreadyVerified: false,
@@ -260,7 +261,7 @@ export async function sendVerificationOtp(input: {
     await assertSendAllowed(workspaceId, target);
     const code = generateOtpCode();
     await storeOtp(workspaceId, target, code, email);
-    await sendOtpEmail(email, code);
+    await sendOtpEmail(workspaceId, email, code);
     return {
       sent: true,
       alreadyVerified: false,

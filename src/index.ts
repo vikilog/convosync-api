@@ -73,6 +73,7 @@ import { initGoogleModule } from './modules/google/container.js';
 import { initSocket } from './socket.js';
 import { IdleTimeoutService } from './modules/ai-agent/idle-timeout.service.js';
 import aiProviderRoutes from './modules/ai-agent/routes/ai-provider.routes.js';
+import workspaceEmailConfigRoutes from './modules/email/routes/workspace-email-config.routes.js';
 import callingRoutes from './modules/calling/calling.routes.js';
 import internalRoutes from './routes/internal.js';
 import { startCallingSweeper } from './modules/calling/calling.sweeper.js';
@@ -143,6 +144,7 @@ async function start() {
   await fastify.register(whatsappPayRoutes, { prefix: '/api/whatsapp-pay' });
   await fastify.register(workspaceRoutes, { prefix: '/api/workspace' });
   await fastify.register(aiProviderRoutes, { prefix: '/api/workspace/ai-provider' });
+  await fastify.register(workspaceEmailConfigRoutes, { prefix: '/api/workspace/email-config' });
   await fastify.register(onboardingRoutes, { prefix: '/api/onboarding' });
   await fastify.register(platformAuthRoutes, { prefix: '/api/platform/auth' });
   await fastify.register(platformOrganizationRoutes, { prefix: '/api/platform/organizations' });

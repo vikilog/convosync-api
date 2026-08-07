@@ -18,6 +18,12 @@ import {
   updateWhatsAppBusinessProfile,
   WHATSAPP_PROFILE_VERTICALS,
 } from '../services/whatsappBusinessProfile.js';
+import {
+  acknowledgeWhatsAppPaymentSetup,
+  getWhatsAppPaymentStatus,
+  refreshWhatsAppPaymentConfiguration,
+  setWhatsAppPaymentMode,
+} from '../services/whatsappPaymentConfig.js';
 
 export default async function whatsappRoutes(fastify: FastifyInstance) {
   const auth = companyAuth;
@@ -109,6 +115,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       phoneNumberId?: string;
       phoneNumber?: string;
       displayName?: string;
+      businessId?: string;
       connectionMode?: 'business_api' | 'app_coexistence';
     };
     const { workspaceId } = getJwtUser(request);
@@ -126,6 +133,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
         phoneNumberId: body.phoneNumberId,
         phoneNumber: body.phoneNumber,
         displayName: body.displayName,
+        businessId: body.businessId,
         connectionMode: body.connectionMode,
       });
 
@@ -139,6 +147,35 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
         fastify.log.info(
           { webhookSubscribe: result.webhookSubscribe },
           'WhatsApp webhooks auto-subscribed for WABA'
+        );
+      }
+      if (result.creditLineShare?.skipped) {
+        fastify.log.info(
+          { creditLineShare: result.creditLineShare },
+          'WhatsApp credit-line share skipped (env not configured)'
+        );
+      } else if (result.creditLineShare?.error) {
+        fastify.log.warn(
+          {
+            creditLineShare: {
+              shared: result.creditLineShare.shared,
+              wabaId: result.creditLineShare.wabaId,
+              error: result.creditLineShare.error,
+            },
+          },
+          'WhatsApp connected but credit-line share failed — client may be asked for their own payment method'
+        );
+      } else if (result.creditLineShare?.shared) {
+        fastify.log.info(
+          {
+            creditLineShare: {
+              shared: true,
+              alreadyShared: result.creditLineShare.alreadyShared,
+              wabaId: result.creditLineShare.wabaId,
+              allocationConfigId: result.creditLineShare.allocationConfigId,
+            },
+          },
+          'WhatsApp credit line shared with client WABA'
         );
       }
 
@@ -203,6 +240,10 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
         phoneNumber: a.phoneNumber,
         displayName: a.displayName,
         connectionMode: a.connectionMode || 'business_api',
+        paymentMode: a.paymentMode || null,
+        hasOwnMetaPaymentMethod: a.hasOwnMetaPaymentMethod,
+        paymentConfigCheckedAt: a.paymentConfigCheckedAt?.toISOString() ?? null,
+        metaBusinessId: a.metaBusinessId || null,
         label: a.displayName || 'WhatsApp Business Account',
         status: 'Connected',
         verified: true,
@@ -248,6 +289,9 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
         displayName: a.displayName,
         wabaId: a.wabaId,
         connectionMode: a.connectionMode || 'business_api',
+        paymentMode: a.paymentMode || null,
+        hasOwnMetaPaymentMethod: a.hasOwnMetaPaymentMethod,
+        metaBusinessId: a.metaBusinessId || null,
       })),
       coexistenceConnected: accounts.some((a) => a.connectionMode === 'app_coexistence'),
       redirectUri: config.meta.embeddedRedirectUri,
@@ -268,6 +312,11 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
           : undefined,
         businessApiConfigSuffix: config.meta.configId
           ? config.meta.configId.slice(-6)
+          : undefined,
+        /** Solution Partner credit-line share ready (env set; does not prove Meta partner tier). */
+        creditLineShareConfigured: !!(config.meta.creditLineId && config.meta.systemUserToken),
+        creditLineCurrency: config.meta.creditLineId
+          ? config.meta.creditLineCurrency
           : undefined,
       },
     };
@@ -354,6 +403,86 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update business profile';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  /**
+   * GET /api/whatsapp/payment-mode
+   * Stored payment mode + billingCheckStatus (confirmed|missing|unknown).
+   */
+  fastify.get('/payment-mode', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const query = request.query as { phoneNumberId?: string };
+    try {
+      const status = await getWhatsAppPaymentStatus(workspaceId, query.phoneNumberId);
+      return status;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'WhatsApp not connected';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  /**
+   * POST /api/whatsapp/payment-mode
+   * Choose Self Pay (platform is Coming soon — rejected).
+   */
+  fastify.post('/payment-mode', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const body = (request.body || {}) as {
+      paymentMode?: string;
+      phoneNumberId?: string;
+      businessId?: string;
+    };
+    if (body.paymentMode !== 'self_pay' && body.paymentMode !== 'platform') {
+      return reply.code(400).send({ error: 'paymentMode must be self_pay or platform' });
+    }
+    try {
+      const status = await setWhatsAppPaymentMode(
+        workspaceId,
+        body.paymentMode,
+        body.phoneNumberId,
+        { businessIdHint: body.businessId }
+      );
+      return { success: true, ...status };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to set payment mode';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  /**
+   * POST /api/whatsapp/payment-mode/refresh
+   * Re-probe Meta: owner_business_info (BM URL) + primary_funding_id (BSP-gated; #10 → unknown).
+   */
+  fastify.post('/payment-mode/refresh', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const body = (request.body || {}) as { phoneNumberId?: string; businessId?: string };
+    try {
+      const status = await refreshWhatsAppPaymentConfiguration(
+        workspaceId,
+        body.phoneNumberId,
+        { businessIdHint: body.businessId }
+      );
+      return { success: true, ...status };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to refresh payment status';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  /**
+   * POST /api/whatsapp/payment-mode/acknowledge
+   * User confirms they added a Meta payment method when auto-check is unknown (Tech Provider).
+   */
+  fastify.post('/payment-mode/acknowledge', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const body = (request.body || {}) as { phoneNumberId?: string };
+    try {
+      const status = await acknowledgeWhatsAppPaymentSetup(workspaceId, body.phoneNumberId);
+      return { success: true, ...status };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to acknowledge payment setup';
       return reply.code(400).send({ error: message });
     }
   });

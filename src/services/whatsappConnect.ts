@@ -7,6 +7,10 @@ import {
   type WebhookSubscribeResult,
 } from './whatsappWebhookSubscribe.js';
 import {
+  shareCreditLineWithWaba,
+  type CreditLineShareResult,
+} from './whatsappCreditLine.js';
+import {
   triggerCoexistenceDataSync,
   type CoexistenceSyncResult,
 } from './whatsappCoexistenceSync.js';
@@ -22,6 +26,8 @@ export type WhatsAppConnectInput = {
   phoneNumberId?: string;
   phoneNumber?: string;
   displayName?: string;
+  /** Meta Business portfolio ID from WA_EMBEDDED_SIGNUP postMessage */
+  businessId?: string;
   connectionMode?: WhatsAppConnectionMode;
 };
 
@@ -31,8 +37,12 @@ export type WhatsAppConnectResult = {
   wabaId: string;
   displayName?: string;
   connectionMode?: WhatsAppConnectionMode;
+  businessId?: string;
   webhookSubscribe?: WebhookSubscribeResult;
+  creditLineShare?: CreditLineShareResult;
   coexistenceSync?: CoexistenceSyncResult;
+  /** Prompt client to choose Self Pay vs Platform after connect. */
+  needsPaymentMode?: boolean;
 };
 
 function uniqueRedirectCandidates(preferred?: string): Array<string | undefined> {
@@ -209,6 +219,8 @@ export async function connectWorkspaceWhatsApp(
     await assertChannelCreateAllowed(input.workspaceId, 1, 'whatsapp');
   }
 
+  const businessId = input.businessId?.trim() || undefined;
+
   await prisma.whatsAppPhoneAccount.upsert({
     where: {
       workspaceId_phoneNumberId: {
@@ -223,12 +235,14 @@ export async function connectWorkspaceWhatsApp(
       phoneNumber,
       displayName,
       connectionMode: input.connectionMode || 'business_api',
+      ...(businessId ? { metaBusinessId: businessId } : {}),
     },
     update: {
       wabaId,
       phoneNumber,
       displayName,
       ...(input.connectionMode ? { connectionMode: input.connectionMode } : {}),
+      ...(businessId ? { metaBusinessId: businessId } : {}),
     },
   });
 
@@ -246,6 +260,9 @@ export async function connectWorkspaceWhatsApp(
     coexistence: isCoexistence,
   });
 
+  // Solution Partner OBO: attach Meta extended credit line so Meta bills ConvoSync, not the client.
+  const creditLineShare = await shareCreditLineWithWaba(wabaId);
+
   let coexistenceSync: CoexistenceSyncResult | undefined;
   if (isCoexistence) {
     coexistenceSync = await triggerCoexistenceDataSync(phoneNumberId!, accessToken);
@@ -257,7 +274,10 @@ export async function connectWorkspaceWhatsApp(
     wabaId,
     displayName,
     connectionMode: input.connectionMode,
+    businessId,
     webhookSubscribe,
+    creditLineShare,
     coexistenceSync,
+    needsPaymentMode: true,
   };
 }

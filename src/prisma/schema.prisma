@@ -129,6 +129,7 @@ model Workspace {
   agentChatConversations AgentChatConversation[]
   tokenUsageLogs         TokenUsageLog[]
   aiProviderConfig       WorkspaceAiProviderConfig?
+  emailConfig            WorkspaceEmailConfig?
   whatsappPaymentRequests WhatsAppPaymentRequest[]
   wallet                  WorkspaceWallet?
   walletTransactions      WalletTransaction[]
@@ -412,6 +413,18 @@ model WhatsAppPhoneAccount {
   displayName    String?
   /// business_api | app_coexistence
   connectionMode String    @default("business_api")
+  /// self_pay | platform | null (not chosen yet)
+  paymentMode    String?
+  /// True when Meta reports messaging billing funding on the WABA (primary_funding_id).
+  /// Never set true from user ack — Tech Providers often cannot read this field (#10).
+  hasOwnMetaPaymentMethod Boolean @default(false)
+  /// confirmed | missing | unknown (unknown = BSP-gated probe / Graph #10 for Tech Providers)
+  billingCheckStatus String?
+  paymentConfigCheckedAt  DateTime?
+  /// User said they added a Meta card when auto-check is unknown — UI only, not Meta truth.
+  paymentSetupAcknowledgedAt DateTime?
+  /// Meta Business portfolio ID from Embedded Signup / owner_business_info (for BM billing URL).
+  metaBusinessId String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -1428,6 +1441,27 @@ model WorkspaceAiProviderConfig {
   updatedAt            DateTime  @updatedAt
 
   @@map("workspace_ai_provider_configs")
+}
+
+/// Bring-your-own email (AWS SES) for workspace transactional/alert sends.
+/// Secrets use the same encryptSecret pattern as workspace.waToken.
+model WorkspaceEmailConfig {
+  workspaceId           String    @id
+  workspace             Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// 'ses' | 'platform'
+  provider              String    @default("platform")
+  accessKeyIdEncrypted  String?
+  secretAccessKeyEncrypted String?
+  region                String?
+  senderEmail           String?
+  /// Cached SES verified identities: [{ identity, type: 'email'|'domain' }]
+  verifiedIdentities    Json?
+  identitiesFetchedAt   DateTime?
+  isActive              Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("workspace_email_configs")
 }
 
 model AiSkill {

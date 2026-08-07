@@ -28,7 +28,7 @@ export function createEmailContainer(db: PrismaClient): EmailContainer {
   const factory = new EmailProviderFactory();
   const providerConfigService = new EmailProviderConfigService(repo, factory);
   const templateService = new EmailTemplateService(repo);
-  const senderService = new EmailSenderService(repo);
+  const senderService = new EmailSenderService(repo, providerConfigService);
   const integrationService = new EmailIntegrationService(
     repo,
     providerConfigService,

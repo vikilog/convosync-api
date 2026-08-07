@@ -2,6 +2,7 @@ import type { EmailRepository } from '../repositories/email.repository.js';
 import type { EmailProviderConfigService } from './provider-config.service.js';
 import type { EmailSenderService } from './email.service.js';
 import { assertChannelCreateAllowed } from '../../../services/planUsageGuards.js';
+import { domainFromEmail } from '../utils/active-sending-identity.js';
 
 export class EmailIntegrationService {
   constructor(
@@ -31,6 +32,7 @@ export class EmailIntegrationService {
         defaultSenderName: sharedDefault?.displayName ?? sendersPreview.companyName ?? 'ConvoSync',
         verifiedDomainCount: 0,
         providerLabel: null as string | null,
+        activeDomain: sendersPreview.activeDomain ?? domainFromEmail(sharedDefault?.email),
       };
     }
 
@@ -48,13 +50,21 @@ export class EmailIntegrationService {
       providers.find((p) => p.status === 'active') ??
       null;
 
+    const defaultSenderEmail =
+      sendersPreview.defaultSenderEmail ??
+      defaultSender?.email ??
+      sharedDefault?.email ??
+      null;
+
     return {
       enabled: true,
-      defaultSenderEmail: defaultSender?.email ?? sharedDefault?.email ?? null,
+      defaultSenderEmail,
       defaultSenderName:
         defaultSender?.displayName ?? sharedDefault?.displayName ?? null,
       verifiedDomainCount: verifiedDomains.length,
       providerLabel: activeProvider?.provider ?? null,
+      activeDomain:
+        sendersPreview.activeDomain ?? domainFromEmail(defaultSenderEmail),
     };
   }
 

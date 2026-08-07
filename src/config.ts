@@ -54,6 +54,27 @@ export const config = {
     oauthBackendCallbackUri:
       process.env.META_OAUTH_BACKEND_CALLBACK_URI ||
       `${backendPublicUrl}/api/whatsapp/oauth/callback`,
+    /**
+     * Solution Partner extended credit line ID — share with client WABAs after Embedded Signup.
+     * Tech Providers without a Meta credit line cannot use this (clients pay Meta directly).
+     * Get via GET /{business_id}/extendedcredits with a system user token.
+     */
+    creditLineId: (
+      process.env.META_CREDIT_LINE_ID ||
+      process.env.WHATSAPP_EXTENDED_CREDIT_ID ||
+      ''
+    ).trim(),
+    /**
+     * System user token for credit-line share (business_management + Admin/Finance Editor).
+     * Falls back to SUPER_ADMIN_ACCESS_TOKEN when unset.
+     */
+    systemUserToken: (
+      process.env.META_SYSTEM_USER_TOKEN ||
+      process.env.SUPER_ADMIN_ACCESS_TOKEN ||
+      ''
+    ).trim(),
+    /** WABA invoice currency for credit share: AUD|EUR|GBP|IDR|INR|USD */
+    creditLineCurrency: (process.env.META_CREDIT_LINE_CURRENCY || 'INR').trim().toUpperCase(),
   },
   /** Meta WhatsApp webhook callback (GET verify + POST events). */
   webhookUrl: `${backendPublicUrl}/api/webhook/whatsapp`,
