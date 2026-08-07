@@ -15,7 +15,6 @@ import { getMediaGalleryUsedBytes } from '../modules/media-gallery/media-storage
 const DEFAULT_LIMITS = {
   aiAgentsLimit: 1,
   channelsLimit: 1,
-  emailsLimit: 1000,
 } as const;
 
 const STARTER_FEATURES = DEFAULT_PLAN_SEEDS[0]!.features;
@@ -57,18 +56,16 @@ export function planGatePayload(
 type LimitSnapshot = {
   aiAgentsLimit: number;
   channelsLimit: number;
-  emailsLimit: number;
 };
 
 async function getLimitSnapshot(workspaceId: string): Promise<LimitSnapshot> {
   const limits = await prisma.workspaceUsageLimits.findUnique({
     where: { workspaceId },
-    select: { aiAgentsLimit: true, channelsLimit: true, emailsLimit: true },
+    select: { aiAgentsLimit: true, channelsLimit: true },
   });
   return {
     aiAgentsLimit: limits?.aiAgentsLimit ?? DEFAULT_LIMITS.aiAgentsLimit,
     channelsLimit: limits?.channelsLimit ?? DEFAULT_LIMITS.channelsLimit,
-    emailsLimit: limits?.emailsLimit ?? DEFAULT_LIMITS.emailsLimit,
   };
 }
 
@@ -190,7 +187,7 @@ export async function assertChannelCreateAllowed(
 
   if (await isSuperAdminWorkspace(workspaceId)) return;
 
-  // ponytail: email allowed on all plans; send volume gated separately — not channelsLimit
+  // ponytail: email channel always allowed; platform sends bill wallet CC (not channelsLimit / emailsLimit)
   if (channel === 'email') return;
 
   const [{ channelsLimit }, existing] = await Promise.all([
@@ -238,42 +235,6 @@ export async function assertMediaStorageUploadAllowed(
       `Media storage limit reached (${limitGb} GB). Upgrade your plan or delete files to upload more.`
     );
   }
-}
-
-export async function assertEmailSendAllowed(workspaceId: string, sendCount = 1) {
-  if (await isSuperAdminWorkspace(workspaceId)) return;
-
-  const [{ emailsLimit }, sentCountThisMonth] = await Promise.all([
-    getLimitSnapshot(workspaceId),
-    countSentEmailsThisMonth(workspaceId),
-  ]);
-
-  if (isUnlimited(emailsLimit)) return;
-  if (sentCountThisMonth + Math.max(1, sendCount) > emailsLimit) {
-    throw new PlanGateError(
-      `Monthly email limit reached (${emailsLimit}). Upgrade your plan or buy add-ons to send more emails.`
-    );
-  }
-}
-
-function monthRange() {
-  const start = new Date();
-  start.setUTCDate(1);
-  start.setUTCHours(0, 0, 0, 0);
-  const end = new Date(start);
-  end.setUTCMonth(end.getUTCMonth() + 1);
-  return { start, end };
-}
-
-async function countSentEmailsThisMonth(workspaceId: string) {
-  const { start, end } = monthRange();
-  return prisma.emailLog.count({
-    where: {
-      workspaceId,
-      status: 'sent',
-      createdAt: { gte: start, lt: end },
-    },
-  });
 }
 
 function channelLabel(channel: ChannelKind): string {

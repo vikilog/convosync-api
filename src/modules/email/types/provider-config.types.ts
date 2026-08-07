@@ -17,6 +17,11 @@ export function normalizeEmailProviderType(provider: string): EmailProviderConfi
   return provider as EmailProviderConfigType;
 }
 
+/** Platform email (CONVOSYNC_MANAGED): bill wallet CC only — never emailsLimit / plan quota. */
+export function usesPlatformEmailMetering(provider: string): boolean {
+  return normalizeEmailProviderType(provider) === 'CONVOSYNC_MANAGED';
+}
+
 export const EMAIL_PROVIDER_CONFIG_STATUSES = [
   'active',
   'disabled',

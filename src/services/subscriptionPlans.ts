@@ -631,7 +631,7 @@ export async function syncWorkspaceLimitsFromPlanFeatures(
       channelsLimit: channelsLimitFromLabel(features.channels, features.channelsUnlimited),
       aiTokensIncluded: 0,
       campaignsLimit,
-      // ponytail: wallet bills email — don't gift plan emails as free quota
+      // ponytail: platform email = wallet CC only; emailsLimit unused for send gating
       emailsLimit: 0,
     },
     update: {

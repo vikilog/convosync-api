@@ -5,7 +5,6 @@ import type { DomainStatusResult, EmailProviderName } from '../types/email.types
 import type { CreateDomainDto, CreateSenderDto, SendEmailDto } from '../dto/email.dto.js';
 import type { EmailProviderConfigService } from './provider-config.service.js';
 import type { EmailTemplateService } from './email-template.service.js';
-import { assertEmailSendAllowed } from '../../../services/planUsageGuards.js';
 import {
   assertEmailSendAffordable,
   chargeEmailSendUsage,
@@ -17,6 +16,7 @@ import {
   domainFromEmail,
   pickActiveSendingEmail,
 } from '../utils/active-sending-identity.js';
+import { usesPlatformEmailMetering } from '../types/provider-config.types.js';
 
 function domainNeedsProviderSync(row: EmailDomain): boolean {
   if (!row.providerDomainId) return false;
@@ -443,14 +443,22 @@ export class EmailService {
       throw new Error('Email integration is not enabled for this workspace');
     }
     const recipientCount = Array.isArray(input.to) ? input.to.length : 1;
-    await assertEmailSendAllowed(workspaceId, recipientCount);
-    try {
-      await assertEmailSendAffordable(workspaceId, recipientCount);
-    } catch (err) {
-      if (err instanceof InsufficientWalletBalanceError) {
-        throw new Error(err.message);
+    // Platform (CONVOSYNC_MANAGED) = wallet CC only. BYOP (own SES/etc.) skips metering entirely.
+    const resolved = await this.providerConfigService.getDefaultForSending(workspaceId);
+    const meterPlatform = usesPlatformEmailMetering(resolved.configType);
+    if (meterPlatform) {
+      try {
+        await assertEmailSendAffordable(workspaceId, recipientCount);
+      } catch (err) {
+        if (err instanceof InsufficientWalletBalanceError) {
+          const needCc = err.requiredPaise / 100;
+          const haveCc = err.balancePaise / 100;
+          throw new Error(
+            `Insufficient ConvoCoins to send email. Need ${needCc} CC, available ${haveCc} CC.`
+          );
+        }
+        throw err;
       }
-      throw err;
     }
     let subject = input.subject?.trim() ?? '';
     let html = input.template
@@ -478,15 +486,14 @@ export class EmailService {
 
     const fromEmail = input.from ?? (await this.resolveDefaultSender(workspaceId));
     const sender = await this.validateSender(workspaceId, fromEmail);
-    const resolved = await this.providerConfigService.getDefaultForSending(workspaceId);
     const provider = resolved.provider;
 
     const log = await this.repo.createLog({
       sender: sender.email,
       recipient: Array.isArray(input.to) ? input.to.join(', ') : input.to,
       subject,
-      provider: resolved.configType === 'CONVOSYNC_MANAGED' ? 'platform' : resolved.transportName,
-      providerName: resolved.configType === 'CONVOSYNC_MANAGED' ? 'ConvoSync' : resolved.configType,
+      provider: meterPlatform ? 'platform' : resolved.transportName,
+      providerName: meterPlatform ? 'ConvoSync' : resolved.configType,
       providerConfig: { connect: { id: resolved.configId } },
       status: 'queued',
       metadata: {
@@ -513,14 +520,16 @@ export class EmailService {
         messageId: result.messageId,
       });
 
-      try {
-        await chargeEmailSendUsage({
-          workspaceId,
-          referenceId: log.id,
-          sendCount: recipientCount,
-        });
-      } catch (err) {
-        console.error('[wallet] Email debit failed', err);
+      if (meterPlatform) {
+        try {
+          await chargeEmailSendUsage({
+            workspaceId,
+            referenceId: log.id,
+            sendCount: recipientCount,
+          });
+        } catch (err) {
+          console.error('[wallet] Email debit failed', err);
+        }
       }
 
       return updated;

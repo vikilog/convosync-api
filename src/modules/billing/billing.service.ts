@@ -326,7 +326,14 @@ export class BillingService {
         campaignsUsed,
         limitValue(limits?.campaignsLimit, UNLIMITED_USAGE_LIMIT)
       ),
-      emails: toSnapshotItem(emailsUsed, limitValue(limits?.emailsLimit, 1000)),
+      // emailsLimit 0 = wallet CC metering (no plan quota) — don't show exhausted "0 left"
+      emails: (() => {
+        const emailCap = limitValue(limits?.emailsLimit, 0);
+        if (emailCap <= 0) {
+          return { used: emailsUsed, limit: UNLIMITED_USAGE_LIMIT, pending: UNLIMITED_USAGE_LIMIT };
+        }
+        return toSnapshotItem(emailsUsed, emailCap);
+      })(),
       aiTokens: aiTokensSnapshot,
     };
   }
