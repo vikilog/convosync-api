@@ -22,6 +22,35 @@ const EVENT_TYPES: EventType[] = [
   'click',
 ];
 
+/**
+ * IAM actions ensureSesEventTracking needs:
+ * SES config set + event destination (incl. open/click) + SNS topic/subscribe for webhook.
+ * Keep frontend EmailPanel policy snippet in sync if this list changes.
+ */
+export const SES_TRACKING_IAM_ACTIONS = [
+  'ses:CreateConfigurationSet',
+  'ses:CreateConfigurationSetEventDestination',
+  'ses:DescribeConfigurationSet',
+  'sns:CreateTopic',
+  'sns:Subscribe',
+] as const;
+
+export function sesTrackingIamPolicyDocument(): {
+  Version: string;
+  Statement: Array<{ Effect: string; Action: string[]; Resource: string }>;
+} {
+  return {
+    Version: '2012-10-17',
+    Statement: [
+      {
+        Effect: 'Allow',
+        Action: [...SES_TRACKING_IAM_ACTIONS],
+        Resource: '*',
+      },
+    ],
+  };
+}
+
 export type SesTrackingSetupResult =
   | {
       ok: true;
@@ -60,12 +89,15 @@ function isAlreadyExists(err: unknown): boolean {
   );
 }
 
-function formatTrackingPermissionError(err: unknown): string {
+/** Exported for self-check — AWS denial text often repeats the same action twice. */
+export function formatTrackingPermissionError(err: unknown): string {
   const { name, message } = awsErrorBits(err);
   const lower = message.toLowerCase();
-  const missing: string[] = [];
-  const actionMatch = message.match(/ses:[A-Za-z0-9]+|sns:[A-Za-z0-9]+/g);
-  if (actionMatch) missing.push(...actionMatch);
+  // "perform: ses:X … allows the ses:X action" → extract then dedupe.
+  // Require PascalCase action (avoids ARN noise like ses:us-east-1 → ses:us).
+  const denied = [
+    ...new Set(message.match(/\b(?:ses|sns):[A-Z][A-Za-z0-9]+\b/g) ?? []),
+  ];
 
   if (
     name === 'AccessDenied' ||
@@ -74,11 +106,12 @@ function formatTrackingPermissionError(err: unknown): string {
     lower.includes('not authorized') ||
     lower.includes('access denied')
   ) {
-    const actions =
-      missing.length > 0
-        ? missing.join(', ')
-        : 'sns:CreateTopic, sns:Subscribe, ses:CreateConfigurationSet, ses:CreateConfigurationSetEventDestination, ses:DescribeConfigurationSet';
-    return `Tracking not enabled: missing ${actions}. Grant these IAM permissions (or broader SES/SNS admin) and save again.`;
+    const required = SES_TRACKING_IAM_ACTIONS.join(', ');
+    const deniedNote = denied.length > 0 ? ` (AWS denied: ${denied.join(', ')})` : '';
+    return (
+      `Tracking not enabled: missing IAM permissions for SES open/click/bounce tracking${deniedNote}. ` +
+      `Required: ${required}. Grant these (or broader SES/SNS admin) and save again.`
+    );
   }
 
   return `Tracking not enabled: ${message}`;
