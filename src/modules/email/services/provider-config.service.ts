@@ -28,6 +28,7 @@ import {
   sesVerifiedIdentitiesConsoleUrl,
   type SesVerifiedIdentity,
 } from '../utils/ses-verified-identities.js';
+import { ensureSesEventTracking } from './ses-tracking.service.js';
 
 function isManagedProvider(provider: string): boolean {
   return normalizeEmailProviderType(provider) === 'CONVOSYNC_MANAGED';
@@ -97,6 +98,9 @@ function toPublic(row: EmailProviderConfig): EmailProviderConfigPublic {
     verifiedIdentities: parseCachedVerifiedIdentities(ses?.verifiedIdentities),
     identitiesFetchedAt: ses?.identitiesFetchedAt ?? null,
     sesConsoleUrl: region ? sesVerifiedIdentitiesConsoleUrl(region) : null,
+    trackingStatus: ses?.trackingStatus ?? null,
+    trackingError: ses?.trackingError ?? null,
+    configurationSetName: ses?.configurationSetName ?? null,
   };
 }
 
@@ -167,6 +171,11 @@ function mergeConfig(
           next.identitiesFetchedAt !== undefined
             ? next.identitiesFetchedAt
             : prev.identitiesFetchedAt,
+        configurationSetName: next.configurationSetName ?? prev.configurationSetName,
+        snsTopicArn: next.snsTopicArn ?? prev.snsTopicArn,
+        trackingStatus: next.trackingStatus ?? prev.trackingStatus,
+        trackingError:
+          next.trackingError !== undefined ? next.trackingError : prev.trackingError,
       };
     }
     case 'SENDGRID': {
@@ -323,6 +332,34 @@ export class EmailProviderConfigService {
     });
   }
 
+  /**
+   * Best-effort SES config-set + SNS webhook setup. Persist trackingStatus/error on the
+   * provider; never blocks credential save — sends work without ConfigurationSetName.
+   */
+  private async setupSesTrackingOnRow(row: EmailProviderConfig): Promise<EmailProviderConfig> {
+    const ses = readSesConfig(row.encryptedConfig);
+    if (!ses?.accessKeyId || !ses.secretAccessKey || !ses.region) return row;
+
+    const tracking = await ensureSesEventTracking({
+      workspaceId: row.workspaceId,
+      accessKeyId: ses.accessKeyId,
+      secretAccessKey: ses.secretAccessKey,
+      region: ses.region,
+      existingConfigurationSetName: ses.configurationSetName,
+      existingSnsTopicArn: ses.snsTopicArn,
+    });
+
+    const next: SesProviderConfig = {
+      ...ses,
+      configurationSetName: tracking.configurationSetName ?? ses.configurationSetName,
+      snsTopicArn: tracking.ok ? tracking.snsTopicArn : ses.snsTopicArn,
+      trackingStatus: tracking.trackingStatus,
+      trackingError: tracking.ok ? null : tracking.trackingError,
+    };
+
+    return this.repo.updateProviderConfig(row.id, { encryptedConfig: encryptJson(next) });
+  }
+
   async getDomainManagementProvider(workspaceId: string): Promise<ResolvedEmailProvider> {
     if (!(await this.repo.isEmailIntegrationEnabled(workspaceId))) {
       throw new Error('Email integration is not enabled for this workspace');
@@ -395,7 +432,9 @@ export class EmailProviderConfigService {
     });
 
     if (input.provider === 'AWS_SES') {
-      await this.syncWorkspaceSesFromRow(row);
+      const withTracking = await this.setupSesTrackingOnRow(row);
+      await this.syncWorkspaceSesFromRow(withTracking);
+      return toPublic(withTracking);
     }
 
     return toPublic(row);
@@ -431,7 +470,12 @@ export class EmailProviderConfigService {
     });
 
     if (provider === 'AWS_SES') {
-      await this.syncWorkspaceSesFromRow(updated);
+      const withTracking =
+        encryptedConfig !== row.encryptedConfig
+          ? await this.setupSesTrackingOnRow(updated)
+          : updated;
+      await this.syncWorkspaceSesFromRow(withTracking);
+      return toPublic(withTracking);
     }
 
     return toPublic(updated);
@@ -493,8 +537,18 @@ export class EmailProviderConfigService {
     );
 
     const nextStatus: EmailProviderConfigStatus = result.ok ? 'active' : 'connection_failed';
-    const updated = await this.repo.updateProviderConfig(id, { status: nextStatus });
-    if (providerType === 'AWS_SES') {
+    let updated = await this.repo.updateProviderConfig(id, { status: nextStatus });
+    if (providerType === 'AWS_SES' && result.ok) {
+      updated = await this.setupSesTrackingOnRow(updated);
+      await this.syncWorkspaceSesFromRow(updated);
+      const tracking = readSesConfig(updated.encryptedConfig);
+      if (tracking?.trackingStatus === 'error' && tracking.trackingError) {
+        return {
+          ok: true,
+          message: `${result.message}. ${tracking.trackingError}`,
+        };
+      }
+    } else if (providerType === 'AWS_SES') {
       await this.syncWorkspaceSesFromRow(updated);
     }
 
@@ -605,19 +659,29 @@ export class EmailProviderConfigService {
         senderEmail: opts.draft?.senderEmail?.trim() || stored?.senderEmail,
         verifiedIdentities,
         identitiesFetchedAt,
+        configurationSetName: stored?.configurationSetName,
+        snsTopicArn: stored?.snsTopicArn,
+        trackingStatus: stored?.trackingStatus,
+        trackingError: stored?.trackingError,
       };
-      const updated = await this.repo.updateProviderConfig(row.id, {
+      let updated = await this.repo.updateProviderConfig(row.id, {
         encryptedConfig: encryptJson(nextConfig),
         status: row.status === 'disabled' ? 'disabled' : 'active',
       });
+      updated = await this.setupSesTrackingOnRow(updated);
       await this.syncWorkspaceSesFromRow(updated);
+      const publicProvider = toPublic(updated);
+      const trackingNote =
+        publicProvider.trackingStatus === 'error' && publicProvider.trackingError
+          ? ` ${publicProvider.trackingError}`
+          : '';
 
       return {
         ok: true,
-        message,
+        message: `${message}.${trackingNote}`.trim(),
         verifiedIdentities,
         identitiesFetchedAt,
-        provider: toPublic(updated),
+        provider: publicProvider,
       };
     } catch (err) {
       return {
@@ -698,10 +762,27 @@ export class EmailProviderConfigService {
       };
     }
 
+    // Prefer tracking-enabled config from saved provider (refresh may have just set it up).
+    let trackingCfg: Pick<
+      SesProviderConfig,
+      'configurationSetName' | 'trackingStatus'
+    > = {};
+    if (opts.providerId) {
+      const row = await this.repo.findProviderConfigById(workspaceId, opts.providerId);
+      const cfg = row ? readSesConfig(row.encryptedConfig) : null;
+      if (cfg) {
+        trackingCfg = {
+          configurationSetName: cfg.configurationSetName,
+          trackingStatus: cfg.trackingStatus,
+        };
+      }
+    }
+
     const ses = new SesProvider({
       accessKeyId: creds.accessKeyId,
       secretAccessKey: creds.secretAccessKey,
       region: creds.region,
+      ...trackingCfg,
     });
     try {
       const result = await ses.sendEmail({
@@ -714,9 +795,13 @@ export class EmailProviderConfigService {
           `Region: ${creds.region}\nSender: ${senderEmail}\n\n` +
           `If you received this, your AWS SES provider setup is working.`,
       });
+      const trackingWarn =
+        refreshed.provider?.trackingStatus === 'error' && refreshed.provider.trackingError
+          ? ` (${refreshed.provider.trackingError})`
+          : '';
       return {
         ok: true,
-        message: `Test email sent to ${opts.to}`,
+        message: `Test email sent to ${opts.to}${trackingWarn}`,
         messageId: result.messageId,
         verifiedIdentities: refreshed.verifiedIdentities,
         provider: refreshed.provider,

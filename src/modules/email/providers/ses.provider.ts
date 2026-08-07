@@ -201,10 +201,20 @@ export class SesProvider implements EmailProvider {
     return filterVerifiedIdentities(identities, attributes);
   }
 
+  /** Configuration set for event tracking when setup succeeded. */
+  private configurationSetName(): string | undefined {
+    const name = this.cfg.configurationSetName?.trim();
+    if (!name || this.cfg.trackingStatus === 'error' || this.cfg.trackingStatus === 'disabled') {
+      return undefined;
+    }
+    return name;
+  }
+
   async sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
     const client = this.requireClient();
     const to = Array.isArray(input.to) ? input.to : [input.to];
     const html = input.html ?? (input.text ? `<pre>${input.text}</pre>` : '<p></p>');
+    const configurationSetName = this.configurationSetName();
 
     try {
       const { MessageId } = await client.send(
@@ -219,6 +229,7 @@ export class SesProvider implements EmailProvider {
             },
           },
           ReplyToAddresses: input.replyTo ? [input.replyTo] : undefined,
+          ...(configurationSetName ? { ConfigurationSetName: configurationSetName } : {}),
         })
       );
 

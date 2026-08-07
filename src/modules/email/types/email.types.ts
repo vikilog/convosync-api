@@ -12,6 +12,8 @@ export const EMAIL_LOG_STATUSES = [
   'opened',
   'clicked',
   'bounced',
+  'complained',
+  'rejected',
   'failed',
 ] as const;
 export type EmailLogStatus = (typeof EMAIL_LOG_STATUSES)[number];

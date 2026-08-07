@@ -515,9 +515,18 @@ export class EmailService {
         replyTo: input.replyTo,
       });
 
+      const sentAt = new Date().toISOString();
+      const prevMeta =
+        log.metadata && typeof log.metadata === 'object' && !Array.isArray(log.metadata)
+          ? (log.metadata as Record<string, unknown>)
+          : {};
       const updated = await this.repo.updateLog(log.id, {
         status: 'sent',
         messageId: result.messageId,
+        metadata: {
+          ...prevMeta,
+          events: [{ type: 'sent', at: sentAt }],
+        },
       });
 
       if (meterPlatform) {

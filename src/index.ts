@@ -209,6 +209,7 @@ async function start() {
   console.log('CORS allowlist:', config.corsAllowedOrigins.join(', ') || '(none)');
   console.log('CORS dev relaxed (localhost/ngrok/devtunnels):', config.corsDevRelaxed);
   console.log('Resend BYOP webhook (optional):', config.resendWebhookUrl);
+  console.log('SES SNS event webhook:', config.sesWebhookUrl);
 }
 
 start().catch((err) => {

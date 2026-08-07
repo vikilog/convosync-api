@@ -13,6 +13,7 @@ import {
 import { routeInboundWhatsApp } from '../services/conversation-inbound-router.service.js';
 import { findOrReopenConversationForInbound } from '../services/conversationThread.service.js';
 import { handleResendEmailWebhook } from '../modules/email/services/resend-webhook.service.js';
+import { handleSesEmailWebhook } from '../modules/email/services/ses-webhook.service.js';
 import {
   extractWhatsAppProfileName,
   upsertWhatsAppContact,
@@ -432,6 +433,34 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
         return reply.send({ ok: true });
       } catch (err) {
         fastify.log.warn({ err }, 'Resend webhook rejected');
+        return reply.code(400).send({ error: 'Invalid webhook' });
+      }
+    });
+  });
+
+  // SNS often posts as text/plain; accept json + text as raw string.
+  await fastify.register(async function sesEmailWebhookScope(instance) {
+    const asString = (_req: unknown, body: string, done: (err: null, body: string) => void) => {
+      done(null, body);
+    };
+    instance.removeContentTypeParser('application/json');
+    instance.addContentTypeParser('application/json', { parseAs: 'string' }, asString);
+    instance.addContentTypeParser('text/plain', { parseAs: 'string' }, asString);
+
+    instance.post('/ses-events', async (request, reply) => {
+      const payload =
+        typeof request.body === 'string' ? request.body : JSON.stringify(request.body ?? {});
+
+      try {
+        const result = await handleSesEmailWebhook(payload);
+        if (result.kind === 'subscription_confirmed') {
+          fastify.log.info('SES SNS subscription confirmed');
+        } else if (result.kind === 'notification' && result.updated) {
+          fastify.log.info({ eventType: result.eventType }, 'SES email log updated');
+        }
+        return reply.send({ ok: true });
+      } catch (err) {
+        fastify.log.warn({ err }, 'SES SNS webhook rejected');
         return reply.code(400).send({ error: 'Invalid webhook' });
       }
     });

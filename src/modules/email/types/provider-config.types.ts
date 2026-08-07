@@ -35,6 +35,8 @@ export type ResendProviderConfig = {
   apiKey: string;
 };
 
+export type SesTrackingStatus = 'enabled' | 'error' | 'disabled';
+
 export type SesProviderConfig = {
   accessKeyId: string;
   secretAccessKey: string;
@@ -43,6 +45,12 @@ export type SesProviderConfig = {
   senderEmail?: string;
   verifiedIdentities?: SesVerifiedIdentity[];
   identitiesFetchedAt?: string | null;
+  /** SES configuration set used for open/click/bounce event publishing. */
+  configurationSetName?: string;
+  snsTopicArn?: string;
+  trackingStatus?: SesTrackingStatus;
+  /** Human-readable IAM / setup failure (safe to show in UI). */
+  trackingError?: string | null;
 };
 
 export type SendGridProviderConfig = {
@@ -80,6 +88,9 @@ export type EmailProviderConfigPublic = {
   verifiedIdentities?: SesVerifiedIdentity[];
   identitiesFetchedAt?: string | null;
   sesConsoleUrl?: string | null;
+  trackingStatus?: SesTrackingStatus | null;
+  trackingError?: string | null;
+  configurationSetName?: string | null;
 };
 
 export type ProviderConnectionTestResult = {

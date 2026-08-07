@@ -1716,15 +1716,18 @@ model EmailLog {
   providerConfigId String?
   providerConfig   EmailProviderConfig? @relation(fields: [providerConfigId], references: [id], onDelete: SetNull)
   providerName     String?
-  status           String               @default("queued") // queued | sent | delivered | opened | clicked | bounced | failed
+  /// queued | sent | delivered | opened | clicked | bounced | complained | rejected | failed
+  status           String               @default("queued")
   messageId        String?
   errorMessage     String?
+  /// Includes events[] timeline from Resend/SES webhooks.
   metadata         Json?
   createdAt        DateTime             @default(now())
   updatedAt        DateTime             @updatedAt
 
   @@index([workspaceId, createdAt])
   @@index([providerConfigId])
+  @@index([messageId])
   @@map("email_logs")
 }
 

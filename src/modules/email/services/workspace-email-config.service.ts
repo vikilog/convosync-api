@@ -1,11 +1,14 @@
 import type { PrismaClient, WorkspaceEmailConfig } from '@prisma/client';
 import {
+  decryptJson,
   decryptSecret,
   encryptSecret,
+  hasEncryptedPayload,
   isSecretStored,
 } from '../../../lib/field-encryption.js';
 import { SesProvider } from '../providers/ses.provider.js';
 import type { EmailProvider } from '../providers/email-provider.interface.js';
+import type { SesProviderConfig } from '../types/provider-config.types.js';
 import { formatSesSendError } from '../utils/ses-errors.js';
 import {
   isSenderAllowedByIdentities,
@@ -110,8 +113,30 @@ export class WorkspaceEmailConfigService {
     const senderEmail = row.senderEmail?.trim();
     if (!accessKeyId || !secretAccessKey || !region || !senderEmail) return null;
 
+    // Attach configuration set when EmailProviderConfig tracking setup succeeded.
+    let configurationSetName: string | undefined;
+    let trackingStatus: SesProviderConfig['trackingStatus'];
+    const providerRow = await this.prisma.emailProviderConfig.findFirst({
+      where: { workspaceId, provider: 'AWS_SES' },
+    });
+    if (providerRow && hasEncryptedPayload(providerRow.encryptedConfig)) {
+      try {
+        const ses = decryptJson<SesProviderConfig>(providerRow.encryptedConfig);
+        configurationSetName = ses.configurationSetName;
+        trackingStatus = ses.trackingStatus;
+      } catch {
+        // ignore decrypt failures — send without tracking
+      }
+    }
+
     return {
-      provider: new SesProvider({ accessKeyId, secretAccessKey, region }),
+      provider: new SesProvider({
+        accessKeyId,
+        secretAccessKey,
+        region,
+        configurationSetName,
+        trackingStatus,
+      }),
       transport: 'ses',
       from: senderEmail,
       accessKeyId,

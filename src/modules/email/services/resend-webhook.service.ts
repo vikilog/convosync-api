@@ -1,17 +1,7 @@
 import { Webhook } from 'svix';
-import { prisma } from '../../../index.js';
 import { config } from '../../../config.js';
 import type { EmailLogStatus } from '../types/email.types.js';
-
-const STATUS_RANK: Record<string, number> = {
-  queued: 0,
-  sent: 1,
-  delivered: 2,
-  opened: 3,
-  clicked: 4,
-  bounced: 10,
-  failed: 10,
-};
+import { applyEmailLogProviderEvent } from './email-log-events.service.js';
 
 type ResendWebhookEvent = {
   type: string;
@@ -20,6 +10,7 @@ type ResendWebhookEvent = {
     to?: string | string[];
     bounce?: { message?: string };
     failed?: { reason?: string };
+    click?: { link?: string };
   };
 };
 
@@ -35,27 +26,27 @@ function mapResendEventType(type: string): EmailLogStatus | null {
       return 'clicked';
     case 'email.bounced':
       return 'bounced';
-    case 'email.failed':
     case 'email.complained':
+      return 'complained';
+    case 'email.failed':
       return 'failed';
     default:
       return null;
   }
 }
 
-function shouldUpdateStatus(current: string, next: EmailLogStatus): boolean {
-  if (next === 'bounced' || next === 'failed') return true;
-  const cur = STATUS_RANK[current.toLowerCase()] ?? 0;
-  const nxt = STATUS_RANK[next] ?? 0;
-  return nxt >= cur;
-}
-
 function extractErrorMessage(event: ResendWebhookEvent): string | undefined {
   if (event.type === 'email.bounced') {
     return event.data?.bounce?.message ?? 'Email bounced';
   }
-  if (event.type === 'email.failed' || event.type === 'email.complained') {
+  if (event.type === 'email.complained') {
+    return 'Complaint received';
+  }
+  if (event.type === 'email.failed') {
     return event.data?.failed?.reason ?? event.type;
+  }
+  if (event.type === 'email.clicked' && event.data?.click?.link) {
+    return event.data.click.link;
   }
   return undefined;
 }
@@ -95,35 +86,11 @@ export async function handleResendEmailWebhook(
     return { ok: true, updated: false, eventType: event.type };
   }
 
-  const log = await prisma.emailLog.findFirst({
-    where: { messageId: emailId },
+  return applyEmailLogProviderEvent({
+    messageId: emailId,
+    status: nextStatus,
+    eventType: event.type,
+    detail: extractErrorMessage(event),
+    metaKey: 'lastResendEvent',
   });
-  if (!log) {
-    return { ok: true, updated: false, eventType: event.type };
-  }
-
-  if (!shouldUpdateStatus(log.status, nextStatus)) {
-    return { ok: true, updated: false, eventType: event.type };
-  }
-
-  const errorMessage = extractErrorMessage(event);
-  const prevMeta =
-    log.metadata && typeof log.metadata === 'object' && !Array.isArray(log.metadata)
-      ? (log.metadata as Record<string, unknown>)
-      : {};
-
-  await prisma.emailLog.update({
-    where: { id: log.id },
-    data: {
-      status: nextStatus,
-      ...(errorMessage ? { errorMessage } : {}),
-      metadata: {
-        ...prevMeta,
-        lastResendEvent: event.type,
-        lastResendEventAt: new Date().toISOString(),
-      },
-    },
-  });
-
-  return { ok: true, updated: true, eventType: event.type };
 }

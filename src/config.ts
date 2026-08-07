@@ -145,6 +145,8 @@ export const config = {
   },
   /** Resend outbound email events (delivered, opened, bounced, …). */
   resendWebhookUrl: `${backendPublicUrl}/api/webhook/resend`,
+  /** AWS SES → SNS event notifications (send/delivery/open/click/bounce/complaint). */
+  sesWebhookUrl: `${backendPublicUrl}/api/webhook/ses-events`,
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID || '',
     clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
