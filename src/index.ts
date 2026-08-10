@@ -96,6 +96,8 @@ async function start() {
   ]);
 
   const fastify = Fastify({
+    // Needed so request.ip / request.ips honour X-Forwarded-For behind reverse proxies.
+    trustProxy: true,
     logger: {
       level: process.env.LOG_LEVEL || 'warn',
       stream: loggerStream,
@@ -116,6 +118,7 @@ async function start() {
   await fastify.register(import('@fastify/formbody'));
   await fastify.register(jwt, { secret: config.jwtSecret });
   await fastify.register(import('./plugins/request-timing.js'));
+  await fastify.register(import('./plugins/user-activity.js'));
   await fastify.register(import('./plugins/prisma.js'));
   await fastify.register(import('./plugins/redis.plugin.js'));
   await fastify.register(import('./plugins/razorpay.plugin.js'));

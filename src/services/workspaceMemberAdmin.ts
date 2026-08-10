@@ -191,6 +191,36 @@ async function sendTeamInviteEmail(input: {
   });
 }
 
+function emitTeamMemberAdded(input: {
+  workspaceId: string;
+  actorUserId?: string | null;
+  member: { id: string; userId: string; name: string; email: string; role: string };
+  createdUser: boolean;
+}) {
+  const label = input.member.name?.trim() || input.member.email;
+  void import('./notifications/emitNotification.js').then(({ emitNotification }) =>
+    import('./notifications/types.js').then(({ NOTIFICATION_TYPES }) =>
+      emitNotification({
+        workspaceId: input.workspaceId,
+        type: NOTIFICATION_TYPES.TEAM_MEMBER_ADDED,
+        title: input.createdUser ? 'Team member invited' : 'Team member added',
+        message: input.createdUser
+          ? `${label} (${input.member.email}) was invited as ${input.member.role}.`
+          : `${label} (${input.member.email}) was added as ${input.member.role}.`,
+        entityType: 'workspace_membership',
+        entityId: input.member.id,
+        actorUserId: input.actorUserId ?? null,
+        targetUserId: input.member.userId,
+        metadata: {
+          email: input.member.email,
+          role: input.member.role,
+          createdUser: input.createdUser,
+        },
+      })
+    )
+  );
+}
+
 export async function addWorkspaceMember(input: {
   workspaceId: string;
   email: string;
@@ -199,6 +229,7 @@ export async function addWorkspaceMember(input: {
   role: WorkspaceMemberRole;
   permissions?: WorkspacePermission[];
   inboxScope?: unknown;
+  actorUserId?: string | null;
 }) {
   await assertTeamSeatAvailable(input.workspaceId);
 
@@ -245,10 +276,14 @@ export async function addWorkspaceMember(input: {
     });
 
     const ownerUserId = await getWorkspaceOwnerUserId(input.workspaceId);
-    return {
-      member: formatWorkspaceMember(membership, ownerUserId),
+    const member = formatWorkspaceMember(membership, ownerUserId);
+    emitTeamMemberAdded({
+      workspaceId: input.workspaceId,
+      actorUserId: input.actorUserId,
+      member,
       createdUser: false,
-    };
+    });
+    return { member, createdUser: false };
   }
 
   const name = input.name?.trim();
@@ -326,10 +361,14 @@ export async function addWorkspaceMember(input: {
     );
   }
 
-  return {
-    member: formatWorkspaceMember(membership, ownerUserId),
+  const member = formatWorkspaceMember(membership, ownerUserId);
+  emitTeamMemberAdded({
+    workspaceId: input.workspaceId,
+    actorUserId: input.actorUserId,
+    member,
     createdUser: true,
-  };
+  });
+  return { member, createdUser: true };
 }
 
 export async function updateWorkspaceMember(input: {

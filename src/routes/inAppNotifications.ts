@@ -23,6 +23,7 @@ function serializeNotification(
     actorUserId: string | null;
     targetUserId: string | null;
     metadata: unknown;
+    forBell?: boolean;
     createdAt: Date;
     reads?: { id: string }[];
   },
@@ -41,6 +42,7 @@ function serializeNotification(
     targetUserId: row.targetUserId,
     metadata: row.metadata,
     severity: severityForType(row.type),
+    forBell: row.forBell ?? false,
     createdAt: row.createdAt.toISOString(),
     unread,
   };
@@ -60,8 +62,10 @@ export default async function inAppNotificationRoutes(fastify: FastifyInstance) 
       .parse(request.query);
 
     const limit = q.limit ?? 40;
+    // Bell inbox: only alert-worthy rows (activity feed has its own endpoint).
     const where = {
       workspaceId,
+      forBell: true,
       ...(q.category && q.category !== 'all' ? { category: q.category } : {}),
     };
 
@@ -84,9 +88,10 @@ export default async function inAppNotificationRoutes(fastify: FastifyInstance) 
 
   fastify.get('/unread-count', { onRequest: auth.onRequest }, async (request) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const total = await prisma.workspaceNotification.count({ where: { workspaceId } });
+    const bellWhere = { workspaceId, forBell: true };
+    const total = await prisma.workspaceNotification.count({ where: bellWhere });
     const read = await prisma.notificationRead.count({
-      where: { userId, notification: { workspaceId } },
+      where: { userId, notification: bellWhere },
     });
     return { unread: Math.max(0, total - read) };
   });
@@ -140,6 +145,7 @@ export default async function inAppNotificationRoutes(fastify: FastifyInstance) 
     const unread = await prisma.workspaceNotification.findMany({
       where: {
         workspaceId,
+        forBell: true,
         reads: { none: { userId } },
       },
       select: { id: true },

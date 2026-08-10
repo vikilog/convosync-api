@@ -183,7 +183,12 @@ export async function saveOnboardingStep(
       workspaceUpdate.name = data.companyName.trim();
     }
     if (typeof data.industry === 'string') workspaceUpdate.industry = data.industry.trim() || null;
-    if (typeof data.country === 'string') workspaceUpdate.country = data.country.trim() || null;
+    if (typeof data.country === 'string') {
+      workspaceUpdate.country = data.country.trim().toUpperCase() || null;
+    }
+    if (typeof data.timezone === 'string') {
+      workspaceUpdate.timezone = data.timezone.trim() || null;
+    }
     if (typeof data.companySize === 'string') workspaceUpdate.companySize = data.companySize.trim() || null;
     if (typeof data.displayName === 'string' && data.displayName.trim()) {
       workspaceUpdate.name = data.displayName.trim();

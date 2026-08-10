@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
-import { categoryForType, severityForType } from './types.js';
+import { categoryForType, forBellForType, severityForType } from './types.js';
 
 export type EmitNotificationInput = {
   workspaceId: string;
@@ -13,6 +13,8 @@ export type EmitNotificationInput = {
   entityId?: string | null;
   actorUserId?: string | null;
   targetUserId?: string | null;
+  /** When omitted, derived from type (alert types → true). */
+  forBell?: boolean;
   metadata?: Prisma.InputJsonValue;
 };
 
@@ -29,16 +31,18 @@ export type WorkspaceNotificationPayload = {
   targetUserId: string | null;
   metadata: unknown;
   severity: string;
+  forBell: boolean;
   createdAt: string;
   unread: true;
 };
 
-/** Persist a workspace notification and broadcast over Socket.IO. Never throws. */
+/** Persist a workspace notification and optionally broadcast to the bell. Never throws. */
 export async function emitNotification(
   input: EmitNotificationInput
 ): Promise<WorkspaceNotificationPayload | null> {
   try {
     const category = input.category ?? categoryForType(input.type);
+    const forBell = input.forBell ?? forBellForType(input.type);
     const row = await prisma.workspaceNotification.create({
       data: {
         workspaceId: input.workspaceId,
@@ -50,6 +54,7 @@ export async function emitNotification(
         entityId: input.entityId ?? null,
         actorUserId: input.actorUserId ?? null,
         targetUserId: input.targetUserId ?? null,
+        forBell,
         metadata: input.metadata ?? undefined,
       },
     });
@@ -67,15 +72,19 @@ export async function emitNotification(
       targetUserId: row.targetUserId,
       metadata: row.metadata,
       severity: severityForType(row.type),
+      forBell: row.forBell,
       createdAt: row.createdAt.toISOString(),
       unread: true,
     };
 
-    try {
-      const { getIo } = await import('../../socket.js');
-      getIo().to(input.workspaceId).emit('workspace_notification', payload);
-    } catch {
-      // Socket not ready (tests / early boot) — persist still succeeded
+    // ponytail: only push socket for bell-worthy rows so the inbox isn't spammed
+    if (forBell) {
+      try {
+        const { getIo } = await import('../../socket.js');
+        getIo().to(input.workspaceId).emit('workspace_notification', payload);
+      } catch {
+        // Socket not ready (tests / early boot) — persist still succeeded
+      }
     }
 
     return payload;

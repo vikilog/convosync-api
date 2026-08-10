@@ -7,13 +7,15 @@ import {
 import { NOTIFICATION_CATEGORIES, NOTIFICATION_TYPES } from './types.js';
 
 assert.equal(mapTypeToCategory(NOTIFICATION_TYPES.CAMPAIGN_COMPLETED), NOTIFICATION_CATEGORIES.CAMPAIGNS);
-assert.equal(mapTypeToCategory(NOTIFICATION_TYPES.WALLET_BALANCE_LOW), NOTIFICATION_CATEGORIES.SYSTEM);
+assert.equal(mapTypeToCategory(NOTIFICATION_TYPES.WALLET_BALANCE_LOW), NOTIFICATION_CATEGORIES.WALLET);
 assert.equal(mapTypeToCategory(NOTIFICATION_TYPES.CONTACT_IMPORT_FINISHED), NOTIFICATION_CATEGORIES.IMPORTS);
+assert.equal(mapTypeToCategory(NOTIFICATION_TYPES.TEAM_MEMBER_ADDED), NOTIFICATION_CATEGORIES.SETTINGS);
 assert.equal(mapTypeToCategory('unknown_future_type'), NOTIFICATION_CATEGORIES.SYSTEM);
 
 assert.equal(mapTypeToSeverity(NOTIFICATION_TYPES.TEMPLATE_APPROVED), 'success');
 assert.equal(mapTypeToSeverity(NOTIFICATION_TYPES.TEMPLATE_REJECTED), 'failure');
 assert.equal(mapTypeToSeverity(NOTIFICATION_TYPES.WALLET_BALANCE_LOW), 'warning');
+assert.equal(mapTypeToSeverity(NOTIFICATION_TYPES.TEAM_MEMBER_ADDED), 'success');
 assert.equal(mapTypeToSeverity('unknown_future_type'), 'info');
 
 const now = Date.parse('2026-08-10T12:00:00.000Z');

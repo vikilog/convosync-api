@@ -170,7 +170,7 @@ model WorkspaceNotification {
   workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   /// Extensible string constant — see NOTIFICATION_TYPES
   type         String
-  /// Extensible bucket: campaigns | system | imports | …
+  /// Extensible bucket: campaigns | system | imports | inbox | …
   category     String
   title        String
   message      String
@@ -182,6 +182,8 @@ model WorkspaceNotification {
   /// Explicit recipient when the event is targeted (activity scoping).
   targetUserId String?
   targetUser   User?    @relation("NotificationTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  /// When true, surfaces in the notifications bell (+ socket push). Activity feed always includes the row.
+  forBell      Boolean  @default(false)
   metadata     Json?
   createdAt    DateTime @default(now())
 
@@ -190,6 +192,7 @@ model WorkspaceNotification {
   @@index([workspaceId, createdAt])
   @@index([workspaceId, category, createdAt])
   @@index([workspaceId, actorUserId, createdAt])
+  @@index([workspaceId, forBell, createdAt])
   @@map("workspace_notifications")
 }
 

@@ -1,8 +1,15 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../index.js';
+import { clientIpFromRequest } from '../lib/clientIp.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
+import {
+  buildLocaleSuggestion,
+  detectionHint,
+  isValidIanaTimeZone,
+  lookupGeoIp,
+} from '../services/geoip/index.js';
 import { listWhatsAppAccounts } from '../services/whatsappAccounts.js';
 import {
   addWorkspaceMember,
@@ -172,6 +179,11 @@ const companyUpdateSchema = z.object({
   logoUrl: z.union([z.string(), z.null()]).optional(),
 });
 
+const localeUpdateSchema = z.object({
+  country: z.string().regex(/^[A-Za-z]{2}$/).transform((c) => c.toUpperCase()),
+  timezone: z.string().min(1).refine(isValidIanaTimeZone, 'Invalid IANA timezone'),
+});
+
 function normalizeOptionalUrls<T extends Record<string, unknown>>(data: T): T {
   const out: Record<string, unknown> = { ...data };
   for (const key of ['website', 'email', 'logoUrl'] as const) {
@@ -303,11 +315,54 @@ export default async function workspaceRoutes(fastify: FastifyInstance) {
       if (nextPhone !== prevPhone) data.phoneVerifiedAt = null;
     }
 
+    if (
+      ('country' in data && data.country !== undefined) ||
+      ('timezone' in data && data.timezone !== undefined)
+    ) {
+      if (typeof data.timezone === 'string' && !isValidIanaTimeZone(data.timezone)) {
+        return reply.code(400).send({ error: 'Invalid IANA timezone' });
+      }
+      if (typeof data.country === 'string') {
+        data.country = data.country.trim().toUpperCase() || null;
+      }
+    }
+
     const workspace = await prisma.workspace.update({
       where: { id: workspaceId },
       data,
     });
 
+    return workspace;
+  });
+
+  /** Browser-first TZ + IP country/timezone suggestion — does not persist. */
+  fastify.get('/locale/detect', { onRequest: auth.onRequest }, async (request) => {
+    const q = z
+      .object({ browserTimezone: z.string().optional() })
+      .safeParse(request.query ?? {});
+    const browserTimezone = q.success ? q.data.browserTimezone ?? null : null;
+    const ip = clientIpFromRequest(request);
+    const geo = ip ? await lookupGeoIp(ip) : null;
+    const suggestion = buildLocaleSuggestion({ browserTimezone, geo });
+    return {
+      ...suggestion,
+      countryHint: detectionHint(suggestion.countrySource, 'country'),
+      timezoneHint: detectionHint(suggestion.timezoneSource, 'timezone'),
+      ipFound: Boolean(ip),
+    };
+  });
+
+  /** Persist workspace country + timezone (same fields as company settings). */
+  fastify.patch('/locale', {
+    onRequest: [...auth.onRequest, requireWorkspacePermission('settings')],
+  }, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const body = localeUpdateSchema.parse(request.body);
+    const workspace = await prisma.workspace.update({
+      where: { id: workspaceId },
+      data: { country: body.country, timezone: body.timezone },
+      select: { id: true, country: true, timezone: true },
+    });
     return workspace;
   });
 
@@ -553,7 +608,7 @@ export default async function workspaceRoutes(fastify: FastifyInstance) {
   fastify.post('/members', {
     onRequest: [...auth.onRequest, requireUsersManageAccess],
   }, async (request, reply) => {
-    const { workspaceId } = getJwtUser(request);
+    const { workspaceId, userId } = getJwtUser(request);
     const body = addMemberSchema.parse(request.body);
 
     try {
@@ -565,6 +620,7 @@ export default async function workspaceRoutes(fastify: FastifyInstance) {
         role: body.role,
         permissions: body.permissions,
         inboxScope: body.inboxScope,
+        actorUserId: userId,
       });
       return reply.code(201).send(result);
     } catch (err) {
