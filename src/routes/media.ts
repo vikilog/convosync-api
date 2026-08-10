@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { readStagedMedia } from '../services/mediaStaging.js';
+import { contentDisposition } from '../utils/contentDisposition.js';
 
 export default async function mediaRoutes(fastify: FastifyInstance) {
   /** Public, signed URL for Meta to fetch outbound Instagram attachments. */
@@ -15,12 +16,12 @@ export default async function mediaRoutes(fastify: FastifyInstance) {
 
     try {
       const { buffer, mimeType, fileName } = await readStagedMedia(stagingId, expiresAt, sig);
-      const safeName = (fileName || `media-${stagingId}`).replace(/"/g, '');
+      const body = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
       return reply
         .header('Content-Type', mimeType)
-        .header('Content-Disposition', `inline; filename="${safeName}"`)
+        .header('Content-Disposition', contentDisposition('inline', fileName || `media-${stagingId}`))
         .header('Cache-Control', 'private, max-age=300')
-        .send(buffer);
+        .send(body);
     } catch {
       return reply.code(404).send({ error: 'Media not found or expired' });
     }

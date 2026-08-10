@@ -10,6 +10,7 @@ import {
   readCannedMediaFile,
   saveCannedMediaFile,
 } from '../services/cannedMedia.js';
+import { contentDisposition } from '../utils/contentDisposition.js';
 
 const createSchema = z.object({
   title: z.string().min(1).max(120),
@@ -113,15 +114,14 @@ export default async function cannedResponseRoutes(fastify: FastifyInstance) {
 
     try {
       const { buffer, mimeType } = await readCannedMediaFile(row.mediaStorageKey);
+      const body = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
       return reply
         .header('Content-Type', row.mediaMimeType || mimeType)
         .header(
           'Content-Disposition',
-          row.mediaFileName
-            ? `inline; filename="${row.mediaFileName.replace(/"/g, '')}"`
-            : 'inline'
+          row.mediaFileName ? contentDisposition('inline', row.mediaFileName) : 'inline'
         )
-        .send(buffer);
+        .send(body);
     } catch {
       return reply.code(404).send({ error: 'Media file not found' });
     }

@@ -21,6 +21,7 @@ import {
   PlanGateError,
   storageLimitBytesFromPlan,
 } from '../services/planUsageGuards.js';
+import { contentDisposition } from '../utils/contentDisposition.js';
 
 const SCOPE = z.enum(['customer', 'partner', 'both']);
 const TYPE = z.enum(['image', 'pdf', 'video', 'document']);
@@ -185,13 +186,12 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
     if (!row?.storageKey) return reply.code(404).send({ error: 'No media file' });
     try {
       const { buffer, mimeType } = await readMediaGalleryFile(row.storageKey);
+      // Fastify rejects non-Buffer objects; coerce in case a TypedArray slips through
+      const body = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
       return reply
         .header('Content-Type', row.mimeType || mimeType)
-        .header(
-          'Content-Disposition',
-          `inline; filename="${row.filename.replace(/"/g, '')}"`
-        )
-        .send(buffer);
+        .header('Content-Disposition', contentDisposition('inline', row.filename || 'file'))
+        .send(body);
     } catch {
       return reply.code(404).send({ error: 'Media file not found' });
     }

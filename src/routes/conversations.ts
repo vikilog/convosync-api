@@ -84,6 +84,7 @@ import {
   conversationMatchesInboxScope,
   type InboxScope,
 } from '../services/inboxScope.js';
+import { contentDisposition } from '../utils/contentDisposition.js';
 
 function denyInboxScope(reply: FastifyReply) {
   return reply.code(403).send({
@@ -1008,10 +1009,11 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     try {
       const { buffer, mimeType } = await readMessageMediaFile(metadata.storageKey);
       const fileName = metadata.fileName || `attachment-${messageId}`;
+      const body = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
       return reply
         .header('Content-Type', mimeType)
-        .header('Content-Disposition', `inline; filename="${fileName.replace(/"/g, '')}"`)
-        .send(buffer);
+        .header('Content-Disposition', contentDisposition('inline', fileName))
+        .send(body);
     } catch {
       return reply.code(404).send({ error: 'Attachment file not found' });
     }

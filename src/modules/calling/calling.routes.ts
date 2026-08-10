@@ -34,6 +34,7 @@ import {
 import { enqueueCallTranscript } from '../../queue/call-transcript.queue.js';
 import { CallingError } from './calling.types.js';
 import { getObject, mimeTypeFromStorageKey } from '../../services/objectStorage.js';
+import { contentDisposition } from '../../utils/contentDisposition.js';
 import { prisma } from '../../lib/prisma.js';
 
 function requireIds(
@@ -589,8 +590,8 @@ export default async function callingRoutes(fastify: FastifyInstance) {
       }
       const buf = await getObject(call.recordingStorageKey);
       reply.header('Content-Type', mimeTypeFromStorageKey(call.recordingStorageKey));
-      reply.header('Content-Disposition', `inline; filename="call-${callId}.ogg"`);
-      return reply.send(buf);
+      reply.header('Content-Disposition', contentDisposition('inline', `call-${callId}.ogg`));
+      return reply.send(Buffer.isBuffer(buf) ? buf : Buffer.from(buf));
     } catch (err) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
