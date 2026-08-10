@@ -6,7 +6,9 @@ import { companyAuth } from '../middleware/workspaceScope.js';
 import {
   campaignScheduleDelayMs,
   enqueueCampaignBroadcast,
+  isScheduledCampaignEditable,
 } from '../queue/campaign-broadcast.queue.js';
+import { countCampaignAudienceFromFilter } from '../services/campaign.service.js';
 import { executeCampaignBroadcast } from '../services/campaignBroadcast.service.js';
 import { getCampaignInsights } from '../services/campaignInsights.service.js';
 import {
@@ -56,6 +58,11 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
 
     const delayMs = campaignScheduleDelayMs(scheduledAt);
     const isScheduled = Boolean(scheduledAt) && delayMs > 0;
+    const totalRecipients = await countCampaignAudienceFromFilter(
+      workspaceId,
+      body.audienceType,
+      audienceFilter
+    );
 
     const campaign = await prisma.campaign.create({
       data: {
@@ -65,6 +72,7 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
         audienceFilter: Object.keys(audienceFilter).length ? (audienceFilter as object) : undefined,
         scheduledAt,
         status: isScheduled ? 'scheduled' : 'draft',
+        totalRecipients,
         workspaceId,
       },
     });
@@ -89,6 +97,103 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
     }
 
     return reply.code(201).send(campaign);
+  });
+
+  // Full edit of scheduled campaign while more than 10 minutes before send.
+  fastify.patch('/:id', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const schema = z
+      .object({
+        name: z.string().trim().min(1).optional(),
+        templateId: z.string().optional(),
+        channel: z.enum(['whatsapp', 'email', 'instagram']).optional(),
+        audienceType: z.enum(['all', 'segment', 'tag', 'csv']).optional(),
+        audienceFilter: z.record(z.unknown()).optional(),
+        scheduledAt: z.string().optional(),
+      })
+      .refine(
+        (b) =>
+          b.name !== undefined ||
+          b.templateId !== undefined ||
+          b.audienceType !== undefined ||
+          b.audienceFilter !== undefined ||
+          b.scheduledAt !== undefined,
+        { message: 'Nothing to update' }
+      );
+    const body = schema.parse(request.body);
+
+    const campaign = await prisma.campaign.findFirst({ where: { id, workspaceId } });
+    if (!campaign) return reply.code(404).send({ error: 'Not found' });
+
+    if (!isScheduledCampaignEditable(campaign.status, campaign.scheduledAt)) {
+      return reply.code(409).send({
+        error: 'Can only edit when more than 10 minutes before send',
+      });
+    }
+
+    let nextScheduledAt = campaign.scheduledAt;
+    if (body.scheduledAt !== undefined) {
+      const scheduledAt = new Date(body.scheduledAt);
+      if (Number.isNaN(scheduledAt.getTime())) {
+        return reply.code(400).send({ error: 'Invalid scheduledAt' });
+      }
+      const delayMs = campaignScheduleDelayMs(scheduledAt);
+      if (delayMs <= 0) {
+        return reply.code(400).send({ error: 'scheduledAt must be in the future' });
+      }
+      nextScheduledAt = scheduledAt;
+    }
+
+    const prevFilter =
+      campaign.audienceFilter && typeof campaign.audienceFilter === 'object'
+        ? (campaign.audienceFilter as Record<string, unknown>)
+        : {};
+    const nextFilter =
+      body.audienceFilter !== undefined || body.channel !== undefined
+        ? {
+            ...prevFilter,
+            ...(body.audienceFilter ?? {}),
+            ...(body.channel ? { channel: body.channel } : {}),
+          }
+        : undefined;
+    const nextAudienceType = body.audienceType ?? campaign.audienceType;
+    const filterForCount = nextFilter ?? prevFilter;
+    const totalRecipients = await countCampaignAudienceFromFilter(
+      workspaceId,
+      nextAudienceType,
+      filterForCount
+    );
+
+    const updated = await prisma.campaign.update({
+      where: { id },
+      data: {
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(body.templateId !== undefined ? { templateId: body.templateId } : {}),
+        ...(body.audienceType !== undefined ? { audienceType: body.audienceType } : {}),
+        ...(nextFilter !== undefined
+          ? { audienceFilter: Object.keys(nextFilter).length ? (nextFilter as object) : undefined }
+          : {}),
+        scheduledAt: nextScheduledAt,
+        status: 'scheduled',
+        totalRecipients,
+      },
+    });
+
+    try {
+      await enqueueCampaignBroadcast(
+        { campaignId: id, workspaceId },
+        campaignScheduleDelayMs(nextScheduledAt)
+      );
+    } catch (err) {
+      request.log.error({ err, campaignId: id }, 'Failed to re-enqueue scheduled campaign');
+      return reply.code(502).send({
+        error: 'Campaign updated but scheduling queue failed. Try again.',
+        campaign: updated,
+      });
+    }
+
+    return updated;
   });
 
   fastify.post('/:id/send', auth, async (request, reply) => {

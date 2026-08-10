@@ -38,6 +38,7 @@ type PageMessagingEvent = {
     mid?: string;
     payload?: string;
     title?: string;
+    messaging_product?: 'instagram' | 'facebook' | 'messenger';
   };
   /** Instagram messaging_seen / Messenger message_reads */
   read?: {
@@ -321,10 +322,9 @@ export async function handleInstagramWebhookBody(body: PageMessagingWebhookBody)
 
     for (const { event, fromStandby } of events) {
       // Page webhook can still deliver Messenger events when only IG is connected.
-      if (
-        event.message?.messaging_product === 'facebook' ||
-        event.message?.messaging_product === 'messenger'
-      ) {
+      const product =
+        event.message?.messaging_product ?? event.postback?.messaging_product;
+      if (product === 'facebook' || product === 'messenger') {
         continue;
       }
 

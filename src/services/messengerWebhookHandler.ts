@@ -2,16 +2,25 @@ import { prisma } from '../index.js';
 import { getIo } from '../socket.js';
 import { decryptSecret } from '../lib/field-encryption.js';
 import { findOrReopenConversationForInbound } from './conversationThread.service.js';
-import { formatMessengerContactPhone } from '../lib/channelContact.js';
+import {
+  formatInstagramContactPhone,
+  formatMessengerContactPhone,
+} from '../lib/channelContact.js';
 import { findOrCreateMessengerContact } from '../lib/messengerContact.js';
 import {
   fetchMessengerUserProfile,
   resolveMessengerContactName,
 } from './messenger.js';
-import { findMessengerAccountByPageId } from './workspaceResolve.js';
+import {
+  findInstagramAccountByEntryId,
+  findMessengerAccountByPageId,
+} from './workspaceResolve.js';
 import { applyMessagingReadReceipt } from './messagingReadReceipt.service.js';
 import { routeInboundConversation } from './conversation-inbound-router.service.js';
-import { isMessengerMessagingEvent } from './metaMessagingRoute.js';
+import {
+  isMessengerMessagingEvent,
+  type MetaMessagingRouteCtx,
+} from './metaMessagingRoute.js';
 import {
   downloadInstagramMediaUrl,
   parseInboundInstagramMessage,
@@ -188,7 +197,29 @@ export type PageMessagingWebhookBody = {
   }>;
 };
 
-export async function handleMessengerWebhookBody(body: PageMessagingWebhookBody) {
+/** True when this sender already has an Instagram identity in the workspace. */
+async function senderHasInstagramContact(
+  workspaceId: string,
+  senderId: string
+): Promise<boolean> {
+  const igPhone = formatInstagramContactPhone(senderId);
+  const hit = await prisma.contact.findFirst({
+    where: {
+      workspaceId,
+      OR: [
+        { phone: igPhone },
+        { phone: senderId, source: 'Instagram' },
+      ],
+    },
+    select: { id: true },
+  });
+  return !!hit;
+}
+
+export async function handleMessengerWebhookBody(
+  body: PageMessagingWebhookBody,
+  routeCtx?: MetaMessagingRouteCtx
+) {
   if (body.object !== 'page') {
     logMessengerWebhook('ignored object', { object: body.object });
     return;
@@ -210,11 +241,38 @@ export async function handleMessengerWebhookBody(body: PageMessagingWebhookBody)
       continue;
     }
 
+    const igAccount = await findInstagramAccountByEntryId(pageId);
+    const effectiveCtx: MetaMessagingRouteCtx = {
+      pageId: routeCtx?.pageId || account.pageId,
+      instagramUserId: routeCtx?.instagramUserId ?? igAccount?.instagramUserId,
+    };
+
     for (const event of entry.messaging || []) {
-      if (!isMessengerMessagingEvent(event)) continue;
+      if (!isMessengerMessagingEvent(event, effectiveCtx)) continue;
 
       const senderId = event.sender?.id;
       if (!senderId) continue;
+
+      // Mis-routed IG event (omitted messaging_product, recipient=pageId): if this
+      // sender already has an ig: contact, hand off to Instagram — never create fb:.
+      if (
+        igAccount &&
+        event.message?.messaging_product !== 'facebook' &&
+        event.message?.messaging_product !== 'messenger' &&
+        (await senderHasInstagramContact(account.workspaceId, senderId))
+      ) {
+        logMessengerWebhook('re-route known IG sender to Instagram handler', {
+          pageId,
+          senderId,
+        });
+        // Dynamic import avoids a static cycle with instagramWebhookHandler.
+        const { handleInstagramWebhookBody } = await import('./instagramWebhookHandler.js');
+        await handleInstagramWebhookBody({
+          object: 'page',
+          entry: [{ id: pageId, messaging: [event] }],
+        });
+        continue;
+      }
 
       if (event.read) {
         const watermark = event.read.watermark;

@@ -8,9 +8,15 @@ export type MetaMessagingEvent = {
   sender?: { id?: string };
   recipient?: { id?: string };
   message?: { messaging_product?: 'instagram' | 'facebook' | 'messenger' };
-  postback?: { payload?: string; mid?: string };
+  postback?: { payload?: string; mid?: string; messaging_product?: 'instagram' | 'facebook' | 'messenger' };
   read?: { mid?: string; watermark?: number };
 };
+
+function messagingProduct(
+  event: MetaMessagingEvent
+): 'instagram' | 'facebook' | 'messenger' | undefined {
+  return event.message?.messaging_product ?? event.postback?.messaging_product;
+}
 
 function addressedToInstagram(
   event: MetaMessagingEvent,
@@ -24,7 +30,7 @@ function addressedToInstagram(
 
 /**
  * Page webhook split: IG vs Messenger.
- * - Explicit messaging_product wins.
+ * - Explicit messaging_product (message or postback) wins.
  * - IG messaging_seen uses read.mid; Messenger message_reads uses watermark.
  * - Omitted product on object=page is Messenger (classic Page DM), unless
  *   recipient/sender is the IG business id.
@@ -37,7 +43,7 @@ export function isInstagramMessagingEvent(
   if (event.read?.mid) return true;
   if (event.read?.watermark != null && !event.read?.mid) return false;
 
-  const product = event.message?.messaging_product;
+  const product = messagingProduct(event);
   if (product === 'instagram') return true;
   if (product === 'facebook' || product === 'messenger') return false;
 
@@ -52,7 +58,7 @@ export function isMessengerMessagingEvent(
   if (event.read?.watermark != null && !event.read?.mid) return true;
   if (event.read?.mid) return false;
 
-  const product = event.message?.messaging_product;
+  const product = messagingProduct(event);
   if (product === 'instagram') return false;
   if (product === 'facebook' || product === 'messenger') return true;
 

@@ -1,5 +1,7 @@
 import type { Prisma } from '@prisma/client';
 
+export type AudienceChannel = 'whatsapp' | 'email' | 'instagram';
+
 export function segmentIdToTag(segmentId: string): string | undefined {
   if (!segmentId.startsWith('tag:')) return undefined;
   const tag = segmentId.slice(4).trim();
@@ -38,6 +40,25 @@ export function resolveSegmentIdsFromFilter(
     return [`tag:${filter.tag.trim()}`];
   }
   return ['all'];
+}
+
+/** Channel + segment ids used when persisting `totalRecipients` on create/PATCH. */
+export function resolveAudienceCountArgs(
+  audienceType: string,
+  audienceFilter?: unknown
+): { channel: AudienceChannel; segmentIds: string[] } {
+  const filter =
+    audienceFilter && typeof audienceFilter === 'object'
+      ? (audienceFilter as {
+          channel?: string;
+          segmentId?: string;
+          segmentIds?: unknown;
+          tag?: string;
+        })
+      : {};
+  const channel: AudienceChannel =
+    filter.channel === 'email' || filter.channel === 'instagram' ? filter.channel : 'whatsapp';
+  return { channel, segmentIds: resolveSegmentIdsFromFilter(audienceType, filter) };
 }
 
 export function segmentLabelFromIds(segmentIds: string | string[]): string {

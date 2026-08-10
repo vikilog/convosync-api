@@ -16,11 +16,17 @@ export function isInstagramSource(source: string | null | undefined): boolean {
   return source === 'Instagram';
 }
 
-/** Strip accidental fb:/ig: before composing the canonical Messenger phone. */
+/**
+ * Strip accidental `fb:` before composing the canonical Messenger phone.
+ * Never coerce `ig:` — that is a different channel identity (IGSID).
+ */
 export function normalizeMessengerPsid(raw: string): string {
   const trimmed = raw.trim();
-  if (trimmed.startsWith('fb:') || trimmed.startsWith('ig:')) {
+  if (trimmed.startsWith('fb:')) {
     return trimmed.slice(3).trim();
+  }
+  if (trimmed.startsWith('ig:')) {
+    return '';
   }
   return trimmed;
 }

@@ -12,7 +12,7 @@ import { isPrismaUniqueViolation } from './messengerContact.js';
 
 assert.equal(formatMessengerContactPhone('1234567890123456'), 'fb:1234567890123456');
 assert.equal(normalizeMessengerPsid('fb:123'), '123');
-assert.equal(normalizeMessengerPsid('ig:123'), '123');
+assert.equal(normalizeMessengerPsid('ig:123'), '', 'ig: must not coerce to Messenger PSID');
 assert.equal(normalizeMessengerPsid(' 999 '), '999');
 
 assert.equal(parseMessengerPsid('fb:36586673007584588'), '36586673007584588');

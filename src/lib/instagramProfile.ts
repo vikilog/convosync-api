@@ -32,6 +32,22 @@ export function shouldRefreshInstagramProfile(
   return Number.isNaN(age) || age > PROFILE_STALE_MS;
 }
 
+/** True for `Instagram #####`, bare IGSID, or empty — safe to overwrite. */
+export function isInstagramPlaceholderContactName(
+  name: string | null | undefined,
+  senderId?: string
+): boolean {
+  const trimmed = name?.trim() ?? '';
+  if (!trimmed) return true;
+  if (/^Instagram \d+$/i.test(trimmed)) return true;
+  if (/^\d{15,}$/.test(trimmed)) return true;
+  if (senderId) {
+    const id = senderId.trim();
+    if (trimmed === id || trimmed === id.slice(-6)) return true;
+  }
+  return false;
+}
+
 export function instagramProfileToCustomFields(
   profile: InstagramUserProfile,
   existing?: Record<string, string> | null
@@ -68,9 +84,12 @@ export function resolveInstagramContactName(
   senderId: string,
   fallbackName?: string
 ): string {
-  if (profile.name?.trim()) return profile.name.trim();
-  if (fallbackName?.trim()) return fallbackName.trim();
-  if (profile.username) return `@${profile.username}`;
+  const raw = profile.name?.trim();
+  // Ignore IGSID/placeholder seeds — Graph often omits name; prefer @username.
+  if (raw && !isInstagramPlaceholderContactName(raw, senderId)) return raw;
+  const fallback = fallbackName?.trim();
+  if (fallback && !isInstagramPlaceholderContactName(fallback, senderId)) return fallback;
+  if (profile.username?.trim()) return `@${profile.username.trim().replace(/^@/, '')}`;
   return `Instagram ${senderId.slice(-6)}`;
 }
 

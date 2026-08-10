@@ -1,6 +1,6 @@
 import { getIo } from '../socket.js';
 import { prisma } from '../index.js';
-import { formatInstagramContactPhone } from '../lib/channelContact.js';
+import { findOrCreateInstagramContact } from '../lib/instagramContact.js';
 import { findInstagramAccountByEntryId } from './workspaceResolve.js';
 import {
   triggerClassifyAfterUpsert,
@@ -42,23 +42,14 @@ async function ensureInstagramCommentContact(
   username: string | null | undefined
 ): Promise<string | null> {
   if (!fromId?.trim()) return null;
-  const phone = formatInstagramContactPhone(fromId.trim());
-  let contact = await prisma.contact.findFirst({
-    where: { phone, workspaceId },
-  });
-  if (!contact) {
-    const name = username?.trim()
+  const contact = await findOrCreateInstagramContact({
+    db: prisma,
+    workspaceId,
+    scopedUserId: fromId.trim(),
+    name: username?.trim()
       ? `@${username.replace(/^@/, '')}`
-      : `Instagram ${fromId.slice(-6)}`;
-    contact = await prisma.contact.create({
-      data: {
-        name,
-        phone,
-        workspaceId,
-        source: 'Instagram',
-      },
-    });
-  }
+      : undefined,
+  });
   return contact.id;
 }
 

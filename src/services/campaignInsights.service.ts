@@ -506,6 +506,7 @@ export async function getCampaignInsights(campaignId: string, workspaceId: strin
     insights: channelInsights.insights,
     recipients: channelInsights.recipients,
     analytics: channelInsights.analytics,
-    variableMappings: channelInsights.variableMappings,
+    // Prefer filter (create/edit store mappings here); channel insights may be empty for WA.
+    variableMappings: filter.variableMappings ?? channelInsights.variableMappings ?? {},
   };
 }

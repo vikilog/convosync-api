@@ -27,6 +27,9 @@ export function getCampaignBroadcastQueue(): Queue<CampaignBroadcastJobData> {
   return queue;
 }
 
+/** Must be more than this far before send to edit a scheduled campaign. */
+export const SCHEDULED_CAMPAIGN_EDIT_LEAD_MS = 10 * 60 * 1000;
+
 /** Delay until scheduledAt (ms). Past / invalid → 0. */
 export function campaignScheduleDelayMs(scheduledAt: Date | string | null | undefined): number {
   if (!scheduledAt) return 0;
@@ -35,15 +38,46 @@ export function campaignScheduleDelayMs(scheduledAt: Date | string | null | unde
   return Math.max(0, t - Date.now());
 }
 
+/** status === scheduled && scheduledAt more than 10 minutes from now. */
+export function isScheduledCampaignEditable(
+  status: string | null | undefined,
+  scheduledAt: Date | string | null | undefined,
+  now = Date.now()
+): boolean {
+  if ((status ?? '').toLowerCase() !== 'scheduled') return false;
+  if (!scheduledAt) return false;
+  const t = scheduledAt instanceof Date ? scheduledAt.getTime() : new Date(scheduledAt).getTime();
+  if (!Number.isFinite(t)) return false;
+  return t - now > SCHEDULED_CAMPAIGN_EDIT_LEAD_MS;
+}
+
 export async function enqueueCampaignBroadcast(
   data: CampaignBroadcastJobData,
   delayMs = 0
 ): Promise<string> {
-  const job = await getCampaignBroadcastQueue().add('broadcast', data, {
+  const q = getCampaignBroadcastQueue();
+  // BullMQ custom jobId cannot contain `:`.
+  const jobId = `campaign-broadcast-${data.campaignId}`;
+  // One pending job per campaign — reschedule replaces delayed/waiting.
+  try {
+    const existing = await q.getJob(jobId);
+    if (existing) {
+      const state = await existing.getState();
+      if (state === 'active') {
+        throw new Error('Campaign broadcast already running');
+      }
+      if (state === 'delayed' || state === 'waiting' || state === 'completed' || state === 'failed') {
+        await existing.remove();
+      }
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message === 'Campaign broadcast already running') throw err;
+    /* ignore getJob/remove races */
+  }
+
+  const job = await q.add('broadcast', data, {
     delay: Math.max(0, delayMs),
-    // One pending job per campaign — reschedule replaces.
-    // BullMQ custom jobId cannot contain `:`.
-    jobId: `campaign-broadcast-${data.campaignId}`,
+    jobId,
   });
   return job.id ?? '';
 }

@@ -199,7 +199,8 @@ export async function fetchInstagramUserProfile(
   pageAccessToken: string,
   options?: { businessInstagramUserId?: string; username?: string }
 ): Promise<InstagramUserProfile> {
-  let profile: InstagramUserProfile = { name: instagramScopedUserId };
+  // ponytail: never seed name with IGSID — that blocked @username fallback forever
+  let profile: InstagramUserProfile = {};
 
   try {
     const res = await axios.get(`https://graph.facebook.com/v25.0/${instagramScopedUserId}`, {

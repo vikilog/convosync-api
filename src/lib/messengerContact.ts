@@ -1,6 +1,8 @@
 import { Prisma, type Contact, type PrismaClient } from '@prisma/client';
 import {
   formatMessengerContactPhone,
+  isInstagramPhone,
+  isInstagramSource,
   normalizeMessengerPsid,
 } from './channelContact.js';
 
@@ -10,7 +12,8 @@ export function isPrismaUniqueViolation(err: unknown): boolean {
 
 /**
  * Find-or-create Messenger contact by `(phone, workspaceId)` where phone is `fb:{psid}`.
- * Also heals legacy rows that stored the bare PSID (no fb: prefix).
+ * Also heals legacy rows that stored the bare PSID (no fb: prefix) — but never
+ * adopts Instagram `ig:` / source=Instagram rows (same digits can be an IGSID).
  * Catches P2002 from concurrent webhook/sync creates and re-fetches.
  */
 export async function findOrCreateMessengerContact(params: {
@@ -33,17 +36,22 @@ export async function findOrCreateMessengerContact(params: {
   });
 
   // Legacy: sync/webhook once stored raw PSID without fb: — reuse + heal.
+  // Do not steal Instagram identities (bare IGSID / source Instagram).
   if (!contact) {
-    contact = await db.contact.findUnique({
+    const bare = await db.contact.findUnique({
       where: { phone_workspaceId: { phone: psid, workspaceId } },
     });
-    if (contact) {
+    if (
+      bare &&
+      !isInstagramPhone(bare.phone) &&
+      !isInstagramSource(bare.source)
+    ) {
       try {
         contact = await db.contact.update({
-          where: { id: contact.id },
+          where: { id: bare.id },
           data: {
             phone,
-            source: contact.source === 'Instagram' ? 'Messenger' : contact.source || 'Messenger',
+            source: bare.source || 'Messenger',
           },
         });
       } catch (err) {
@@ -78,9 +86,14 @@ export async function findOrCreateMessengerContact(params: {
     }
   }
 
+  // Defensive: never treat an Instagram identity row as Messenger.
+  if (isInstagramPhone(contact.phone) || isInstagramSource(contact.source)) {
+    throw new Error(`Messenger contact has Instagram identity: ${contact.phone}`);
+  }
+
   const data: { name?: string; avatar?: string; phone?: string; source?: string } = {};
   if (contact.phone !== phone) data.phone = phone;
-  if (contact.source === 'Instagram') data.source = 'Messenger';
+  if (!contact.source || contact.source === '—') data.source = 'Messenger';
   if (contact.name === phone || contact.name === psid || contact.name === contact.phone) {
     data.name = name;
   }

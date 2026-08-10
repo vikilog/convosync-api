@@ -356,13 +356,23 @@ export default async function templateRoutes(fastify: FastifyInstance) {
     const existing = await prisma.template.findFirst({ where: { id, workspaceId } });
     if (!existing) return reply.code(404).send({ error: 'Template not found' });
 
+    const body = templateBodySchema.partial().parse(request.body);
+
+    // Approved on Meta: name/body locked; allow local language fix so send matches Meta's code.
     if (existing.status === 'approved') {
-      return reply.code(400).send({
-        error: 'Approved templates cannot be edited. Create a new template or delete this one in Meta.',
+      if (body.language == null || !String(body.language).trim()) {
+        return reply.code(400).send({
+          error:
+            'Approved templates can only update language (must match Meta). Create a new template to change content.',
+        });
+      }
+      const template = await prisma.template.update({
+        where: { id },
+        data: { language: normalizeMetaLanguageCode(body.language) },
       });
+      return template;
     }
 
-    const body = templateBodySchema.partial().parse(request.body);
     // Meta-only fields — not on Template model
     const { submitToMeta: _s, variableSamples: _v, buttonUrlSample: _b, ...rest } = body;
     const data = scopedUpdateData(rest as Record<string, unknown>);
@@ -371,6 +381,7 @@ export default async function templateRoutes(fastify: FastifyInstance) {
       data.name = sanitizeTemplateName(rest.name);
     }
     if (rest.category) data.category = normalizeCategory(rest.category);
+    if (rest.language != null) data.language = normalizeMetaLanguageCode(rest.language);
     if (rest.buttonText !== undefined) {
       data.buttons = rest.buttonText?.trim() ? [rest.buttonText.trim()] : [];
     }

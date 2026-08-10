@@ -61,4 +61,37 @@ assert.equal(
   false
 );
 
+// Postback messaging_product (IG icebreakers sometimes omit message.*)
+assert.equal(
+  isInstagramMessagingEvent(
+    { recipient: { id: 'page-1' }, postback: { payload: 'x', messaging_product: 'instagram' } },
+    igCtx
+  ),
+  true,
+  'postback product=instagram → IG'
+);
+assert.equal(
+  isMessengerMessagingEvent(
+    { recipient: { id: 'page-1' }, postback: { payload: 'x', messaging_product: 'instagram' } },
+    igCtx
+  ),
+  false,
+  'postback product=instagram ↛ Messenger'
+);
+
+// Mutual exclusion for common shapes
+for (const event of [
+  { message: {} },
+  { message: { messaging_product: 'instagram' as const } },
+  { message: { messaging_product: 'facebook' as const } },
+  { recipient: { id: 'ig-biz-1' }, message: {} },
+  { read: { mid: 'm1' } },
+  { read: { watermark: 1 } },
+]) {
+  const ig = isInstagramMessagingEvent(event, igCtx);
+  const fb = isMessengerMessagingEvent(event, igCtx);
+  assert.equal(ig && fb, false, `exclusive: ${JSON.stringify(event)}`);
+  assert.equal(ig || fb, true, `covered: ${JSON.stringify(event)}`);
+}
+
 console.log('metaMessagingWebhook.routing check ok');

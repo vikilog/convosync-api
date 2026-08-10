@@ -75,10 +75,18 @@ export function buildVariableSamples(body: string, samples?: string[]): string[]
   return row;
 }
 
-/** Meta locale codes; bare `en` is rejected by many WABAs — use en_US. */
+/**
+ * Normalize Meta template language for Graph API.
+ * Keep exact locale codes (`en` vs `en_US` are different templates) — never coerce between them.
+ * Only map common human labels Meta UI may show.
+ */
 export function normalizeMetaLanguageCode(language: string): string {
   const code = language.trim();
-  if (code === 'en') return 'en_US';
+  if (!code) return code;
+  const key = code.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (key === 'english us' || key === 'english (us)') return 'en_US';
+  if (key === 'english uk' || key === 'english (uk)') return 'en_GB';
+  if (key === 'english') return 'en';
   return code;
 }
 

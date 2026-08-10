@@ -7,6 +7,7 @@ export type CampaignAudienceChannel = 'whatsapp' | 'email' | 'instagram';
 export {
   audienceTagFromIds,
   normalizeSegmentIds,
+  resolveAudienceCountArgs,
   resolveSegmentIdsFromFilter,
   segmentIdToTag,
   segmentLabelFromIds,

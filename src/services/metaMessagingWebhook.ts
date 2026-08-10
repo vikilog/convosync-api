@@ -55,7 +55,10 @@ export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody)
     }
 
     if (hasMessenger && !hasInstagram) {
-      await handleMessengerWebhookBody({ object: 'page', entry: [entry] });
+      await handleMessengerWebhookBody(
+        { object: 'page', entry: [entry] },
+        { pageId: messengerAccount!.pageId }
+      );
       continue;
     }
 
@@ -85,7 +88,10 @@ export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody)
       await handleInstagramWebhookBody({ object: 'page', entry: [instagramEntry] });
     }
     if ((messengerEntry.messaging?.length ?? 0) > 0) {
-      await handleMessengerWebhookBody({ object: 'page', entry: [messengerEntry] });
+      await handleMessengerWebhookBody(
+        { object: 'page', entry: [messengerEntry] },
+        routeCtx
+      );
     }
   }
 }

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   audienceTagFromIds,
   normalizeSegmentIds,
+  resolveAudienceCountArgs,
   resolveSegmentIdsFromFilter,
   segmentLabelFromIds,
   segmentsWhere,
@@ -31,5 +32,22 @@ assert.deepEqual(resolveSegmentIdsFromFilter('all', { segmentIds: ['tag:a'] }), 
 assert.equal(segmentLabelFromIds('tag:test'), 'Tag: test');
 assert.equal(segmentLabelFromIds(['tag:a', 'tag:b']), 'Tags: a, b');
 assert.equal(audienceTagFromIds(['tag:a', 'tag:b']), 'a, b');
+
+// Create/PATCH persist count via these args — wrong shape would yield all-contacts or empty tags.
+assert.deepEqual(
+  resolveAudienceCountArgs('segment', {
+    channel: 'whatsapp',
+    segmentId: 'tag:test',
+    segmentIds: ['tag:test'],
+  }),
+  { channel: 'whatsapp', segmentIds: ['tag:test'] }
+);
+assert.deepEqual(
+  resolveAudienceCountArgs('segment', {
+    channel: 'whatsapp',
+    segmentIds: ['tag:test', 'tag:vip'],
+  }),
+  { channel: 'whatsapp', segmentIds: ['tag:test', 'tag:vip'] }
+);
 
 console.log('campaignAudience.check.ts: ok');
