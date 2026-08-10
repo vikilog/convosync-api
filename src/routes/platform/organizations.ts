@@ -147,10 +147,16 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
 
   fastify.post('/:id/impersonate', async (request, reply) => {
     const { id } = request.params as { id: string };
+    const body = z.object({ userId: z.string().min(1).optional() }).parse(request.body ?? {});
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
     try {
-      const session = await createWorkspaceImpersonationSession(fastify, id, admin.platformAdminId!);
+      const session = await createWorkspaceImpersonationSession(
+        fastify,
+        id,
+        admin.platformAdminId!,
+        body.userId
+      );
       recordAuditEvent({
         action: PLATFORM_AUDIT_ACTIONS.ORG_IMPERSONATE,
         actor: { id: admin.platformAdminId, role: admin.role },
@@ -161,8 +167,12 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
         ipAddress: ip,
         metadata: {
           targetLabel: session.workspace.name,
-          details: `Opened impersonation session for ${session.workspace.name}`,
+          details: body.userId
+            ? `Opened impersonation session as ${session.user.email} for ${session.workspace.name}`
+            : `Opened impersonation session for ${session.workspace.name}`,
           workspaceId: id,
+          targetUserId: session.user.id,
+          targetUserEmail: session.user.email,
           ownerEmail: session.user.email,
         },
       });

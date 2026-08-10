@@ -29,6 +29,24 @@ export async function resolveWorkspaceByPageId(pageId: string): Promise<Workspac
   return account?.workspace ?? null;
 }
 
+/** Template status webhooks use entry.id = WABA id. */
+export async function resolveWorkspaceByWabaId(wabaId: string): Promise<Workspace | null> {
+  const id = wabaId.trim();
+  if (!id) return null;
+
+  const account = await prisma.whatsAppPhoneAccount.findFirst({
+    where: { wabaId: id },
+    include: { workspace: true },
+    orderBy: { updatedAt: 'desc' },
+  });
+  if (account?.workspace) return account.workspace;
+
+  return prisma.workspace.findFirst({
+    where: { wabaId: id },
+    orderBy: { updatedAt: 'desc' },
+  });
+}
+
 /** Meta webhooks may send entry.id as Page ID or Instagram business account ID. */
 export async function findInstagramAccountByEntryId(entryId: string) {
   const id = entryId.trim();

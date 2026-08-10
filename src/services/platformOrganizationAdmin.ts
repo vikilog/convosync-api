@@ -352,7 +352,8 @@ export async function getWorkspaceAuditTrail(workspaceId: string) {
 export async function createWorkspaceImpersonationSession(
   fastify: FastifyInstance,
   workspaceId: string,
-  platformAdminId: string
+  platformAdminId: string,
+  targetUserId?: string
 ) {
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
@@ -360,11 +361,26 @@ export async function createWorkspaceImpersonationSession(
   });
   if (!workspace) throw new Error('Workspace not found');
 
-  const ownerUserId = await getWorkspaceOwnerUserId(workspaceId);
-  if (!ownerUserId) throw new Error('No workspace owner found');
+  let userId = targetUserId;
+  if (!userId) {
+    userId = (await getWorkspaceOwnerUserId(workspaceId)) ?? undefined;
+    if (!userId) throw new Error('No workspace owner found');
+  } else {
+    // Must be a workspace member (membership row) or the workspace's owner user.
+    const [membership, ownerUserId] = await Promise.all([
+      prisma.workspaceMembership.findUnique({
+        where: { userId_workspaceId: { userId, workspaceId } },
+        select: { userId: true },
+      }),
+      getWorkspaceOwnerUserId(workspaceId),
+    ]);
+    if (!membership && ownerUserId !== userId) {
+      throw new Error('User is not a member of this workspace');
+    }
+  }
 
-  const user = await prisma.user.findUnique({ where: { id: ownerUserId } });
-  if (!user) throw new Error('Owner user not found');
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new Error(targetUserId ? 'User not found' : 'Owner user not found');
 
   const access = await resolveMembershipAccess(user.id, workspaceId);
   const token = await signSessionToken(fastify, {

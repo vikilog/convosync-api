@@ -348,7 +348,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
 
   /** Bulk upsert by phone+workspace. Client may chunk large CSVs. */
   fastify.post('/import', auth, async (request, reply) => {
-    const { workspaceId } = getJwtUser(request);
+    const { workspaceId, userId } = getJwtUser(request);
     const rowSchema = z.object({
       name: z.string().min(1),
       phone: z.string().min(5),
@@ -425,7 +425,22 @@ export default async function contactRoutes(fastify: FastifyInstance) {
 
     if (allTags.size) void registerWorkspaceTags(workspaceId, [...allTags]);
 
-    return reply.send({ created, updated, skipped: errors.length, errors });
+    const skipped = errors.length;
+    void import('../services/notifications/emitNotification.js').then(({ emitNotification }) =>
+      import('../services/notifications/types.js').then(({ NOTIFICATION_TYPES }) =>
+        emitNotification({
+          workspaceId,
+          type: NOTIFICATION_TYPES.CONTACT_IMPORT_FINISHED,
+          title: 'Contact import finished',
+          message: `Imported ${created} new, updated ${updated}${skipped ? `, ${skipped} skipped` : ''}.`,
+          entityType: 'contact_import',
+          actorUserId: userId,
+          metadata: { created, updated, skipped },
+        })
+      )
+    );
+
+    return reply.send({ created, updated, skipped, errors });
   });
 
   /** Count contacts that have the given tag (for delete-by-tag confirm). Must be before /:id. */

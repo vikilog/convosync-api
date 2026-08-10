@@ -37,6 +37,8 @@ import facebookRoutes from './routes/facebook.js';
 import metaAdsRoutes from './routes/metaAds.js';
 import whatsappPayRoutes from './routes/whatsappPay.js';
 import workspaceRoutes from './routes/workspace.js';
+import inAppNotificationRoutes from './routes/inAppNotifications.js';
+import teamChatRoutes from './routes/teamChat.js';
 import onboardingRoutes from './routes/onboarding.js';
 import platformAuthRoutes from './routes/platform/auth.js';
 import platformOrganizationRoutes from './routes/platform/organizations.js';
@@ -143,6 +145,8 @@ async function start() {
   await fastify.register(metaAdsRoutes, { prefix: '/api/meta-ads' });
   await fastify.register(whatsappPayRoutes, { prefix: '/api/whatsapp-pay' });
   await fastify.register(workspaceRoutes, { prefix: '/api/workspace' });
+  await fastify.register(inAppNotificationRoutes, { prefix: '/api/in-app-notifications' });
+  await fastify.register(teamChatRoutes, { prefix: '/api/team-chat' });
   await fastify.register(aiProviderRoutes, { prefix: '/api/workspace/ai-provider' });
   await fastify.register(workspaceEmailConfigRoutes, { prefix: '/api/workspace/email-config' });
   await fastify.register(onboardingRoutes, { prefix: '/api/onboarding' });
@@ -176,7 +180,9 @@ async function start() {
 
   await fastify.listen({ port: config.port, host: '0.0.0.0' });
 
-  initSocket(fastify.server);
+  initSocket(fastify.server, {
+    verifyJwt: (token) => fastify.jwt.verify(token) as { userId?: string; workspaceId?: string; scope?: string; purpose?: string },
+  });
   startCallingSweeper();
   startCallTranscriptWorker();
   startContactInsightWorker();

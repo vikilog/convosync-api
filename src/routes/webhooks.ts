@@ -2,7 +2,10 @@ import { FastifyInstance } from 'fastify';
 import { prisma } from '../index.js';
 import { getIo } from '../socket.js';
 import { config } from '../config.js';
-import { resolveWorkspaceByPhoneNumberId } from '../services/workspaceResolve.js';
+import {
+  resolveWorkspaceByPhoneNumberId,
+  resolveWorkspaceByWabaId,
+} from '../services/workspaceResolve.js';
 import {
   handleMetaMessagingWebhook,
 } from '../services/metaMessagingWebhook.js';
@@ -68,7 +71,10 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
     console.log('[WhatsApp Webhook] POST hit — incoming event', new Date().toISOString());
     const body = request.body as {
       object?: string;
-      entry?: Array<{ changes?: Array<{ field?: string; value?: Record<string, unknown> }> }>;
+      entry?: Array<{
+        id?: string;
+        changes?: Array<{ field?: string; value?: Record<string, unknown> }>;
+      }>;
     };
 
     // One row per delivery (incl. ignored fields like message_template_status_update).
@@ -343,9 +349,74 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
       }
 
       // Subscribed field; raw event is persisted to WebhookEventLog (finally).
-      // Template approval sync still happens via Templates → Refresh status.
       if (field === 'message_template_status_update') {
         logWebhook('POST → message_template_status_update', value);
+        const statusValue = value as {
+          event?: string;
+          message_template_id?: number | string;
+          message_template_name?: string;
+          message_template_language?: string;
+          reason?: string;
+        };
+        const entryId = typeof entry?.id === 'string' ? entry.id : '';
+        const event = String(statusValue.event ?? '').toUpperCase();
+        const templateName = String(statusValue.message_template_name ?? '').trim();
+        if (entryId && templateName && (event === 'APPROVED' || event === 'REJECTED')) {
+          try {
+            const workspace = await resolveWorkspaceByWabaId(entryId);
+            if (workspace) {
+              const { metaStatusToSystem } = await import('../constants/templateLabels.js');
+              const status = metaStatusToSystem(event);
+              const updated = await prisma.template.updateMany({
+                where: { workspaceId: workspace.id, name: templateName },
+                data: {
+                  status,
+                  rejectionReason:
+                    event === 'REJECTED' ? String(statusValue.reason ?? 'Rejected by Meta') : null,
+                  ...(statusValue.message_template_id
+                    ? { waTemplateId: String(statusValue.message_template_id) }
+                    : {}),
+                },
+              });
+              if (updated.count > 0) {
+                const { emitNotification } = await import(
+                  '../services/notifications/emitNotification.js'
+                );
+                const { NOTIFICATION_TYPES } = await import(
+                  '../services/notifications/types.js'
+                );
+                const tpl = await prisma.template.findFirst({
+                  where: { workspaceId: workspace.id, name: templateName },
+                  select: { id: true, name: true },
+                });
+                await emitNotification({
+                  workspaceId: workspace.id,
+                  type:
+                    event === 'APPROVED'
+                      ? NOTIFICATION_TYPES.TEMPLATE_APPROVED
+                      : NOTIFICATION_TYPES.TEMPLATE_REJECTED,
+                  title:
+                    event === 'APPROVED' ? 'Template approved' : 'Template rejected',
+                  message:
+                    event === 'APPROVED'
+                      ? `${templateName} was approved by Meta.`
+                      : `${templateName} was rejected by Meta.`,
+                  entityType: 'template',
+                  entityId: tpl?.id ?? null,
+                  metadata: {
+                    event,
+                    language: statusValue.message_template_language,
+                    reason: statusValue.reason,
+                  },
+                });
+              }
+            }
+          } catch (err) {
+            logWebhook('POST → template status notify failed', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
       }
 
       if (!value?.messages?.[0] && !value?.statuses?.[0]) {

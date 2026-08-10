@@ -316,7 +316,9 @@ export async function debitWallet(params: DebitParams) {
       const existing = await client.walletTransaction.findUnique({
         where: { idempotencyKey },
       });
-      if (existing) return existing;
+      if (existing) {
+        return { transaction: existing, lowBalanceTriggered: false, balancePaise: existing.balanceAfterPaise };
+      }
     }
 
     const wallet = await ensureWallet(workspaceId, client);
@@ -344,6 +346,7 @@ export async function debitWallet(params: DebitParams) {
       },
     });
 
+    let lowBalanceTriggered = false;
     if (
       updated.balancePaise <= updated.lowBalanceThresholdPaise &&
       !updated.lowBalanceAlertAt
@@ -352,16 +355,36 @@ export async function debitWallet(params: DebitParams) {
         where: { workspaceId },
         data: { lowBalanceAlertAt: new Date() },
       });
+      lowBalanceTriggered = true;
     }
 
-    return transaction;
+    return { transaction, lowBalanceTriggered, balancePaise: updated.balancePaise };
   };
 
-  if (tx) return run(tx);
+  if (tx) {
+    const nested = await run(tx);
+    return nested.transaction;
+  }
   const result = await prisma.$transaction(run);
+  if (result.lowBalanceTriggered) {
+    const balanceCc = (result.balancePaise / 100).toFixed(2);
+    void import('./notifications/emitNotification.js').then(({ emitNotification }) =>
+      import('./notifications/types.js').then(({ NOTIFICATION_TYPES }) =>
+        emitNotification({
+          workspaceId,
+          type: NOTIFICATION_TYPES.WALLET_BALANCE_LOW,
+          title: 'Wallet balance low',
+          message: `Wallet balance is ${balanceCc} CC — top up to keep sending.`,
+          entityType: 'wallet',
+          entityId: workspaceId,
+          metadata: { balancePaise: result.balancePaise },
+        })
+      )
+    );
+  }
   // AUTO_RECHARGE_DISABLED — re-enable later
   // void scheduleWalletAutoRecharge(workspaceId).catch(() => undefined);
-  return result;
+  return result.transaction;
 }
 
 export async function listWalletTransactions(workspaceId: string, limit = 50) {

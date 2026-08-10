@@ -45,10 +45,44 @@ function parseAudienceFilter(raw: unknown): CampaignAudienceFilter {
   return raw as CampaignAudienceFilter;
 }
 
+async function emitCampaignFinishedNotification(input: {
+  workspaceId: string;
+  campaignId: string;
+  campaignName: string;
+  status: 'completed' | 'failed';
+  sentCount: number;
+  totalRecipients: number;
+}) {
+  const { NOTIFICATION_TYPES } = await import('./notifications/types.js');
+  const { emitNotification } = await import('./notifications/emitNotification.js');
+  const ok = input.status === 'completed';
+  await emitNotification({
+    workspaceId: input.workspaceId,
+    type: ok ? NOTIFICATION_TYPES.CAMPAIGN_COMPLETED : NOTIFICATION_TYPES.CAMPAIGN_FAILED,
+    title: ok ? 'Campaign completed' : 'Campaign failed',
+    message: ok
+      ? `${input.campaignName} finished — ${input.sentCount}/${input.totalRecipients} sent.`
+      : `${input.campaignName} failed to send.`,
+    entityType: 'campaign',
+    entityId: input.campaignId,
+    metadata: {
+      sentCount: input.sentCount,
+      totalRecipients: input.totalRecipients,
+      status: input.status,
+    },
+  });
+}
+
 async function executeWhatsAppCampaignBroadcast(
   campaignId: string,
   workspaceId: string,
-  campaign: { id: string; templateId: string | null; audienceType: string; audienceFilter: unknown }
+  campaign: {
+    id: string;
+    name: string;
+    templateId: string | null;
+    audienceType: string;
+    audienceFilter: unknown;
+  }
 ) {
   const filter = parseAudienceFilter(campaign.audienceFilter);
   if (!campaign.templateId) {
@@ -285,14 +319,24 @@ async function executeWhatsAppCampaignBroadcast(
     }
   }
 
+  const finalStatus = sentCount > 0 ? 'completed' : 'failed';
   await prisma.campaign.update({
     where: { id: campaignId },
     data: {
       sentCount,
       deliveredCount: sentCount,
-      status: sentCount > 0 ? 'completed' : 'failed',
+      status: finalStatus,
       sentAt: new Date(),
     },
+  });
+
+  void emitCampaignFinishedNotification({
+    workspaceId,
+    campaignId,
+    campaignName: campaign.name,
+    status: finalStatus,
+    sentCount,
+    totalRecipients: contacts.length,
   });
 
   if (sentCount === 0 && errors.length > 0) {
@@ -305,7 +349,13 @@ async function executeWhatsAppCampaignBroadcast(
 async function executeEmailCampaignBroadcast(
   campaignId: string,
   workspaceId: string,
-  campaign: { id: string; templateId: string | null; audienceType: string; audienceFilter: unknown }
+  campaign: {
+    id: string;
+    name: string;
+    templateId: string | null;
+    audienceType: string;
+    audienceFilter: unknown;
+  }
 ) {
   const filter = parseAudienceFilter(campaign.audienceFilter);
   if (!campaign.templateId) {
@@ -375,14 +425,24 @@ async function executeEmailCampaignBroadcast(
     }
   }
 
+  const finalStatus = sentCount > 0 ? 'completed' : 'failed';
   await prisma.campaign.update({
     where: { id: campaignId },
     data: {
       sentCount,
       deliveredCount: sentCount,
-      status: sentCount > 0 ? 'completed' : 'failed',
+      status: finalStatus,
       sentAt: new Date(),
     },
+  });
+
+  void emitCampaignFinishedNotification({
+    workspaceId,
+    campaignId,
+    campaignName: campaign.name,
+    status: finalStatus,
+    sentCount,
+    totalRecipients: contacts.length,
   });
 
   if (sentCount === 0 && errors.length > 0) {
