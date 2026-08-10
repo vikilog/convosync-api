@@ -1,4 +1,5 @@
 import { prisma } from '../index.js';
+import { shouldMeterUsage } from './shouldMeterUsage.js';
 
 const INPUT_COST_PER_1K = 0.00015;
 const OUTPUT_COST_PER_1K = 0.0006;
@@ -16,11 +17,9 @@ export function calculateTokenCost(inputTokens: number, outputTokens: number) {
 export async function resolveWorkspaceBillingMode(
   workspaceId: string
 ): Promise<WorkspaceBillingMode> {
-  const row = await prisma.workspaceAiProviderConfig.findUnique({
-    where: { workspaceId },
-    select: { mode: true },
-  });
-  return row?.mode === 'byok' ? 'byok' : 'convosync';
+  // Align with shouldMeterUsage('ai') — BYOK active → not ConvoSync-billed.
+  const meter = await shouldMeterUsage(workspaceId, 'ai');
+  return meter ? 'convosync' : 'byok';
 }
 
 export async function recordWorkspaceTokenUsage(params: {

@@ -1,8 +1,9 @@
 import { prisma } from '../index.js';
 import { getEmailService } from '../modules/email/container.js';
 import {
+  audienceTagFromIds,
   getCampaignAudienceContacts,
-  segmentIdToTag,
+  resolveSegmentIdsFromFilter,
   type CampaignAudienceChannel,
 } from './campaignAudience.service.js';
 import {
@@ -18,6 +19,11 @@ import {
   chargeWhatsAppTemplateUsage,
 } from './walletUsage.js';
 import {
+  hasCampaignHeaderMediaSource,
+  parseCampaignHeaderMediaOverride,
+} from './campaignHeaderMedia.js';
+import { readMediaGalleryFile } from '../modules/media-gallery/media-storage.js';
+import {
   isTemplateMediaHeaderFormat,
   uploadTemplateHeaderMediaForSend,
 } from './templateSendHeader.js';
@@ -25,20 +31,18 @@ import {
 type CampaignAudienceFilter = {
   channel?: CampaignAudienceChannel;
   segmentId?: string;
+  segmentIds?: string[];
   tag?: string;
   variableMappings?: Record<string, string>;
+  headerMediaStorageKey?: string;
+  headerMediaMimeType?: string;
+  headerMediaFileName?: string;
+  headerMediaAssetId?: string;
 };
 
 function parseAudienceFilter(raw: unknown): CampaignAudienceFilter {
   if (!raw || typeof raw !== 'object') return {};
   return raw as CampaignAudienceFilter;
-}
-
-function resolveSegmentId(audienceType: string, filter: CampaignAudienceFilter): string {
-  if (audienceType === 'all') return 'all';
-  if (filter.segmentId) return filter.segmentId;
-  if (filter.tag) return `tag:${filter.tag}`;
-  return 'all';
 }
 
 async function executeWhatsAppCampaignBroadcast(
@@ -66,8 +70,9 @@ async function executeWhatsAppCampaignBroadcast(
     throw new Error('No WhatsApp phone number configured for this workspace');
   }
 
-  const segmentId = resolveSegmentId(campaign.audienceType, filter);
-  const contacts = await getCampaignAudienceContacts(workspaceId, 'whatsapp', segmentId);
+  const segmentIds = resolveSegmentIdsFromFilter(campaign.audienceType, filter);
+  const audienceTag = audienceTagFromIds(segmentIds);
+  const contacts = await getCampaignAudienceContacts(workspaceId, 'whatsapp', segmentIds);
   const mappings = filter.variableMappings ?? {};
 
   // Preflight: every variable must have a mapping expression (resolved per contact at send).
@@ -78,12 +83,17 @@ async function executeWhatsAppCampaignBroadcast(
     }
   }
 
-  await prisma.campaign.update({
-    where: { id: campaignId },
-    data: { totalRecipients: contacts.length, status: 'running' },
-  });
+  const mediaOverride = parseCampaignHeaderMediaOverride(filter);
+  if (
+    isTemplateMediaHeaderFormat(template.headerFormat) &&
+    !hasCampaignHeaderMediaSource(mediaOverride, template.headerMediaStorageKey)
+  ) {
+    throw new Error(
+      'This template requires header media. Select an image, video, or document before launching the campaign.'
+    );
+  }
 
-  // Same media header for every recipient — upload once (was N+1 inside the loop).
+  // Same media header for every recipient — resolve + upload once before marking running.
   let headerMedia:
     | {
         format: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
@@ -92,29 +102,97 @@ async function executeWhatsAppCampaignBroadcast(
       }
     | undefined;
   if (isTemplateMediaHeaderFormat(template.headerFormat)) {
+    let uploaded:
+      | { buffer: Buffer; mimeType: string; fileName?: string }
+      | null = null;
+    let mediaRecord = template;
+
+    if (mediaOverride.headerMediaAssetId) {
+      const asset = await prisma.mediaAsset.findFirst({
+        where: {
+          id: mediaOverride.headerMediaAssetId,
+          workspaceId,
+          isActive: true,
+        },
+      });
+      if (!asset?.storageKey) {
+        throw new Error('Selected gallery media was not found or has no stored file');
+      }
+      const file = await readMediaGalleryFile(asset.storageKey);
+      uploaded = {
+        buffer: file.buffer,
+        mimeType: asset.mimeType || file.mimeType,
+        fileName: mediaOverride.headerMediaFileName || asset.filename || undefined,
+      };
+    } else if (mediaOverride.headerMediaStorageKey) {
+      mediaRecord = {
+        ...template,
+        headerMediaStorageKey: mediaOverride.headerMediaStorageKey,
+        headerMediaMimeType: mediaOverride.headerMediaMimeType ?? template.headerMediaMimeType,
+        headerMediaFileName: mediaOverride.headerMediaFileName ?? template.headerMediaFileName,
+      };
+    }
+
     headerMedia = await uploadTemplateHeaderMediaForSend(
       credentials.accessToken,
       credentials.phoneNumberId,
-      template
+      mediaRecord,
+      uploaded
     );
   }
+
+  await prisma.campaign.update({
+    where: { id: campaignId },
+    data: { totalRecipients: contacts.length, status: 'running' },
+  });
 
   let sentCount = 0;
   const errors: string[] = [];
 
   for (const contact of contacts) {
-    try {
-      const bodyParams = buildCampaignBodyParams(template.variables, mappings, contact);
-      if (bodyParams.some((v) => !v.trim())) {
-        errors.push(`${contact.phone}: missing resolved template variable values`);
-        continue;
+    const bodyParams = buildCampaignBodyParams(template.variables, mappings, contact);
+    if (bodyParams.some((v) => !v.trim())) {
+      const msg = 'missing resolved template variable values';
+      errors.push(`${contact.phone}: ${msg}`);
+      try {
+        const { conversation } = await findOrReopenConversationForInbound({
+          workspaceId,
+          contactId: contact.id,
+          channel: 'whatsapp',
+          channelAccountId: credentials.phoneNumberId,
+        });
+        await prisma.message.create({
+          data: {
+            conversationId: conversation.id,
+            sender: 'agent',
+            senderName: 'Campaign',
+            content: renderTemplateBody(template.bodyPattern, bodyParams.map((v) => v || '—')),
+            type: 'template',
+            status: 'failed',
+            metadata: {
+              campaignId: campaign.id,
+              templateId: template.id,
+              templateName: template.name,
+              variables: bodyParams,
+              audienceTag,
+              sendError: msg,
+              events: [{ type: 'failed', at: new Date().toISOString(), detail: msg }],
+            },
+          },
+        });
+      } catch (persistErr) {
+        console.error('[Campaign] failed to persist missing-var failure', persistErr);
       }
+      continue;
+    }
 
-      const displayContent = renderTemplateBody(template.bodyPattern, bodyParams);
+    const displayContent = renderTemplateBody(template.bodyPattern, bodyParams);
 
+    try {
       await assertWhatsAppTemplateAffordable({
         workspaceId,
         templateCategory: template.category,
+        phoneNumberId: credentials.phoneNumberId,
       });
 
       const sent = await sendWhatsAppTemplateMessage(
@@ -148,7 +226,8 @@ async function executeWhatsAppCampaignBroadcast(
             templateId: template.id,
             templateName: template.name,
             variables: bodyParams,
-            audienceTag: segmentIdToTag(segmentId),
+            audienceTag,
+            events: [{ type: 'sent', at: new Date().toISOString() }],
           },
         },
       });
@@ -158,6 +237,7 @@ async function executeWhatsAppCampaignBroadcast(
         templateCategory: template.category,
         referenceId: campaignMessage.id,
         templateName: template.name,
+        phoneNumberId: credentials.phoneNumberId,
       });
 
       await prisma.conversation.update({
@@ -173,6 +253,35 @@ async function executeWhatsAppCampaignBroadcast(
       const msg = formatMetaSendError(err);
       errors.push(`${contact.phone}: ${msg}`);
       console.error('[Campaign] send failed', { campaignId, contactId: contact.id, msg });
+      try {
+        const { conversation } = await findOrReopenConversationForInbound({
+          workspaceId,
+          contactId: contact.id,
+          channel: 'whatsapp',
+          channelAccountId: credentials.phoneNumberId,
+        });
+        await prisma.message.create({
+          data: {
+            conversationId: conversation.id,
+            sender: 'agent',
+            senderName: 'Campaign',
+            content: displayContent,
+            type: 'template',
+            status: 'failed',
+            metadata: {
+              campaignId: campaign.id,
+              templateId: template.id,
+              templateName: template.name,
+              variables: bodyParams,
+              audienceTag,
+              sendError: msg,
+              events: [{ type: 'failed', at: new Date().toISOString(), detail: msg }],
+            },
+          },
+        });
+      } catch (persistErr) {
+        console.error('[Campaign] failed to persist send failure', persistErr);
+      }
     }
   }
 
@@ -219,8 +328,8 @@ async function executeEmailCampaignBroadcast(
     throw new Error('Fill in all campaign-level template variables before sending');
   }
 
-  const segmentId = resolveSegmentId(campaign.audienceType, filter);
-  const contacts = await getCampaignAudienceContacts(workspaceId, 'email', segmentId);
+  const segmentIds = resolveSegmentIdsFromFilter(campaign.audienceType, filter);
+  const contacts = await getCampaignAudienceContacts(workspaceId, 'email', segmentIds);
   if (contacts.length === 0) {
     throw new Error('No contacts with email addresses in the selected audience');
   }

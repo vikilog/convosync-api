@@ -1056,7 +1056,10 @@ model Message {
   senderName     String?
   content        String
   type           String       @default("text")
+  /// sent | delivered | read | failed | resend_pending | resent | sending
   status         String       @default("sent")
+  /// Incremented each time a failed message enters resend_pending
+  retryCount     Int          @default(0)
   metadata       Json?
   createdAt      DateTime     @default(now())
 
@@ -1716,10 +1719,12 @@ model EmailLog {
   providerConfigId String?
   providerConfig   EmailProviderConfig? @relation(fields: [providerConfigId], references: [id], onDelete: SetNull)
   providerName     String?
-  /// queued | sent | delivered | opened | clicked | bounced | complained | rejected | failed
+  /// queued | sent | delivered | opened | clicked | bounced | complained | rejected | failed | resend_pending | resent
   status           String               @default("queued")
   messageId        String?
   errorMessage     String?
+  /// Incremented each time a failed log enters resend_pending
+  retryCount       Int                  @default(0)
   /// Includes events[] timeline from Resend/SES webhooks.
   metadata         Json?
   createdAt        DateTime             @default(now())

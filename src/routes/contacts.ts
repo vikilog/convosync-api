@@ -19,7 +19,12 @@ import {
   listContactLinks,
   unlinkContact,
 } from '../services/contactLink.service.js';
-import { deleteConversationThread } from '../services/conversation-delete.service.js';
+import {
+  countContactsWithTag,
+  deleteContactInWorkspace,
+  deleteContactsByTag,
+  normalizeContactTag,
+} from '../services/contact-delete.service.js';
 import { listWorkspaceTags, registerWorkspaceTags } from '../services/workspaceTags.service.js';
 
 import {
@@ -190,10 +195,24 @@ export default async function contactRoutes(fastify: FastifyInstance) {
 
   fastify.get('/campaign-audience/contacts', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const { channel, segmentId } = request.query as { channel?: string; segmentId?: string };
+    const { channel, segmentId, segmentIds: segmentIdsRaw } = request.query as {
+      channel?: string;
+      segmentId?: string;
+      segmentIds?: string;
+    };
     const resolvedChannel: CampaignAudienceChannel =
       channel === 'email' || channel === 'instagram' ? channel : 'whatsapp';
-    const resolvedSegment = segmentId?.trim() || 'all';
+    let resolvedSegment: string | string[] = segmentId?.trim() || 'all';
+    if (segmentIdsRaw?.trim()) {
+      try {
+        const parsed = JSON.parse(segmentIdsRaw) as unknown;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          resolvedSegment = parsed.map(String);
+        }
+      } catch {
+        // keep segmentId fallback
+      }
+    }
     return listCampaignAudienceContacts(workspaceId, resolvedChannel, resolvedSegment);
   });
 
@@ -409,6 +428,26 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     return reply.send({ created, updated, skipped: errors.length, errors });
   });
 
+  /** Count contacts that have the given tag (for delete-by-tag confirm). Must be before /:id. */
+  fastify.get('/by-tag/count', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const tag = normalizeContactTag(String((request.query as { tag?: string }).tag ?? ''));
+    if (!tag) return reply.code(400).send({ error: 'tag is required' });
+    const count = await countContactsWithTag(workspaceId, tag);
+    return { tag, count };
+  });
+
+  /** Hard-delete every contact in the workspace that has this tag. Does not delete the tag registry. */
+  fastify.delete('/by-tag', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const body = z.object({ tag: z.string() }).safeParse(request.body ?? {});
+    if (!body.success) return reply.code(400).send({ error: 'tag is required' });
+    const tag = normalizeContactTag(body.data.tag);
+    if (!tag) return reply.code(400).send({ error: 'tag is required' });
+    const { deleted } = await deleteContactsByTag(workspaceId, tag);
+    return { success: true, tag, deleted };
+  });
+
   fastify.get('/:id', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
@@ -561,26 +600,9 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
 
-    const contact = await prisma.contact.findFirst({
-      where: { id, workspaceId },
-      select: { id: true },
-    });
-    if (!contact) return reply.code(404).send({ error: 'Not found' });
+    const result = await deleteContactInWorkspace(workspaceId, id);
+    if (!result.deleted) return reply.code(404).send({ error: 'Not found' });
 
-    const conversations = await prisma.conversation.findMany({
-      where: { workspaceId, contactId: id },
-      select: { id: true },
-    });
-
-    for (const conv of conversations) {
-      await deleteConversationThread(workspaceId, conv.id);
-      getIo().to(workspaceId).emit('conversation_deleted', { conversationId: conv.id });
-    }
-    await prisma.agentFlowSession.deleteMany({ where: { workspaceId, contactId: id } });
-    await prisma.journeyExecution.deleteMany({ where: { contactId: id } });
-    await prisma.contact.delete({ where: { id } });
-    getIo().to(workspaceId).emit('contact_deleted', { contactId: id });
-
-    return { success: true, deletedConversations: conversations.length };
+    return { success: true, deletedConversations: result.deletedConversations };
   });
 }

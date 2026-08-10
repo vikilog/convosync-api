@@ -75,6 +75,9 @@ import {
   chargeWhatsAppTemplateUsage,
 } from '../services/walletUsage.js';
 import { InsufficientWalletBalanceError } from '../services/wallet.service.js';
+import { persistFailedOutboundMessage } from '../services/persistFailedOutbound.js';
+import { resendFailedMessage } from '../services/messageResend.service.js';
+import { mergeSendErrorMetadata } from '../lib/messageResendStatus.js';
 import { resolveMembershipAccess } from '../services/workspaceMemberAdmin.js';
 import {
   buildConversationScopeWhere,
@@ -558,9 +561,15 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
           return reply.code(402).send({ error: err.message, code: err.code });
         }
         request.log.error({ err }, 'Instagram send failed');
-        return reply.code(502).send({
-          error: formatInstagramSendError(err),
+        const sendError = formatInstagramSendError(err);
+        const failed = await persistFailedOutboundMessage({
+          workspaceId,
+          conversationId: id,
+          senderName: agent?.name ?? 'Agent',
+          content: text,
+          sendError,
         });
+        return reply.code(502).send({ error: sendError, message: failed });
       }
 
       const message = await prisma.message.create({
@@ -618,9 +627,15 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         messageId = sent.messageId;
       } catch (err) {
         request.log.error({ err }, 'Messenger send failed');
-        return reply.code(502).send({
-          error: formatMessengerSendError(err),
+        const sendError = formatMessengerSendError(err);
+        const failed = await persistFailedOutboundMessage({
+          workspaceId,
+          conversationId: id,
+          senderName: agent?.name ?? 'Agent',
+          content: text,
+          sendError,
         });
+        return reply.code(502).send({ error: sendError, message: failed });
       }
 
       const message = await prisma.message.create({
@@ -671,9 +686,15 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
       waMessageId = sent.waMessageId;
     } catch (err) {
       request.log.error({ err }, 'WhatsApp send failed');
-      return reply.code(502).send({
-        error: formatMetaSendError(err),
+      const sendError = formatMetaSendError(err);
+      const failed = await persistFailedOutboundMessage({
+        workspaceId,
+        conversationId: id,
+        senderName: agent?.name ?? 'Agent',
+        content: text,
+        sendError,
       });
+      return reply.code(502).send({ error: sendError, message: failed });
     }
 
     const message = await prisma.message.create({
@@ -841,6 +862,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
       await assertWhatsAppTemplateAffordable({
         workspaceId,
         templateCategory: template.category,
+        phoneNumberId: credentials.phoneNumberId,
       });
       const sent = await sendWhatsAppTemplateMessage(
         credentials.accessToken,
@@ -857,7 +879,27 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         return reply.code(402).send({ error: err.message, code: err.code });
       }
       request.log.error({ err }, 'WhatsApp template send failed');
-      return reply.code(502).send({ error: formatMetaSendError(err) });
+      const sendError = formatMetaSendError(err);
+      const failed = await persistFailedOutboundMessage({
+        workspaceId,
+        conversationId: id,
+        senderName: agent?.name ?? 'Agent',
+        content: displayContent,
+        type: 'template',
+        metadata: {
+          templateId: template.id,
+          templateName: template.name,
+          variables: bodyParams,
+          ...(headerMedia
+            ? {
+                headerFormat: headerMedia.format,
+                headerMediaFileName: headerMedia.fileName ?? null,
+              }
+            : {}),
+        },
+        sendError,
+      });
+      return reply.code(502).send({ error: sendError, message: failed });
     }
 
     const message = await prisma.message.create({
@@ -889,6 +931,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         templateCategory: template.category,
         referenceId: message.id,
         templateName: template.name,
+        phoneNumberId: credentials.phoneNumberId,
       });
     } catch (err) {
       request.log.error({ err, messageId: message.id }, 'Wallet debit after template send failed');
@@ -905,6 +948,38 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     getIo().to(workspaceId).emit('new_message', { conversationId: id, message });
 
     return reply.code(201).send(message);
+  });
+
+  fastify.post('/messages/:messageId/resend', auth, async (request, reply) => {
+    const { workspaceId, userId } = getJwtUser(request);
+    const { messageId } = request.params as { messageId: string };
+    const access = await resolveMembershipAccess(userId, workspaceId);
+
+    const existing = await prisma.message.findFirst({
+      where: { id: messageId },
+      include: {
+        conversation: {
+          select: { workspaceId: true, channel: true, channelAccountId: true },
+        },
+      },
+    });
+    if (!existing || existing.conversation.workspaceId !== workspaceId) {
+      return reply.code(404).send({ error: 'Not found' });
+    }
+    if (!assertConversationInScope(existing.conversation, access.inboxScope, reply)) return;
+
+    try {
+      const message = await resendFailedMessage(messageId, workspaceId);
+      return message;
+    } catch (err) {
+      const statusCode = (err as { statusCode?: number }).statusCode ?? 502;
+      const code = (err as { code?: string }).code;
+      request.log.error({ err, messageId }, 'Message resend failed');
+      return reply.code(statusCode).send({
+        error: err instanceof Error ? err.message : 'Resend failed',
+        ...(code ? { code } : {}),
+      });
+    }
   });
 
   fastify.get('/messages/:messageId/attachment', auth, async (request, reply) => {
@@ -1048,9 +1123,37 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
           return reply.code(402).send({ error: err.message, code: err.code });
         }
         request.log.error({ err }, 'Instagram media send failed');
-        const message =
+        const sendError =
           err instanceof Error ? err.message : formatInstagramSendError(err);
-        return reply.code(502).send({ error: message });
+        const failed = await persistFailedOutboundMessage({
+          workspaceId,
+          conversationId: id,
+          senderName: agent?.name ?? 'Agent',
+          content,
+          type: messageKind,
+          metadata: { mimeType, fileName, caption: caption || undefined },
+          sendError,
+        });
+        try {
+          const storageKey = await saveMessageMediaFile(
+            workspaceId,
+            failed.id,
+            fileBuffer,
+            mimeType,
+            fileName
+          );
+          const metadata = mergeSendErrorMetadata(
+            { mimeType, fileName, caption: caption || undefined, storageKey },
+            sendError
+          );
+          const updated = await prisma.message.update({
+            where: { id: failed.id },
+            data: { metadata: metadata as object },
+          });
+          return reply.code(502).send({ error: sendError, message: updated });
+        } catch {
+          return reply.code(502).send({ error: sendError, message: failed });
+        }
       }
     } else if (conv.channel === 'messenger') {
       const psid = parseMessengerPsid(conv.contact.phone);
@@ -1107,9 +1210,36 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         }
       } catch (err) {
         request.log.error({ err }, 'Messenger media send failed');
-        return reply.code(502).send({
-          error: formatMessengerSendError(err),
+        const sendError = formatMessengerSendError(err);
+        const failed = await persistFailedOutboundMessage({
+          workspaceId,
+          conversationId: id,
+          senderName: agent?.name ?? 'Agent',
+          content,
+          type: messageKind,
+          metadata: { mimeType, fileName, caption: caption || undefined },
+          sendError,
         });
+        try {
+          const storageKey = await saveMessageMediaFile(
+            workspaceId,
+            failed.id,
+            fileBuffer,
+            mimeType,
+            fileName
+          );
+          const metadata = mergeSendErrorMetadata(
+            { mimeType, fileName, caption: caption || undefined, storageKey },
+            sendError
+          );
+          const updated = await prisma.message.update({
+            where: { id: failed.id },
+            data: { metadata: metadata as object },
+          });
+          return reply.code(502).send({ error: sendError, message: updated });
+        } catch {
+          return reply.code(502).send({ error: sendError, message: failed });
+        }
       }
     } else {
       let credentials;
@@ -1156,9 +1286,36 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         };
       } catch (err) {
         request.log.error({ err }, 'WhatsApp media send failed');
-        return reply.code(502).send({
-          error: formatMetaSendError(err),
+        const sendError = formatMetaSendError(err);
+        const failed = await persistFailedOutboundMessage({
+          workspaceId,
+          conversationId: id,
+          senderName: agent?.name ?? 'Agent',
+          content,
+          type: messageKind,
+          metadata: { mimeType, fileName, caption: caption || undefined },
+          sendError,
         });
+        try {
+          const storageKey = await saveMessageMediaFile(
+            workspaceId,
+            failed.id,
+            fileBuffer,
+            mimeType,
+            fileName
+          );
+          const metadata = mergeSendErrorMetadata(
+            { mimeType, fileName, caption: caption || undefined, storageKey },
+            sendError
+          );
+          const updated = await prisma.message.update({
+            where: { id: failed.id },
+            data: { metadata: metadata as object },
+          });
+          return reply.code(502).send({ error: sendError, message: updated });
+        } catch {
+          return reply.code(502).send({ error: sendError, message: failed });
+        }
       }
     }
 

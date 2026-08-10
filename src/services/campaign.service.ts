@@ -1,6 +1,6 @@
-import { prisma } from '../index.js';
 import {
   getCampaignAudienceContacts,
+  resolveSegmentIdsFromFilter,
   segmentIdToTag,
   type CampaignAudienceChannel,
 } from './campaignAudience.service.js';
@@ -8,6 +8,7 @@ import {
 type CampaignAudienceFilter = {
   channel?: CampaignAudienceChannel;
   segmentId?: string;
+  segmentIds?: string[];
   tag?: string;
 };
 
@@ -16,18 +17,11 @@ function parseAudienceFilter(raw: unknown): CampaignAudienceFilter {
   return raw as CampaignAudienceFilter;
 }
 
-function resolveSegmentId(audienceType: string, filter: CampaignAudienceFilter): string {
-  if (audienceType === 'all') return 'all';
-  if (filter.segmentId) return filter.segmentId;
-  if (filter.tag) return `tag:${filter.tag}`;
-  return 'all';
-}
-
 export async function getCampaignAudience(workspaceId: string, audienceType: string, audienceFilter?: unknown) {
   const filter = parseAudienceFilter(audienceFilter);
   const channel = filter.channel ?? 'whatsapp';
-  const segmentId = resolveSegmentId(audienceType, filter);
-  return getCampaignAudienceContacts(workspaceId, channel, segmentId);
+  const segmentIds = resolveSegmentIdsFromFilter(audienceType, filter);
+  return getCampaignAudienceContacts(workspaceId, channel, segmentIds);
 }
 
 export { segmentIdToTag };

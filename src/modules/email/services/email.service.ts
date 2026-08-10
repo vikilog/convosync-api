@@ -1,4 +1,4 @@
-import type { EmailDomain } from '@prisma/client';
+import type { EmailDomain, EmailLog } from '@prisma/client';
 import type { EmailRepository } from '../repositories/email.repository.js';
 import { getSharedSenderDefinitions, isSharedSenderEmail } from '../constants/shared-domain.js';
 import type { DomainStatusResult, EmailProviderName } from '../types/email.types.js';
@@ -17,6 +17,11 @@ import {
   pickActiveSendingEmail,
 } from '../utils/active-sending-identity.js';
 import { usesPlatformEmailMetering } from '../types/provider-config.types.js';
+import {
+  beginResend,
+  canResendStatus,
+  finishResend,
+} from '../../../lib/messageResendStatus.js';
 
 function domainNeedsProviderSync(row: EmailDomain): boolean {
   if (!row.providerDomainId) return false;
@@ -444,6 +449,7 @@ export class EmailService {
     }
     const recipientCount = Array.isArray(input.to) ? input.to.length : 1;
     // Platform (CONVOSYNC_MANAGED) = wallet CC only. BYOP (own SES/etc.) skips metering entirely.
+    // assert/chargeEmailSendUsage also gate via shouldMeterUsage — double-safe.
     const resolved = await this.providerConfigService.getDefaultForSending(workspaceId);
     const meterPlatform = usesPlatformEmailMetering(resolved.configType);
     if (meterPlatform) {
@@ -500,6 +506,8 @@ export class EmailService {
         ...(input.templateId ? { templateId: input.templateId } : {}),
         ...(input.campaignId ? { campaignId: input.campaignId } : {}),
         ...(input.contactId ? { contactId: input.contactId } : {}),
+        // ponytail: keep vars for campaign/inbox resend without re-prompting
+        ...(input.variables ? { variables: input.variables } : {}),
       },
       workspace: { connect: { id: workspaceId } },
     });
@@ -548,6 +556,131 @@ export class EmailService {
         errorMessage: err instanceof Error ? err.message : 'Send failed',
       });
       throw err;
+    }
+  }
+
+  /**
+   * Resend a failed EmailLog via the same provider/metering path.
+   * Status: failed → resend_pending → resent | failed
+   */
+  async resendFailedLog(workspaceId: string, logId: string): Promise<EmailLog> {
+    if (!(await this.repo.isEmailIntegrationEnabled(workspaceId))) {
+      throw Object.assign(new Error('Email integration is not enabled for this workspace'), {
+        statusCode: 400,
+      });
+    }
+
+    const log = await prisma.emailLog.findFirst({
+      where: { id: logId, workspaceId },
+    });
+    if (!log) {
+      throw Object.assign(new Error('Email log not found'), { statusCode: 404 });
+    }
+    if (!canResendStatus(log.status)) {
+      throw Object.assign(
+        new Error(`Email status "${log.status}" cannot be resent`),
+        { statusCode: 409 }
+      );
+    }
+
+    const meta =
+      log.metadata && typeof log.metadata === 'object' && !Array.isArray(log.metadata)
+        ? { ...(log.metadata as Record<string, unknown>) }
+        : {};
+    const templateId = typeof meta.templateId === 'string' ? meta.templateId : undefined;
+    const variables =
+      meta.variables && typeof meta.variables === 'object' && !Array.isArray(meta.variables)
+        ? (meta.variables as Record<string, string>)
+        : {};
+
+    const recipient = log.recipient.split(',')[0]?.trim();
+    if (!recipient) {
+      throw Object.assign(new Error('Email log has no recipient'), { statusCode: 400 });
+    }
+
+    const pending = beginResend(log.retryCount);
+    await this.repo.updateLog(log.id, {
+      status: pending.status,
+      retryCount: pending.retryCount,
+      errorMessage: null,
+    });
+
+    try {
+      const resolved = await this.providerConfigService.getDefaultForSending(workspaceId);
+      const meterPlatform = usesPlatformEmailMetering(resolved.configType);
+      if (meterPlatform) {
+        await assertEmailSendAffordable(workspaceId, 1);
+      }
+
+      let subject = log.subject;
+      let html: string | undefined;
+      let text: string | undefined;
+      if (templateId) {
+        const rendered = await this.templateService.renderTemplate(
+          workspaceId,
+          templateId,
+          variables
+        );
+        subject = rendered.subject;
+        html = rendered.html;
+        text = rendered.text;
+      } else {
+        throw Object.assign(
+          new Error('Original email template payload is missing; cannot resend'),
+          { statusCode: 400 }
+        );
+      }
+
+      const sender = await this.validateSender(workspaceId, log.sender);
+      const result = await resolved.provider.sendEmail({
+        from: sender.email,
+        fromName: sender.displayName ?? undefined,
+        to: recipient,
+        subject,
+        html,
+        text,
+      });
+
+      const sentAt = new Date().toISOString();
+      const prevEvents = Array.isArray(meta.events) ? meta.events : [];
+      const events = [...prevEvents, { type: 'resent', at: sentAt }];
+
+      const updated = await this.repo.updateLog(log.id, {
+        status: finishResend(true),
+        messageId: result.messageId,
+        subject,
+        errorMessage: null,
+        metadata: {
+          ...meta,
+          events,
+        } as object,
+      });
+
+      if (meterPlatform) {
+        try {
+          await chargeEmailSendUsage({
+            workspaceId,
+            referenceId: `${log.id}:retry:${pending.retryCount}`,
+            sendCount: 1,
+          });
+        } catch (err) {
+          console.error('[wallet] Email resend debit failed', err);
+        }
+      }
+
+      return updated;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Resend failed';
+      await this.repo.updateLog(log.id, {
+        status: finishResend(false),
+        errorMessage,
+      });
+      if (err instanceof InsufficientWalletBalanceError) {
+        throw Object.assign(new Error(err.message), { statusCode: 402, code: err.code });
+      }
+      throw Object.assign(new Error(errorMessage), {
+        statusCode: (err as { statusCode?: number }).statusCode ?? 502,
+      });
     }
   }
 

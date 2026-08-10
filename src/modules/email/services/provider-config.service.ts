@@ -246,6 +246,18 @@ export class EmailProviderConfigService {
       }
     }
     existing = await this.repo.listProviderConfigs(workspaceId);
+
+    // Heal: active BYO SES that isn't default still syncs WorkspaceEmailConfig → client
+    // pays AWS but wallet was metered as platform. Promote SES to default once.
+    const activeSes = existing.find(
+      (r) => normalizeEmailProviderType(r.provider) === 'AWS_SES' && r.status === 'active'
+    );
+    if (activeSes && !activeSes.isDefault) {
+      await this.repo.clearDefaultProviderConfigs(workspaceId, activeSes.id);
+      await this.repo.updateProviderConfig(activeSes.id, { isDefault: true });
+      existing = await this.repo.listProviderConfigs(workspaceId);
+    }
+
     if (existing.length > 0) return existing;
 
     const row = await this.repo.createProviderConfig({
@@ -413,12 +425,14 @@ export class EmailProviderConfigService {
       this.assertSesSender(payload as SesProviderConfig);
     }
 
-    if (input.isDefault) {
+    // BYO (SES/etc.) always becomes default on create — otherwise CONVOSYNC_MANAGED
+    // stays default and platform CC metering still applies while mail goes via BYO From.
+    const isByo = input.provider !== 'CONVOSYNC_MANAGED';
+    const isDefault = isByo ? true : Boolean(input.isDefault);
+
+    if (isDefault) {
       await this.repo.clearDefaultProviderConfigs(workspaceId);
     }
-
-    const hasAny = await this.repo.listProviderConfigs(workspaceId);
-    const isDefault = input.isDefault ?? hasAny.length === 0;
 
     const encryptedConfig =
       input.provider === 'CONVOSYNC_MANAGED' ? encryptJson({}) : encryptJson(payload);

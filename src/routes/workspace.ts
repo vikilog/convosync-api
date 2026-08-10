@@ -186,16 +186,27 @@ export default async function workspaceRoutes(fastify: FastifyInstance) {
   fastify.get('/subscription', { onRequest: auth.onRequest }, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
 
+    // Same resolution order as getWorkspacePlanFeatures (plan → active billing sub).
+    // Automations / Integrations UI gates Instagram from currentPlan.channels.
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
-      include: { plan: true },
+      include: {
+        plan: true,
+        billingSubscriptions: {
+          where: { status: { in: ['active', 'authenticated', 'paused'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          include: { plan: true },
+        },
+      },
     });
     if (!workspace) return reply.code(404).send({ error: 'Company not found' });
 
     const plans = await listSubscriptionPlans();
     const trial = serializeTrialInfo(workspace);
-    const currentPlan = workspace.plan
-      ? serializeTenantSubscriptionPlan(workspace.plan)
+    const effectivePlan = workspace.plan ?? workspace.billingSubscriptions[0]?.plan ?? null;
+    const currentPlan = effectivePlan
+      ? serializeTenantSubscriptionPlan(effectivePlan)
       : null;
 
     const savedInput = readCustomPlanInput(workspace.customPlanSelection);
@@ -205,8 +216,8 @@ export default async function workspaceRoutes(fastify: FastifyInstance) {
 
     return {
       subscriptionStatus: workspace.subscriptionStatus,
-      hasPlan: Boolean(workspace.plan),
-      currentPlanSlug: workspace.plan?.slug ?? null,
+      hasPlan: Boolean(effectivePlan),
+      currentPlanSlug: effectivePlan?.slug ?? null,
       currentPlan,
       trial,
       plans: plans.map(serializeTenantSubscriptionPlan),

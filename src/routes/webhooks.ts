@@ -319,7 +319,7 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
             where: { id: message.id },
             data: {
               status: statusUpdate.status,
-              ...(metadata ? { metadata: metadata as object } : {}),
+              metadata: metadata as object,
             },
           });
           getIo().to(message.conversation.workspaceId).emit('message_status', {

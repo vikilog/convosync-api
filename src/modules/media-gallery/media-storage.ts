@@ -83,6 +83,14 @@ export async function deleteMediaGalleryFile(storageKey?: string | null): Promis
   await deleteObject(storageKey);
 }
 
+/** True when a replace wrote a different S3 key (e.g. .jpg → .png) and the old object must go. */
+export function shouldDeleteReplacedMediaKey(
+  oldKey: string | null | undefined,
+  newKey: string
+): boolean {
+  return Boolean(oldKey && oldKey !== newKey);
+}
+
 export function mediaGalleryStoragePrefix(workspaceId: string): string {
   return `${workspaceId}/media-gallery`;
 }

@@ -193,6 +193,10 @@ export default async function templateRoutes(fastify: FastifyInstance) {
 
   fastify.post('/header-media', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
+    // persistOnly=1: store for later send (campaigns) without Meta resumable handle
+    const persistOnly =
+      (request.query as { persistOnly?: string }).persistOnly === '1' ||
+      (request.query as { persistOnly?: string }).persistOnly === 'true';
     const part = await request.file();
     if (!part) return reply.code(400).send({ error: 'No file uploaded' });
 
@@ -210,8 +214,11 @@ export default async function templateRoutes(fastify: FastifyInstance) {
     }
 
     try {
-      const creds = await getWorkspaceWhatsAppCredentials(workspaceId);
-      const handle = await uploadMetaResumableMedia(creds.accessToken, buffer, mimeType);
+      let handle = '';
+      if (!persistOnly) {
+        const creds = await getWorkspaceWhatsAppCredentials(workspaceId);
+        handle = await uploadMetaResumableMedia(creds.accessToken, buffer, mimeType);
+      }
       const storageKey = await saveTemplateHeaderMedia(
         workspaceId,
         buffer,
@@ -220,7 +227,7 @@ export default async function templateRoutes(fastify: FastifyInstance) {
       );
       return {
         headerFormat,
-        headerMediaHandle: handle,
+        headerMediaHandle: handle || storageKey,
         headerMediaStorageKey: storageKey,
         headerMediaMimeType: mimeType,
         headerMediaFileName: part.filename || null,

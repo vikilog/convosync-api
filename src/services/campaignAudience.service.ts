@@ -1,7 +1,17 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../index.js';
+import { normalizeSegmentIds, segmentsWhere } from './campaignAudienceFilter.js';
 
 export type CampaignAudienceChannel = 'whatsapp' | 'email' | 'instagram';
+
+export {
+  audienceTagFromIds,
+  normalizeSegmentIds,
+  resolveSegmentIdsFromFilter,
+  segmentIdToTag,
+  segmentLabelFromIds,
+  segmentsWhere,
+} from './campaignAudienceFilter.js';
 
 const EXCLUDED_TAGS = ['Unsubscribed', 'Blocked'];
 
@@ -33,24 +43,15 @@ export function channelWhere(channel: CampaignAudienceChannel): Prisma.ContactWh
   }
 }
 
-function segmentWhere(segmentId: string): Prisma.ContactWhereInput {
-  if (segmentId.startsWith('tag:')) {
-    const tag = segmentId.slice(4);
-    if (!tag) return {};
-    return { tags: { has: tag } };
-  }
-  return {};
-}
-
 export async function countCampaignAudience(
   workspaceId: string,
   channel: CampaignAudienceChannel,
-  segmentId = 'all'
+  segmentIdOrIds: string | string[] = 'all'
 ) {
   const where: Prisma.ContactWhereInput = {
     ...baseWhere(workspaceId),
     ...channelWhere(channel),
-    ...(segmentId !== 'all' ? segmentWhere(segmentId) : {}),
+    ...segmentsWhere(segmentIdOrIds),
   };
   return prisma.contact.count({ where });
 }
@@ -93,21 +94,15 @@ export async function getCampaignAudienceSegments(workspaceId: string, channel: 
   };
 }
 
-export function segmentIdToTag(segmentId: string): string | undefined {
-  if (!segmentId.startsWith('tag:')) return undefined;
-  const tag = segmentId.slice(4).trim();
-  return tag || undefined;
-}
-
 export async function getCampaignAudienceContacts(
   workspaceId: string,
   channel: CampaignAudienceChannel,
-  segmentId = 'all'
+  segmentIdOrIds: string | string[] = 'all'
 ) {
   const where: Prisma.ContactWhereInput = {
     ...baseWhere(workspaceId),
     ...channelWhere(channel),
-    ...(segmentId !== 'all' ? segmentWhere(segmentId) : {}),
+    ...segmentsWhere(segmentIdOrIds),
   };
   return prisma.contact.findMany({ where, orderBy: { updatedAt: 'desc' } });
 }
@@ -117,12 +112,13 @@ const AUDIENCE_CONTACT_LIST_LIMIT = 200;
 export async function listCampaignAudienceContacts(
   workspaceId: string,
   channel: CampaignAudienceChannel,
-  segmentId = 'all'
+  segmentIdOrIds: string | string[] = 'all'
 ) {
+  const segmentIds = normalizeSegmentIds(segmentIdOrIds);
   const where: Prisma.ContactWhereInput = {
     ...baseWhere(workspaceId),
     ...channelWhere(channel),
-    ...(segmentId !== 'all' ? segmentWhere(segmentId) : {}),
+    ...segmentsWhere(segmentIds),
   };
 
   const [total, contacts] = await Promise.all([
@@ -144,7 +140,8 @@ export async function listCampaignAudienceContacts(
 
   return {
     channel,
-    segmentId,
+    segmentId: segmentIds[0] ?? 'all',
+    segmentIds,
     total,
     truncated: total > AUDIENCE_CONTACT_LIST_LIMIT,
     limit: AUDIENCE_CONTACT_LIST_LIMIT,

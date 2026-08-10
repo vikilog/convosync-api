@@ -109,6 +109,7 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
       await assertWhatsAppTemplateAffordable({
         workspaceId: input.workspaceId,
         templateCategory,
+        phoneNumberId: credentials.phoneNumberId,
       });
 
       const result = await sendWhatsAppTemplateMessage(
@@ -193,6 +194,7 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
           templateCategory,
           referenceId: message.id,
           templateName: templateNameForCharge ?? input.templateName,
+          phoneNumberId: credentials.phoneNumberId,
         });
       } catch (err) {
         console.error('[wallet] Journey template debit failed', err);

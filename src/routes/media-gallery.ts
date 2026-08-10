@@ -11,6 +11,7 @@ import {
   mediaTypeFromMime,
   readMediaGalleryFile,
   saveMediaGalleryFile,
+  shouldDeleteReplacedMediaKey,
 } from '../modules/media-gallery/media-storage.js';
 import { getPresignedGetUrl, isObjectStorageEnabled } from '../services/objectStorage.js';
 import {
@@ -341,6 +342,78 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
       where: { id: mediaId, workspaceId },
     });
     if (!existing) return reply.code(404).send({ error: 'Media not found' });
+
+    // Multipart = metadata edit and/or file replace (JSON path stays for Activate toggle).
+    if (request.isMultipart()) {
+      const parsed = await parseCreateMultipart(request);
+      const data: Record<string, unknown> = {};
+
+      // Client always sends these fields on Edit; apply even when tags/usage are empty.
+      if (parsed.title.trim()) data.title = parsed.title.trim();
+      if (parsed.description.trim()) data.description = parsed.description.trim();
+      data.tags = parsed.tags;
+      data.usage = parsed.usage.length ? parsed.usage : ['agent'];
+      const scopeParsed = SCOPE.safeParse(parsed.scope || 'customer');
+      if (scopeParsed.success) data.scope = scopeParsed.data;
+
+      if (parsed.fileBuffer?.length) {
+        if (!isObjectStorageEnabled()) {
+          return reply.code(503).send({
+            error:
+              'S3 is not configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_BUCKET_NAME to upload media.',
+            code: 'S3_NOT_CONFIGURED',
+          });
+        }
+        const mimeType = parsed.mimeType || 'application/octet-stream';
+        if (!isAllowedMime(mimeType)) {
+          return reply.code(400).send({ error: 'Unsupported media type' });
+        }
+        try {
+          await assertMediaStorageUploadAllowed(workspaceId, parsed.fileBuffer.length);
+        } catch (err) {
+          if (err instanceof PlanGateError) {
+            return reply.code(403).send({ error: err.message, upgradePath: err.upgradePath });
+          }
+          throw err;
+        }
+        const filename = parsed.fileName || existing.filename || 'file';
+        let type = parsed.typeHint;
+        if (!TYPE.safeParse(type).success) {
+          type = mediaTypeFromMime(mimeType, filename);
+        }
+        try {
+          const { storageKey, url } = await saveMediaGalleryFile(
+            workspaceId,
+            mediaId,
+            parsed.fileBuffer,
+            mimeType,
+            filename
+          );
+          if (shouldDeleteReplacedMediaKey(existing.storageKey, storageKey)) {
+            await deleteMediaGalleryFile(existing.storageKey);
+          }
+          data.storageKey = storageKey;
+          data.url = url;
+          data.mimeType = mimeType;
+          data.filename = filename;
+          data.type = TYPE.parse(type);
+        } catch (err) {
+          if (err instanceof MediaStorageError) {
+            return reply.code(503).send({ error: err.message, code: err.code });
+          }
+          throw err;
+        }
+      }
+
+      if (Object.keys(data).length === 0) {
+        return reply.code(400).send({ error: 'No fields to update' });
+      }
+
+      return prisma.mediaAsset.update({
+        where: { id: mediaId },
+        data,
+      });
+    }
 
     const body = updateSchema.parse(request.body ?? {});
     return prisma.mediaAsset.update({

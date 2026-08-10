@@ -9,6 +9,10 @@ import {
 } from '../queue/campaign-broadcast.queue.js';
 import { executeCampaignBroadcast } from '../services/campaignBroadcast.service.js';
 import { getCampaignInsights } from '../services/campaignInsights.service.js';
+import {
+  resendAllCampaignFailed,
+  resendCampaignRecipient,
+} from '../services/campaignResend.service.js';
 
 export default async function campaignRoutes(fastify: FastifyInstance) {
   const auth = companyAuth;
@@ -113,6 +117,55 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
       request.log.error({ err, campaignId: id }, 'Campaign send failed');
       return reply.code(502).send({
         error: err instanceof Error ? err.message : 'Campaign send failed',
+      });
+    }
+  });
+
+  fastify.post('/:id/resend-failed', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    try {
+      const result = await resendAllCampaignFailed(id, workspaceId);
+      return {
+        message: 'Campaign failed recipients resent',
+        ...result,
+        resent: result.results.filter((r) => r.ok).length,
+        failed: result.results.filter((r) => !r.ok).length,
+      };
+    } catch (err) {
+      const statusCode = (err as { statusCode?: number }).statusCode ?? 502;
+      request.log.error({ err, campaignId: id }, 'Campaign resend-all failed');
+      return reply.code(statusCode).send({
+        error: err instanceof Error ? err.message : 'Campaign resend failed',
+      });
+    }
+  });
+
+  fastify.post('/:id/recipients/:messageId/resend', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id, messageId } = request.params as { id: string; messageId: string };
+    const detail = await getCampaignInsights(id, workspaceId);
+    if (!detail) return reply.code(404).send({ error: 'Campaign not found' });
+
+    try {
+      const result = await resendCampaignRecipient(
+        id,
+        workspaceId,
+        messageId,
+        detail.channel === 'email' ? 'email' : 'whatsapp'
+      );
+      if (!result.ok) {
+        return reply.code(502).send({
+          error: result.error ?? 'Resend failed',
+          ...result,
+        });
+      }
+      return result;
+    } catch (err) {
+      const statusCode = (err as { statusCode?: number }).statusCode ?? 502;
+      request.log.error({ err, campaignId: id, messageId }, 'Campaign recipient resend failed');
+      return reply.code(statusCode).send({
+        error: err instanceof Error ? err.message : 'Resend failed',
       });
     }
   });

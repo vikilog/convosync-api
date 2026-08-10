@@ -11,11 +11,20 @@ import {
   debitWallet,
   mapWhatsAppCategoryToDebitCategory,
 } from './wallet.service.js';
+import { shouldMeterUsage } from './shouldMeterUsage.js';
 
 export async function assertWhatsAppTemplateAffordable(params: {
   workspaceId: string;
   templateCategory: string | null | undefined;
+  phoneNumberId?: string | null;
 }) {
+  if (
+    !(await shouldMeterUsage(params.workspaceId, 'whatsapp', {
+      phoneNumberId: params.phoneNumberId,
+    }))
+  ) {
+    return;
+  }
   const amountPaise = whatsAppCategoryDebitPaise(params.templateCategory);
   if (amountPaise <= 0) return;
   await assertWalletBalance(params.workspaceId, amountPaise);
@@ -26,7 +35,15 @@ export async function chargeWhatsAppTemplateUsage(params: {
   templateCategory: string | null | undefined;
   referenceId: string;
   templateName?: string;
+  phoneNumberId?: string | null;
 }) {
+  if (
+    !(await shouldMeterUsage(params.workspaceId, 'whatsapp', {
+      phoneNumberId: params.phoneNumberId,
+    }))
+  ) {
+    return;
+  }
   const amountPaise = whatsAppCategoryDebitPaise(params.templateCategory);
   if (amountPaise <= 0) return;
 
@@ -74,17 +91,19 @@ function billingMonthRange(reference = new Date()) {
 }
 
 export async function assertEmailSendAffordable(workspaceId: string, sendCount = 1) {
+  if (!(await shouldMeterUsage(workspaceId, 'email'))) return;
   const amountPaise = emailSendDebitPaise(sendCount);
   if (amountPaise <= 0) return;
   await assertWalletBalance(workspaceId, amountPaise);
 }
 
-/** 1 email = 1 CC. No free “included” skip — wallet pays for every send. */
+/** 1 email = 1 CC when platform-managed. BYO SES/SMTP/etc. skips debit entirely. */
 export async function chargeEmailSendUsage(params: {
   workspaceId: string;
   referenceId: string;
   sendCount?: number;
 }) {
+  if (!(await shouldMeterUsage(params.workspaceId, 'email'))) return;
   const sendCount = Math.max(1, Math.round(params.sendCount ?? 1));
   const amountPaise = emailSendDebitPaise(sendCount);
   if (amountPaise <= 0) return;
@@ -132,6 +151,7 @@ export async function chargeAiTokenUsage(params: {
   referenceId: string;
   agentId?: string;
 }) {
+  if (!(await shouldMeterUsage(params.workspaceId, 'ai'))) return;
   const rawThis = Math.max(0, params.costInr);
   if (rawThis <= 0) return;
 
