@@ -102,15 +102,9 @@ export async function sendInboxEmailToContact(
 
     subject = log.subject;
     templateName = tpl.name;
-    // Inbox body preview: rendered plain text (not raw HTML / subject-only).
-    const renderedBody = applyTemplateVariables(
-      tpl.textBody?.trim() || stripHtmlToText(tpl.htmlBody),
-      variables
-    ).trim();
-    text = input.text?.trim()
-      ? interpolateContactTokens(input.text.trim(), campaignContact)
-      : renderedBody || undefined;
-    html = undefined;
+    // Same body EmailService just sent — store HTML for Inbox; text from strip (not compose field).
+    html = applyTemplateVariables(tpl.htmlBody, variables);
+    text = stripHtmlToText(html);
   } else {
     const subjectRaw = input.subject?.trim() ?? '';
     const textRaw = input.text?.trim() ?? '';
@@ -168,6 +162,8 @@ export async function sendInboxEmailToContact(
         emailLogId: log.id,
         subject,
         emailStatus: 'sent',
+        // Inbox renders this — do not store strip-only body as the only representation.
+        ...(html ? { html } : {}),
         ...(templateId
           ? { templateId, ...(templateName ? { templateName } : {}) }
           : {}),

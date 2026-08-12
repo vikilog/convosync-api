@@ -29,6 +29,10 @@ assert.match(src, /type:\s*templateId\s*\?\s*['"]template['"]\s*:\s*['"]email['"
 assert.match(src, /applyTemplateVariables/);
 assert.match(templateBranch[0], /templateId:\s*tpl\.id/);
 assert.match(templateBranch[0], /variables/);
+// Store rendered HTML on Message so Inbox + outbound share the same body.
+assert.match(src, /\.\.\.\(html\s*\?\s*\{\s*html\s*\}\s*:\s*\{\}\)/);
+assert.match(src, /html\s*=\s*applyTemplateVariables\(tpl\.htmlBody/);
+assert.match(src, /text\s*=\s*stripHtmlToText\(html\)/);
 
 // Custom path must send html (multipart), not text-only.
 assert.match(src, /wrapPlainTextAsHtml\(text\)/);

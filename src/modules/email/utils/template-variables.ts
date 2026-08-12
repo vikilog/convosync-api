@@ -20,17 +20,41 @@ export function applyTemplateVariables(
   return template.replace(VARIABLE_PATTERN, (_, key: string) => variables[key] ?? '');
 }
 
+/** Decode common entities; loop catches double-encoding (&amp;nbsp; → &nbsp; → space). */
+function decodeHtmlEntities(value: string): string {
+  let s = value;
+  for (let i = 0; i < 2; i += 1) {
+    s = s
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&#160;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'");
+  }
+  return s;
+}
+
+/**
+ * HTML → plain text for multipart text/plain + Inbox previews.
+ * Preserves paragraph breaks; must not leave literal &nbsp; or collapse into one line.
+ */
 export function stripHtmlToText(html: string): string {
-  return html
+  const withBreaks = html
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/\s+/g, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|h[1-6]|li|blockquote|table|ul|ol|hr)>/gi, '\n')
+    .replace(/<hr[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+
+  return decodeHtmlEntities(withBreaks)
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 

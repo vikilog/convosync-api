@@ -89,10 +89,13 @@ export class EmailTemplateService {
       throw new Error('Email template is not active');
     }
 
+    const html = applyTemplateVariables(row.htmlBody, variables);
+    // Always derive text from rendered HTML — persisted textBody can be stale
+    // (collapsed whitespace / literal &nbsp; from older stripHtmlToText).
     return {
       subject: applyTemplateVariables(row.subject, variables),
-      html: applyTemplateVariables(row.htmlBody, variables),
-      text: applyTemplateVariables(row.textBody ?? stripHtmlToText(row.htmlBody), variables),
+      html,
+      text: stripHtmlToText(html),
       templateName: row.name,
     };
   }
