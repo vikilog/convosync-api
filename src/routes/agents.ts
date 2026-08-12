@@ -63,14 +63,38 @@ const skillCreateSchema = z.object({
   title: z.string().min(1).max(200),
   trigger: z.string().default(''),
   instructions: z.string().default(''),
+  description: z.string().max(500).nullable().optional(),
+  knowledgeItemIds: z.array(z.string().min(1)).optional(),
+  status: z.enum(['draft', 'live']).optional(),
 });
 
 const skillUpdateSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   trigger: z.string().optional(),
   instructions: z.string().optional(),
+  description: z.string().max(500).nullable().optional(),
+  knowledgeItemIds: z.array(z.string().min(1)).optional(),
   status: z.enum(['draft', 'live']).optional(),
 });
+
+/** Dedupe + ensure every id belongs to this agent. Throws Zod-style Error message. */
+async function resolveSkillKnowledgeIds(
+  agentId: string,
+  ids: string[] | undefined
+): Promise<string[]> {
+  const deduped = [...new Set((ids ?? []).filter(Boolean))];
+  if (deduped.length === 0) return [];
+  const found = await prisma.aiAgentKnowledgeItem.findMany({
+    where: { agentId, id: { in: deduped } },
+    select: { id: true },
+  });
+  if (found.length !== deduped.length) {
+    const ok = new Set(found.map((r) => r.id));
+    const bad = deduped.filter((id) => !ok.has(id));
+    throw new Error(`Invalid knowledgeItemIds for this agent: ${bad.join(', ')}`);
+  }
+  return deduped;
+}
 
 const knowledgeCreateSchema = z.object({
   type: z.enum(['document', 'online_data', 'qna', 'attachment']),
@@ -549,10 +573,81 @@ export default async function agentRoutes(fastify: FastifyInstance) {
     const agent = await getAgentOr404(workspaceId, id);
     if (!agent) return reply.code(404).send({ error: 'Not found' });
     const body = skillCreateSchema.parse(request.body ?? {});
+    let knowledgeItemIds: string[];
+    try {
+      knowledgeItemIds = await resolveSkillKnowledgeIds(id, body.knowledgeItemIds);
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : 'Invalid knowledgeItemIds' });
+    }
     const skill = await prisma.aiSkill.create({
-      data: { agentId: id, ...body },
+      data: {
+        agentId: id,
+        title: body.title,
+        trigger: body.trigger ?? '',
+        instructions: body.instructions ?? '',
+        description: body.description ?? null,
+        knowledgeItemIds,
+        status: body.status ?? 'draft',
+      },
     });
     return reply.code(201).send(skill);
+  });
+
+  // Per-row errors — do not fail the whole batch
+  fastify.post('/:id/skills/bulk', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const agent = await getAgentOr404(workspaceId, id);
+    if (!agent) return reply.code(404).send({ error: 'Not found' });
+
+    const rawBody = request.body ?? {};
+    const skillsRaw = Array.isArray((rawBody as { skills?: unknown }).skills)
+      ? (rawBody as { skills: unknown[] }).skills
+      : null;
+    if (!skillsRaw || skillsRaw.length === 0) {
+      return reply.code(400).send({ error: 'skills array required (1–50 items)' });
+    }
+    if (skillsRaw.length > 50) {
+      return reply.code(400).send({ error: 'Maximum 50 skills per bulk request' });
+    }
+
+    const results: Array<
+      | { ok: true; index: number; skill: Awaited<ReturnType<typeof prisma.aiSkill.create>> }
+      | { ok: false; index: number; error: string }
+    > = [];
+
+    for (let index = 0; index < skillsRaw.length; index++) {
+      try {
+        const row = skillCreateSchema.parse(skillsRaw[index] ?? {});
+        const knowledgeItemIds = await resolveSkillKnowledgeIds(id, row.knowledgeItemIds);
+        const skill = await prisma.aiSkill.create({
+          data: {
+            agentId: id,
+            title: row.title,
+            trigger: row.trigger ?? '',
+            instructions: row.instructions ?? '',
+            description: row.description ?? null,
+            knowledgeItemIds,
+            status: row.status ?? 'draft',
+          },
+        });
+        results.push({ ok: true, index, skill });
+      } catch (err) {
+        const message =
+          err instanceof z.ZodError
+            ? err.errors.map((e) => e.message).join('; ')
+            : err instanceof Error
+              ? err.message
+              : 'Failed to create skill';
+        results.push({ ok: false, index, error: message });
+      }
+    }
+
+    return {
+      created: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      results,
+    };
   });
 
   fastify.put('/:id/skills/:skillId', auth, async (request, reply) => {
@@ -563,7 +658,29 @@ export default async function agentRoutes(fastify: FastifyInstance) {
     const body = skillUpdateSchema.parse(request.body ?? {});
     const existing = await prisma.aiSkill.findFirst({ where: { id: skillId, agentId: id } });
     if (!existing) return reply.code(404).send({ error: 'Skill not found' });
-    return prisma.aiSkill.update({ where: { id: skillId }, data: body });
+
+    let knowledgeItemIds: string[] | undefined;
+    if (body.knowledgeItemIds !== undefined) {
+      try {
+        knowledgeItemIds = await resolveSkillKnowledgeIds(id, body.knowledgeItemIds);
+      } catch (err) {
+        return reply
+          .code(400)
+          .send({ error: err instanceof Error ? err.message : 'Invalid knowledgeItemIds' });
+      }
+    }
+
+    return prisma.aiSkill.update({
+      where: { id: skillId },
+      data: {
+        ...(body.title !== undefined ? { title: body.title } : {}),
+        ...(body.trigger !== undefined ? { trigger: body.trigger } : {}),
+        ...(body.instructions !== undefined ? { instructions: body.instructions } : {}),
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        ...(knowledgeItemIds !== undefined ? { knowledgeItemIds } : {}),
+        ...(body.status !== undefined ? { status: body.status } : {}),
+      },
+    });
   });
 
   fastify.patch('/:id/skills/:skillId/publish', auth, async (request, reply) => {
@@ -573,6 +690,7 @@ export default async function agentRoutes(fastify: FastifyInstance) {
     if (!agent) return reply.code(404).send({ error: 'Not found' });
     const existing = await prisma.aiSkill.findFirst({ where: { id: skillId, agentId: id } });
     if (!existing) return reply.code(404).send({ error: 'Skill not found' });
+    // Empty trigger is allowed — do not block publish
     return prisma.aiSkill.update({ where: { id: skillId }, data: { status: 'live' } });
   });
 
@@ -597,6 +715,19 @@ export default async function agentRoutes(fastify: FastifyInstance) {
       where: { agentId: id },
       orderBy: { createdAt: 'desc' },
     });
+  });
+
+  // Single item (preview / reuse content)
+  fastify.get('/:id/knowledge/:kId', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id, kId } = request.params as { id: string; kId: string };
+    const agent = await getAgentOr404(workspaceId, id);
+    if (!agent) return reply.code(404).send({ error: 'Not found' });
+    const item = await prisma.aiAgentKnowledgeItem.findFirst({
+      where: { id: kId, agentId: id },
+    });
+    if (!item) return reply.code(404).send({ error: 'Knowledge item not found' });
+    return item;
   });
 
   fastify.post('/:id/knowledge/fetch-url', auth, async (request, reply) => {

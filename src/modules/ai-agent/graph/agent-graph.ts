@@ -29,11 +29,11 @@ function routeAfterCache(state: AgentGraphStateType): 'send_response' | 'classif
 
 function routeAfterClassify(
   state: AgentGraphStateType
-): 'rule_based_actions' | 'retrieve_kb' {
+): 'rule_based_actions' | 'select_skills' {
   if (state.intent === 'human_request' || state.retrievalPath === 'escalate') {
     return 'rule_based_actions';
   }
-  return 'retrieve_kb';
+  return 'select_skills';
 }
 
 function routeAfterRules(
@@ -72,10 +72,10 @@ const compiled = new StateGraph(AgentGraphState)
   })
   .addConditionalEdges('classify_and_route', routeAfterClassify, {
     rule_based_actions: 'rule_based_actions',
-    retrieve_kb: 'retrieve_kb',
+    select_skills: 'select_skills',
   })
-  .addEdge('retrieve_kb', 'select_skills')
-  .addEdge('select_skills', 'rule_based_actions')
+  .addEdge('select_skills', 'retrieve_kb')
+  .addEdge('retrieve_kb', 'rule_based_actions')
   .addConditionalEdges('rule_based_actions', routeAfterRules, {
     compose_answer: 'compose_answer',
     execute_actions: 'execute_actions',

@@ -1542,15 +1542,17 @@ model WorkspaceEmailConfig {
 }
 
 model AiSkill {
-  id           String   @id @default(cuid())
-  agentId      String
-  agent        AiAgent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  title        String
-  trigger      String   @db.Text
-  instructions String   @db.Text
-  status       String   @default("draft")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id               String   @id @default(cuid())
+  agentId          String
+  agent            AiAgent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  title            String
+  trigger          String   @db.Text
+  instructions     String   @db.Text
+  description      String?  @db.Text
+  knowledgeItemIds String[] @default([])
+  status           String   @default("draft")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@index([agentId])
 }

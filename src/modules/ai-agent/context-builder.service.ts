@@ -22,7 +22,20 @@ export type SkillMatchInput = {
   title: string;
   trigger: string;
   instructions: string;
+  knowledgeItemIds?: string[];
 };
+
+/** Union of linked KB ids from matched skills; undefined = no skill scope (search all). */
+export function knowledgeIdsFromMatchedSkills(
+  skills: { knowledgeItemIds?: string[] | null }[]
+): string[] | undefined {
+  const ids = [
+    ...new Set(
+      skills.flatMap((s) => s.knowledgeItemIds ?? []).filter((id): id is string => Boolean(id))
+    ),
+  ];
+  return ids.length > 0 ? ids : undefined;
+}
 
 /** Shared skill matcher — used by ContextBuilder and LangGraph select_skills (all paths). */
 export function matchRelevantSkills(params: {
@@ -75,7 +88,12 @@ export class ContextBuilderService {
     if (!agent) throw new Error('Agent not found');
 
     const relevantSkills = matchRelevantSkills({
-      skills: agent.skills,
+      skills: agent.skills.map((s) => ({
+        title: s.title,
+        trigger: s.trigger,
+        instructions: s.instructions,
+        knowledgeItemIds: s.knowledgeItemIds,
+      })),
       intent: params.intent,
       message: params.currentMessage,
     });
@@ -96,11 +114,18 @@ export class ContextBuilderService {
       });
     }
 
+    const skillKbIds = knowledgeIdsFromMatchedSkills(relevantSkills);
+    if (skillKbIds) {
+      const allow = new Set(skillKbIds);
+      relevantKB = relevantKB.filter((item) => allow.has(item.id));
+    }
+
     const { chunks: kbChunks } = await retrieveKnowledgeChunks({
       workspaceId: params.workspaceId,
       agentId: params.agentId,
       query: params.currentMessage,
       fallbackItems: relevantKB,
+      knowledgeItemIds: skillKbIds,
     });
 
     const systemPrompt = this.buildSystemPrompt({

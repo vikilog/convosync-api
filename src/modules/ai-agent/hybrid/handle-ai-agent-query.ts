@@ -2,6 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import { config } from '../../../config.js';
 import type { Intent } from '../intent.service.js';
 import type { LlmClient } from '../services/llm-client.service.js';
+import {
+  knowledgeIdsFromMatchedSkills,
+  matchRelevantSkills,
+} from '../context-builder.service.js';
 import { recordRetrievalPath } from './analytics.js';
 import { callLlmFull, callLlmWithRagContext } from './call-llm.js';
 import { extractDirectAnswer } from './extract-answer.js';
@@ -20,6 +24,21 @@ import {
   type HybridQueryResult,
   type RetrievalPath,
 } from './types.js';
+
+async function skillScopedKnowledgeIds(
+  fastify: FastifyInstance,
+  agentId: string,
+  intent: string,
+  message: string
+): Promise<string[] | undefined> {
+  const skills = await fastify.prisma.aiSkill.findMany({
+    where: { agentId, status: 'live' },
+    select: { title: true, trigger: true, instructions: true, knowledgeItemIds: true },
+  });
+  return knowledgeIdsFromMatchedSkills(
+    matchRelevantSkills({ skills, intent, message })
+  );
+}
 
 /**
  * Hybrid orchestrator: Redis → pgvector score routing → direct / RAG / full LLM / escalate.
@@ -82,11 +101,19 @@ export async function handleAIAgentQuery(params: {
     };
   }
 
+  const knowledgeItemIds = await skillScopedKnowledgeIds(
+    fastify,
+    agentId,
+    input.intent,
+    message
+  );
+
   const search = await searchKnowledgeVectors({
     workspaceId,
     agentId,
     query: message,
     topK: config.ai.hybridTopK,
+    knowledgeItemIds,
     resolvePath: (s) =>
       s.ok ? decideRetrievalPath(s.topScore, high, low, escalateOnLow) : 'escalate',
   });

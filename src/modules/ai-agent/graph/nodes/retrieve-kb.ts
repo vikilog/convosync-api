@@ -1,8 +1,10 @@
 /**
  * Wraps hybrid/search-knowledge-vectors.ts + hybrid/types.ts decideRetrievalPath
  * + hybrid/kb-bound.ts filterHitsByMinScore.
+ * When matched skills list knowledgeItemIds, retrieval is restricted to those IDs.
  */
 import { config } from '../../../../config.js';
+import { knowledgeIdsFromMatchedSkills } from '../../context-builder.service.js';
 import { searchKnowledgeVectors } from '../../hybrid/search-knowledge-vectors.js';
 import { decideRetrievalPath } from '../../hybrid/types.js';
 import { filterHitsByMinScore, isConversationalTurn } from '../../hybrid/kb-bound.js';
@@ -21,12 +23,14 @@ export async function retrieveKbNode(
   const high = config.ai.similarityHighThreshold;
   const low = config.ai.similarityLowThreshold;
   const escalateOnLow = config.ai.escalateOnLowScore;
+  const knowledgeItemIds = knowledgeIdsFromMatchedSkills(state.matchedSkills || []);
 
   const search = await searchKnowledgeVectors({
     workspaceId: state.workspaceId,
     agentId: state.agentId,
     query: state.message,
     topK: config.ai.hybridTopK,
+    knowledgeItemIds,
     resolvePath: (s) =>
       s.ok ? decideRetrievalPath(s.topScore, high, low, escalateOnLow) : 'escalate',
   });

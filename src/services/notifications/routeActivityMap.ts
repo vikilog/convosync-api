@@ -541,6 +541,14 @@ export const ROUTE_ACTIVITY: Record<string, RouteEntry> = {
     entityType: 'agent',
     entityIdParam: 'id',
   },
+  'POST /api/agents/:id/skills/bulk': {
+    type: T.AGENT_UPDATED,
+    category: C.AI_AGENT,
+    title: 'Agent skills bulk added',
+    message: 'Bulk-added skills to an AI agent',
+    entityType: 'agent',
+    entityIdParam: 'id',
+  },
   'PUT /api/agents/:id/skills/:skillId': {
     type: T.AGENT_UPDATED,
     category: C.AI_AGENT,

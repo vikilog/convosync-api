@@ -1,5 +1,9 @@
 import { prisma } from '../index.js';
 import { OpenAiProvider, type OpenAiMessage } from '../modules/ai-chat/providers/openai.provider.js';
+import {
+  knowledgeIdsFromMatchedSkills,
+  matchRelevantSkills,
+} from '../modules/ai-agent/context-builder.service.js';
 import { retrieveKnowledgeChunks } from '../modules/ai-agent/knowledge/knowledge-retrieval.js';
 
 type ConversationTurn = { role: 'user' | 'assistant'; content: string };
@@ -78,11 +82,26 @@ export async function testAgentChat(params: {
     'Follow brand guidelines and assist users professionally.';
 
   const readyKnowledge = agent.knowledgeItems.filter((k) => k.status === 'ready');
+  const matchedSkills = matchRelevantSkills({
+    skills: agent.skills.map((s) => ({
+      title: s.title,
+      trigger: s.trigger,
+      instructions: s.instructions,
+      knowledgeItemIds: s.knowledgeItemIds,
+    })),
+    intent: 'general',
+    message: params.message,
+  });
+  const skillKbIds = knowledgeIdsFromMatchedSkills(matchedSkills);
+  const fallbackItems = skillKbIds
+    ? readyKnowledge.filter((k) => skillKbIds.includes(k.id))
+    : readyKnowledge;
   const { chunks: knowledgeChunks } = await retrieveKnowledgeChunks({
     workspaceId: params.workspaceId,
     agentId: params.agentId,
     query: params.message,
-    fallbackItems: readyKnowledge,
+    fallbackItems,
+    knowledgeItemIds: skillKbIds,
     allowUnscoredDbFallback: true,
   });
 

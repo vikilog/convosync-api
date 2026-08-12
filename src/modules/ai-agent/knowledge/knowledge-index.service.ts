@@ -92,6 +92,8 @@ export class KnowledgeIndexService {
     agentId: string;
     query: string;
     topK?: number;
+    /** When set (non-empty), restrict hits to these knowledge item IDs. */
+    knowledgeItemIds?: string[];
   }): Promise<KnowledgeSearchHit[]> {
     if (!this.isEnabled()) return [];
 
@@ -101,6 +103,7 @@ export class KnowledgeIndexService {
     const embedding = await embedQuery(query);
     const topK = params.topK ?? config.embeddings.topK;
     const vector = toVectorLiteral(embedding);
+    const scopedIds = params.knowledgeItemIds?.filter(Boolean) ?? [];
 
     type Row = {
       knowledgeItemId: string;
@@ -109,21 +112,39 @@ export class KnowledgeIndexService {
       score: number;
     };
 
-    const rows = await prisma.$queryRawUnsafe<Row[]>(
-      `SELECT
-          "knowledgeItemId",
-          title,
-          content,
-          (1 - (embedding <=> $1::vector))::float8 AS score
-       FROM knowledge_chunks
-       WHERE "workspaceId" = $2 AND "agentId" = $3
-       ORDER BY embedding <=> $1::vector
-       LIMIT $4`,
-      vector,
-      params.workspaceId,
-      params.agentId,
-      topK * 4
-    );
+    const rows = scopedIds.length
+      ? await prisma.$queryRawUnsafe<Row[]>(
+          `SELECT
+              "knowledgeItemId",
+              title,
+              content,
+              (1 - (embedding <=> $1::vector))::float8 AS score
+           FROM knowledge_chunks
+           WHERE "workspaceId" = $2 AND "agentId" = $3
+             AND "knowledgeItemId" = ANY($4::text[])
+           ORDER BY embedding <=> $1::vector
+           LIMIT $5`,
+          vector,
+          params.workspaceId,
+          params.agentId,
+          scopedIds,
+          topK * 4
+        )
+      : await prisma.$queryRawUnsafe<Row[]>(
+          `SELECT
+              "knowledgeItemId",
+              title,
+              content,
+              (1 - (embedding <=> $1::vector))::float8 AS score
+           FROM knowledge_chunks
+           WHERE "workspaceId" = $2 AND "agentId" = $3
+           ORDER BY embedding <=> $1::vector
+           LIMIT $4`,
+          vector,
+          params.workspaceId,
+          params.agentId,
+          topK * 4
+        );
 
     const seen = new Set<string>();
     const hits: KnowledgeSearchHit[] = [];

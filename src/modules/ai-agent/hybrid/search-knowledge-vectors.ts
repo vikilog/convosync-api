@@ -16,6 +16,7 @@ async function searchKnowledgeVectorsRaw(params: {
   agentId: string;
   query: string;
   topK?: number;
+  knowledgeItemIds?: string[];
 }): Promise<VectorSearchResult> {
   if (!knowledgeIndexService.isEnabled()) {
     return { hits: [], topScore: null, ok: true };
@@ -29,6 +30,7 @@ async function searchKnowledgeVectorsRaw(params: {
           agentId: params.agentId,
           query: params.query,
           topK: params.topK ?? config.ai.hybridTopK,
+          knowledgeItemIds: params.knowledgeItemIds,
         }),
       { label: 'pgvector-search' }
     );
@@ -60,6 +62,7 @@ export async function searchKnowledgeVectors(params: {
   agentId: string;
   query: string;
   topK?: number;
+  knowledgeItemIds?: string[];
   /** When provided, called with search result to set `path` on the same span. */
   resolvePath?: (search: VectorSearchResult) => RetrievalPath;
 }): Promise<VectorSearchResult> {

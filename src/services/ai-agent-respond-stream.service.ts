@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { config } from '../config.js';
 import { prisma } from '../lib/prisma.js';
 import { getRedis } from '../lib/redis.js';
-import { ContextBuilderService } from '../modules/ai-agent/context-builder.service.js';
+import { ContextBuilderService, knowledgeIdsFromMatchedSkills, matchRelevantSkills } from '../modules/ai-agent/context-builder.service.js';
 import { decideRetrievalPath, type RetrievalPath } from '../modules/ai-agent/hybrid/types.js';
 import { searchKnowledgeVectors } from '../modules/ai-agent/hybrid/search-knowledge-vectors.js';
 import { checkRedisCache, setRedisCache } from '../modules/ai-agent/hybrid/redis-cache.js';
@@ -210,11 +210,23 @@ export async function* respondAiAgentTurnStream(input: {
   const voiceModel = config.ai.voiceStreamModel;
   const maxTokens = config.ai.voiceMaxOutputTokens;
 
+  const liveSkills = await prisma.aiSkill.findMany({
+    where: { agentId, status: 'live' },
+    select: { title: true, trigger: true, instructions: true, knowledgeItemIds: true },
+  });
+  const matchedSkills = matchRelevantSkills({
+    skills: liveSkills,
+    intent,
+    message: text,
+  });
+  const knowledgeItemIds = knowledgeIdsFromMatchedSkills(matchedSkills);
+
   const search = await searchKnowledgeVectors({
     workspaceId: input.workspaceId,
     agentId,
     query: text,
     topK: config.ai.hybridTopK,
+    knowledgeItemIds,
     resolvePath: (s) =>
       s.ok ? decideRetrievalPath(s.topScore, high, low, escalateOnLow) : 'escalate',
   });

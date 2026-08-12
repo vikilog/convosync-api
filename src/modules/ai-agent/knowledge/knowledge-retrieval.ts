@@ -28,13 +28,20 @@ export async function retrieveKnowledgeChunks(params: {
   workspaceId: string;
   agentId: string;
   query: string;
-  fallbackItems: Pick<AiAgentKnowledgeItem, 'title' | 'content'>[];
+  fallbackItems: Pick<AiAgentKnowledgeItem, 'id' | 'title' | 'content'>[];
   topK?: number;
   /** Only for offline/preview tooling — never for live agent answers. */
   allowUnscoredDbFallback?: boolean;
   minScore?: number;
+  /** When set (non-empty), restrict vector search + DB fallback to these item IDs. */
+  knowledgeItemIds?: string[];
 }): Promise<{ chunks: RetrievedKnowledgeChunk[]; source: 'pgvector' | 'database' | 'none' }> {
   const minScore = params.minScore ?? config.ai.similarityLowThreshold;
+  const scopedIds = params.knowledgeItemIds?.filter(Boolean) ?? [];
+  const scopedFallback =
+    scopedIds.length > 0
+      ? params.fallbackItems.filter((item) => scopedIds.includes(item.id))
+      : params.fallbackItems;
 
   if (knowledgeIndexService.isEnabled() && params.query.trim()) {
     try {
@@ -43,6 +50,7 @@ export async function retrieveKnowledgeChunks(params: {
         agentId: params.agentId,
         query: params.query,
         topK: params.topK,
+        knowledgeItemIds: scopedIds.length > 0 ? scopedIds : undefined,
       });
 
       const confident = filterHitsByMinScore(hits, minScore);
@@ -73,7 +81,7 @@ export async function retrieveKnowledgeChunks(params: {
   if (params.allowUnscoredDbFallback) {
     return {
       source: 'database',
-      chunks: fallbackChunks(params.fallbackItems),
+      chunks: fallbackChunks(scopedFallback),
     };
   }
 
