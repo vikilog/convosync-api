@@ -19,7 +19,7 @@ export async function classifyAndRouteNode(
   let retrievalPath = state.retrievalPath;
   if (intent === INTENTS.HUMAN_REQUEST) {
     retrievalPath = 'escalate';
-  } else if (isConversationalTurn(intent, state.stage)) {
+  } else if (isConversationalTurn(intent, state.stage, state.message)) {
     retrievalPath = 'full_llm';
   }
 

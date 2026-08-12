@@ -11,6 +11,7 @@ export async function sendResponseNode(
   state: AgentGraphStateType
 ): Promise<Partial<AgentGraphStateType>> {
   const reply = state.reply?.trim() || 'Sorry, kuch galat hua. Please dobara try karein.';
+  const low = state.similarityLowThreshold ?? config.ai.similarityLowThreshold;
 
   // Cache high-confidence non-escalate answers (same policy as hybrid orchestrator).
   if (
@@ -18,7 +19,7 @@ export async function sendResponseNode(
     reply &&
     state.retrievalPath &&
     state.retrievalPath !== 'escalate' &&
-    (state.topScore == null || state.topScore >= config.ai.similarityLowThreshold)
+    (state.topScore == null || state.topScore >= low)
   ) {
     await setRedisCache(state.fastify, {
       workspaceId: state.workspaceId,

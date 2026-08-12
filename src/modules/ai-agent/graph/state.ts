@@ -30,6 +30,8 @@ export const AgentGraphState = Annotation.Root({
   intent: Annotation<string>,
   retrievalPath: Annotation<RetrievalPath | undefined>,
   topScore: Annotation<number | null>,
+  /** Resolved low bar for this turn (agent override or env). */
+  similarityLowThreshold: Annotation<number | undefined>,
   kbChunks: Annotation<HybridHit[]>,
   matchedSkills: Annotation<SkillMatchInput[]>,
 

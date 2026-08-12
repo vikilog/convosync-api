@@ -1,4 +1,5 @@
 /** Wraps hybrid/redis-cache.ts `checkRedisCache`. */
+import { KB_OUT_OF_SCOPE_REPLY } from '../../hybrid/kb-bound.js';
 import { checkRedisCache } from '../../hybrid/redis-cache.js';
 import type { AgentGraphStateType } from '../state.js';
 
@@ -10,7 +11,8 @@ export async function checkCacheNode(
     agentId: state.agentId,
     question: state.message,
   });
-  if (!cached?.trim()) {
+  // Stale escalate/OOS must not short-circuit retrieval after path fixes.
+  if (!cached?.trim() || cached.trim() === KB_OUT_OF_SCOPE_REPLY) {
     return { fromCache: false };
   }
   return {

@@ -4,7 +4,8 @@
  */
 import { callLlmFull, callLlmWithRagContext } from '../../hybrid/call-llm.js';
 import { extractDirectAnswer } from '../../hybrid/extract-answer.js';
-import { KB_OUT_OF_SCOPE_REPLY, guardKbBoundReply } from '../../hybrid/kb-bound.js';
+import { KB_OUT_OF_SCOPE_REPLY, recoverGroundedKbReply } from '../../hybrid/kb-bound.js';
+import { config } from '../../../../config.js';
 import type { Intent } from '../../intent.service.js';
 import type { AgentGraphStateType } from '../state.js';
 
@@ -50,7 +51,12 @@ export async function composeAnswerNode(
   if (path === 'direct' && hits[0]) {
     let reply = extractDirectAnswer(hits[0].content, state.message);
     if (reply.trim()) {
-      const guarded = guardKbBoundReply({ reply, kbText: hits[0].content });
+      const guarded = recoverGroundedKbReply({
+        reply,
+        kbText: hits[0].content,
+        message: state.message,
+        extract: extractDirectAnswer,
+      });
       if (guarded.escalate) {
         return {
           reply: KB_OUT_OF_SCOPE_REPLY,
@@ -83,6 +89,7 @@ export async function composeAnswerNode(
       message: state.message,
       hits,
       history,
+      minScore: state.similarityLowThreshold ?? config.ai.similarityLowThreshold,
       withSuggestedActions: true,
     });
     llmCallCount += rag.llmCalls ?? 1;

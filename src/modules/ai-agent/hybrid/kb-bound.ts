@@ -3,15 +3,36 @@
  * Use for low-confidence retrieval, empty context, and post-generation checks.
  */
 
-/** Small talk / media ask — do not require KB match / do not escalate as out-of-scope. */
-export function isConversationalTurn(intent: string, stage?: string): boolean {
-  return (
-    intent === 'greeting' ||
-    intent === 'farewell' ||
-    intent === 'human_request' ||
-    intent === 'media_request' ||
-    stage === 'greeting'
+/** Whole-message soft “what can you do” — not product asks (“what do you offer”, “help me with X”). */
+export function looksLikeCapabilityAsk(message: string): boolean {
+  return /^(?:hi[,!.\s]+)?(?:how can you (?:help|assist)|what can you (?:do|help|assist)(?:\s+for me)?|kaise help(?:\s+kar(?:\s*sakte)?)?|kya kar sakte(?:\s+ho)?|aap kya (?:kar sakte|help)(?:\s+ho)?)[\s?!🙏]*$/i.test(
+    message.trim()
   );
+}
+
+/** Pure hi/bye — LLM often mislabels factual first WhatsApp msgs as greeting. */
+function looksLikePureSocial(message: string): boolean {
+  return /^(?:hi|hello|hey|hii+|helo|namaste|namaskar|good\s*(?:morning|afternoon|evening)|yo|hola|bye|goodbye|good\s*bye|see\s*you|take\s*care|thanks?(?:\s*(?:bye|goodbye))?|thank\s*you|thx|ok(?:\s*bye)?)(?:\s+there)?[\s!.🙏]*$/i.test(
+    message.trim()
+  );
+}
+
+/** Small talk / media ask — do not require KB match / do not escalate as out-of-scope.
+ * Intent-only: stage "greeting" must not skip KB for factual first messages.
+ * greeting/farewell skip only for pure social text (not “dasalon kya hai” mislabeled greeting).
+ * Optional message: capability asks skip escalate even when intent is general. */
+export function isConversationalTurn(
+  intent: string,
+  _stage?: string,
+  message?: string
+): boolean {
+  if (message && looksLikeCapabilityAsk(message)) return true;
+  if (intent === 'human_request' || intent === 'media_request') return true;
+  if (intent === 'greeting' || intent === 'farewell') {
+    if (!message) return true;
+    return looksLikePureSocial(message);
+  }
+  return false;
 }
 
 export const KB_OUT_OF_SCOPE_REPLY =
@@ -113,4 +134,48 @@ export function guardKbBoundReply(params: {
   }
   const esc = buildKbOutOfScopeEscalation('unsupported_generation');
   return { reply: esc.reply, replaced: true, escalate: true, reason: esc.reason };
+}
+
+/**
+ * When retrieval already found usable KB, never hand off solely because the
+ * cheap token-overlap guard failed (common for Hinglish answers vs English docs).
+ * Also overrides model OOS refusals when KB text is present.
+ * Prefer a direct KB extract; escalate only if KB text is empty.
+ */
+export function recoverGroundedKbReply(params: {
+  reply: string;
+  kbText: string;
+  message: string;
+  /** Optional FAQ/chunk extractor — injected to avoid hard cycles in tests. */
+  extract?: (kbText: string, message: string) => string;
+}): { reply: string; replaced: boolean; escalate: boolean; reason?: KbOutOfScopeResult['reason'] } {
+  const kb = params.kbText.trim();
+  if (!kb) {
+    return guardKbBoundReply({ reply: params.reply, kbText: params.kbText });
+  }
+
+  const lower = params.reply.trim().toLowerCase();
+  const modelRefused =
+    !lower ||
+    lower.includes('team se connect') ||
+    lower.includes('human agent') ||
+    lower.includes('exact info nahi') ||
+    lower.includes('connect kar');
+
+  if (!modelRefused) {
+    const grounded = guardKbBoundReply({ reply: params.reply, kbText: params.kbText });
+    if (!grounded.escalate) return grounded;
+    // ponytail: Hinglish paraphrase fails token overlap — keep RAG reply when KB was matched
+    return { reply: params.reply, replaced: false, escalate: false };
+  }
+
+  const extract = params.extract;
+  const direct = (extract ? extract(kb, params.message) : kb).trim().slice(0, 900);
+  if (!direct) {
+    const esc = buildKbOutOfScopeEscalation('unsupported_generation');
+    return { reply: esc.reply, replaced: true, escalate: true, reason: esc.reason };
+  }
+
+  // Model refused despite usable KB — surface extract instead of handoff.
+  return { reply: direct, replaced: true, escalate: false };
 }

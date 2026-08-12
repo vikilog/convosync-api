@@ -7,21 +7,9 @@ import {
   guardKbBoundReply,
   isConversationalTurn,
   isReplyGroundedInKb,
+  recoverGroundedKbReply,
 } from './kb-bound.js';
-
-/** Mirrors hybrid/types.ts decideRetrievalPath — keep in sync. */
-function decideRetrievalPath(
-  topScore: number | null,
-  high: number,
-  low: number,
-  escalateOnLow: boolean
-): 'direct' | 'rag' | 'full_llm' | 'escalate' {
-  if (topScore == null || topScore < low) {
-    return escalateOnLow ? 'escalate' : 'full_llm';
-  }
-  if (topScore >= high) return 'direct';
-  return 'rag';
-}
+import { decidePathAfterRetrieval, decideRetrievalPath } from './types.js';
 
 const HIGH = 0.85;
 const LOW = 0.7;
@@ -32,6 +20,40 @@ assert.equal(decideRetrievalPath(0.7, HIGH, LOW, true), 'rag');
 assert.equal(decideRetrievalPath(0.69, HIGH, LOW, true), 'escalate');
 assert.equal(decideRetrievalPath(null, HIGH, LOW, true), 'escalate');
 assert.equal(decideRetrievalPath(0.1, HIGH, LOW, false), 'full_llm');
+
+assert.equal(
+  decidePathAfterRetrieval({
+    source: 'database',
+    topScore: 0.7,
+    high: HIGH,
+    low: LOW,
+    escalateOnLow: true,
+    hitCount: 1,
+  }),
+  'rag'
+);
+assert.equal(
+  decidePathAfterRetrieval({
+    source: 'none',
+    topScore: null,
+    high: HIGH,
+    low: LOW,
+    escalateOnLow: true,
+    hitCount: 0,
+  }),
+  'escalate'
+);
+assert.equal(
+  decidePathAfterRetrieval({
+    source: 'pgvector',
+    topScore: 0.7,
+    high: HIGH,
+    low: LOW,
+    escalateOnLow: true,
+    hitCount: 1,
+  }),
+  'rag'
+);
 
 const hits = [
   { id: 'a', score: 0.82, content: 'Refund within 7 days' },
@@ -47,8 +69,39 @@ assert.deepEqual(
 assert.equal(filterHitsByMinScore(hits, 0.9).length, 0);
 
 assert.equal(isConversationalTurn('greeting', 'intent_identified'), true);
-assert.equal(isConversationalTurn('general', 'greeting'), true);
+assert.equal(isConversationalTurn('greeting', 'intent_identified', 'Hi'), true);
+assert.equal(isConversationalTurn('greeting', 'intent_identified', 'Namaste'), true);
+assert.equal(
+  isConversationalTurn('greeting', 'intent_identified', 'dasalon kya hai ?'),
+  false
+);
+assert.equal(
+  isConversationalTurn('greeting', 'intent_identified', 'kya kya service hai dasalon kii ?'),
+  false
+);
+assert.equal(isConversationalTurn('general', 'greeting'), false);
+assert.equal(isConversationalTurn('feature_question', 'greeting'), false);
 assert.equal(isConversationalTurn('general', 'intent_identified'), false);
+assert.equal(
+  isConversationalTurn('general', 'intent_identified', 'How can you assist?'),
+  true
+);
+assert.equal(
+  isConversationalTurn('general', 'intent_identified', 'What is dasalon?'),
+  false
+);
+assert.equal(
+  isConversationalTurn('general', 'intent_identified', 'What do you offer?'),
+  false
+);
+assert.equal(
+  isConversationalTurn('general', 'intent_identified', 'help me with dasalon'),
+  false
+);
+assert.equal(
+  isConversationalTurn('general', 'intent_identified', 'What can you do?'),
+  true
+);
 
 assert.equal(buildKbOutOfScopeEscalation('no_kb_match').escalate, true);
 assert.equal(buildKbOutOfScopeEscalation('off_topic').reply, KB_OUT_OF_SCOPE_REPLY);
@@ -84,6 +137,32 @@ const ok = guardKbBoundReply({
   kbText: kb,
 });
 assert.equal(ok.replaced, false);
+
+/** Usable KB + bad/Hinglish/OOS model reply → keep reply or extract, do not escalate. */
+const recovered = recoverGroundedKbReply({
+  reply: 'Humare paas bohot si cheezein hain jo docs mein nahi likhi.',
+  kbText: kb,
+  message: 'refund policy?',
+  extract: (text) => text.slice(0, 80),
+});
+assert.equal(recovered.escalate, false);
+assert.equal(recovered.reply, 'Humare paas bohot si cheezein hain jo docs mein nahi likhi.');
+
+const refused = recoverGroundedKbReply({
+  reply: KB_OUT_OF_SCOPE_REPLY,
+  kbText: 'Catalog Manage all your salon offerings. From services to retail products.',
+  message: 'kya kya service hai',
+  extract: (text) => text,
+});
+assert.equal(refused.escalate, false);
+assert.notEqual(refused.reply, KB_OUT_OF_SCOPE_REPLY);
+
+const emptyKb = recoverGroundedKbReply({
+  reply: 'Paris is the capital of France.',
+  kbText: '',
+  message: 'capital?',
+});
+assert.equal(emptyKb.escalate, true);
 
 /** Out-of-scope queries: simulate low/no retrieval → must escalate, never invent. */
 const OUT_OF_SCOPE_QUERIES = [

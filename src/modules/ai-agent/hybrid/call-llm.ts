@@ -9,11 +9,12 @@ import {
   composeWithActionsSchema,
   normalizeSuggestedActions,
 } from '../actions/llm-suggested-actions.js';
+import { extractDirectAnswer } from './extract-answer.js';
 import {
   KB_BOUND_SYSTEM_PREFIX,
   KB_OUT_OF_SCOPE_REPLY,
   filterHitsByMinScore,
-  guardKbBoundReply,
+  recoverGroundedKbReply,
 } from './kb-bound.js';
 import type { HybridHit } from './types.js';
 
@@ -165,7 +166,12 @@ RULES:
   });
 
   const kbText = hits.map((h) => `${h.title}\n${h.content}`).join('\n');
-  const guarded = guardKbBoundReply({ reply: aiResponse.content, kbText });
+  const guarded = recoverGroundedKbReply({
+    reply: aiResponse.content,
+    kbText,
+    message: params.message,
+    extract: extractDirectAnswer,
+  });
 
   return {
     content: guarded.reply,
@@ -242,7 +248,12 @@ export async function callLlmFull(params: {
   const guarded =
     context.kbChunksLoaded === 0
       ? { reply: aiResponse.content, replaced: false, escalate: false }
-      : guardKbBoundReply({ reply: aiResponse.content, kbText });
+      : recoverGroundedKbReply({
+          reply: aiResponse.content,
+          kbText,
+          message: params.message,
+          extract: extractDirectAnswer,
+        });
 
   return {
     content: guarded.reply,

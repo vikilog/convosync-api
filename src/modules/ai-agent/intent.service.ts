@@ -19,7 +19,14 @@ export type Intent = (typeof INTENTS)[keyof typeof INTENTS];
 
 export const INTENT_TO_SKILLS: Record<string, string[]> = {
   pricing: ['Pricing Inquiry', 'Pricing and plans', 'Send media'],
-  feature_question: ['Feature Explanation', 'Product overview'],
+  feature_question: [
+    'Feature Explanation',
+    'Product overview',
+    'FAQ',
+    'Dashboard',
+    'Catalog',
+    'Service',
+  ],
   technical_support: ['Technical Support', 'WhatsApp connect'],
   onboarding: ['Onboarding Assistance', 'WhatsApp connect'],
   demo_request: ['Demo Request', 'Book demo'],
@@ -29,7 +36,7 @@ export const INTENT_TO_SKILLS: Record<string, string[]> = {
   human_request: [],
   media_request: ['Send media'],
   out_of_scope: [],
-  general: [],
+  general: ['FAQ', 'Product overview'],
 };
 
 /** Explicit ask for a human — not "AI agent" product talk or media sends. */
@@ -79,7 +86,7 @@ Classify the user message into exactly ONE of these intents:
 ${Object.values(INTENTS).join(', ')}
 
 Rules:
-- greeting: Hi, Hello, Hey, Namaste, first message
+- greeting: ONLY pure hi/hello/hey/namaste (no product/service question). Never label “what is X / kya hai / services” as greeting just because it is the first message
 - pricing: price, cost, plan, subscription, kitna lagega, fees
 - feature_question: how does X work, what is X feature
 - technical_support: not working, error, problem, issue, bug

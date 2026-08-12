@@ -7,8 +7,9 @@ import { config } from '../config.js';
 import { prisma } from '../lib/prisma.js';
 import { getRedis } from '../lib/redis.js';
 import { ContextBuilderService, knowledgeIdsFromMatchedSkills, matchRelevantSkills } from '../modules/ai-agent/context-builder.service.js';
-import { decideRetrievalPath, type RetrievalPath } from '../modules/ai-agent/hybrid/types.js';
-import { searchKnowledgeVectors } from '../modules/ai-agent/hybrid/search-knowledge-vectors.js';
+import { decidePathAfterRetrieval, type RetrievalPath, type HybridHit } from '../modules/ai-agent/hybrid/types.js';
+import { similarityLowFromEscalationRules } from '../modules/ai-agent/hybrid/similarity-threshold.js';
+import { retrieveKnowledgeChunks } from '../modules/ai-agent/knowledge/knowledge-retrieval.js';
 import { checkRedisCache, setRedisCache } from '../modules/ai-agent/hybrid/redis-cache.js';
 import { extractDirectAnswer } from '../modules/ai-agent/hybrid/extract-answer.js';
 import { recordRetrievalPath } from '../modules/ai-agent/hybrid/analytics.js';
@@ -17,7 +18,7 @@ import {
   KB_OUT_OF_SCOPE_REPLY,
   buildKbOutOfScopeEscalation,
   filterHitsByMinScore,
-  guardKbBoundReply,
+  recoverGroundedKbReply,
   isConversationalTurn,
 } from '../modules/ai-agent/hybrid/kb-bound.js';
 import { INTENTS, type Intent } from '../modules/ai-agent/intent.service.js';
@@ -92,7 +93,13 @@ export async function* respondAiAgentTurnStream(input: {
       isPublished: true,
       category: { in: ['ai_agent', 'responsive'] },
     },
-    select: { id: true, name: true, toneOfVoice: true, brandBackground: true },
+    select: {
+      id: true,
+      name: true,
+      toneOfVoice: true,
+      brandBackground: true,
+      escalationRules: true,
+    },
   });
   if (!agent) {
     yield {
@@ -178,7 +185,7 @@ export async function* respondAiAgentTurnStream(input: {
     agentId,
     question: text,
   });
-  if (cached) {
+  if (cached && cached.trim() !== KB_OUT_OF_SCOPE_REPLY) {
     yield { event: 'meta', data: { agentId, path: 'cache', topScore: null } };
     yield { event: 'token', data: { text: cached } };
     await persistTurn({
@@ -205,7 +212,11 @@ export async function* respondAiAgentTurnStream(input: {
   }
 
   const high = config.ai.similarityHighThreshold;
-  const low = config.ai.voiceSimilarityLowThreshold;
+  // Agent override wins; else voice env (falls back to SIMILARITY_LOW_THRESHOLD).
+  const low = similarityLowFromEscalationRules(
+    agent.escalationRules,
+    config.ai.voiceSimilarityLowThreshold
+  );
   const escalateOnLow = config.ai.escalateOnLowScore;
   const voiceModel = config.ai.voiceStreamModel;
   const maxTokens = config.ai.voiceMaxOutputTokens;
@@ -221,31 +232,45 @@ export async function* respondAiAgentTurnStream(input: {
   });
   const knowledgeItemIds = knowledgeIdsFromMatchedSkills(matchedSkills);
 
-  const search = await searchKnowledgeVectors({
+  const fallbackItems = await prisma.aiAgentKnowledgeItem.findMany({
+    where: { agentId, status: 'ready' },
+    select: { id: true, title: true, content: true },
+  });
+  const { chunks, source } = await retrieveKnowledgeChunks({
     workspaceId: input.workspaceId,
     agentId,
     query: text,
+    fallbackItems,
     topK: config.ai.hybridTopK,
+    minScore: low,
     knowledgeItemIds,
-    resolvePath: (s) =>
-      s.ok ? decideRetrievalPath(s.topScore, high, low, escalateOnLow) : 'escalate',
   });
 
-  const confidentHits = filterHitsByMinScore(search.hits, low);
+  const confidentHits: HybridHit[] = filterHitsByMinScore(
+    chunks
+      .filter((c) => (c.content ?? '').trim())
+      .map((c, i) => ({
+        knowledgeItemId: c.knowledgeItemId || `kb-${i}`,
+        title: c.title,
+        content: c.content ?? '',
+        score: c.score ?? low,
+      })),
+    low
+  );
+  const topScore = confidentHits[0]?.score ?? null;
   const stageHint =
     chat.messageCount === 0 ? 'greeting' : chat.stage || 'intent_identified';
-  const conversational = isConversationalTurn(intent, stageHint);
+  const conversational = isConversationalTurn(intent, stageHint, text);
   let path: Exclude<RetrievalPath, 'cache'> = conversational
     ? 'full_llm'
-    : !search.ok
-      ? 'escalate'
-      : decideRetrievalPath(
-          confidentHits[0]?.score ??
-            (search.topScore != null && search.topScore < low ? search.topScore : null),
-          high,
-          low,
-          escalateOnLow
-        );
+    : decidePathAfterRetrieval({
+        source,
+        topScore,
+        high,
+        low,
+        escalateOnLow,
+        hitCount: confidentHits.length,
+      });
 
   let reply = '';
   let promptTokens = 0;
@@ -258,15 +283,17 @@ export async function* respondAiAgentTurnStream(input: {
     if (!reply.trim()) {
       path = 'rag';
     } else {
-      const guarded = guardKbBoundReply({
+      const guarded = recoverGroundedKbReply({
         reply,
         kbText: confidentHits[0].content,
+        message: text,
+        extract: extractDirectAnswer,
       });
       reply = guarded.reply;
       if (guarded.escalate) path = 'escalate';
       else {
         kbChunksLoaded = 1;
-        yield { event: 'meta', data: { agentId, path: 'direct', topScore: search.topScore } };
+        yield { event: 'meta', data: { agentId, path: 'direct', topScore: topScore } };
         yield { event: 'token', data: { text: reply } };
       }
     }
@@ -274,9 +301,9 @@ export async function* respondAiAgentTurnStream(input: {
 
   if (path === 'escalate') {
     reply = buildKbOutOfScopeEscalation(
-      search.topScore != null && search.topScore < low ? 'low_confidence' : 'no_kb_match'
+      topScore != null && topScore < low ? 'low_confidence' : 'no_kb_match'
     ).reply;
-    yield { event: 'meta', data: { agentId, path, topScore: search.topScore } };
+    yield { event: 'meta', data: { agentId, path, topScore: topScore } };
     yield { event: 'token', data: { text: reply } };
   }
 
@@ -284,12 +311,12 @@ export async function* respondAiAgentTurnStream(input: {
     if (path === 'rag' && confidentHits.length === 0) {
       path = 'escalate';
       reply = buildKbOutOfScopeEscalation('low_confidence').reply;
-      yield { event: 'meta', data: { agentId, path, topScore: search.topScore } };
+      yield { event: 'meta', data: { agentId, path, topScore: topScore } };
       yield { event: 'token', data: { text: reply } };
     } else {
     yield {
       event: 'meta',
-      data: { agentId, path, topScore: search.topScore },
+      data: { agentId, path, topScore: topScore },
     };
 
     let messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
@@ -384,14 +411,17 @@ RULES:
         completionTokens = final.usage.completionTokens;
 
         if (kbTextForGuard || kbChunksLoaded === 0) {
-          const guarded = guardKbBoundReply({
+          const guarded = recoverGroundedKbReply({
             reply,
             kbText: kbTextForGuard,
+            message: text,
+            extract: extractDirectAnswer,
           });
           if (guarded.replaced) {
             // Stream already sent model tokens; replace persisted reply for DB/SSE done.
             reply = guarded.reply;
-            path = 'escalate';
+            if (guarded.escalate) path = 'escalate';
+            else if (path === 'escalate') path = 'rag';
           }
         }
       } catch (err) {
@@ -410,7 +440,7 @@ RULES:
   }
 
   const cacheable =
-    path === 'direct' || path === 'rag' || (search.topScore != null && search.topScore >= low);
+    path === 'direct' || path === 'rag' || (topScore != null && topScore >= low);
   if (cacheable) {
     await setRedisCache(fastify, {
       workspaceId: input.workspaceId,
@@ -421,7 +451,7 @@ RULES:
   }
 
   console.info(
-    `[HybridRetrieval] path=${path} score=${search.topScore ?? 'n/a'} cache=miss agent=${agentId} voice=stream`
+    `[HybridRetrieval] path=${path} score=${topScore ?? 'n/a'} source=${source} cache=miss agent=${agentId} voice=stream`
   );
   await recordRetrievalPath(fastify, input.workspaceId, agentId, path);
 

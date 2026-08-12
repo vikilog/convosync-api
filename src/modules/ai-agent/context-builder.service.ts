@@ -45,16 +45,26 @@ export function matchRelevantSkills(params: {
 }): SkillMatchInput[] {
   const relevantSkillTitles = INTENT_TO_SKILLS[params.intent] || [];
   const msg = params.message.toLowerCase();
+  const msgTokens = new Set(
+    msg
+      .split(/[^a-z0-9\u0900-\u097f]+/)
+      .filter((t) => t.length >= 4)
+  );
   return params.skills.filter((skill) => {
-    const byIntent = relevantSkillTitles.some((title) =>
-      skill.title.toLowerCase().includes(title.toLowerCase())
-    );
+    const skillTitle = skill.title.toLowerCase();
+    const byIntent = relevantSkillTitles.some((title) => {
+      const t = title.toLowerCase();
+      if (!skillTitle.includes(t)) return false;
+      // Multi-word pack names always map; short tags only if the user mentioned them.
+      if (t.includes(' ') || t.length >= 10) return true;
+      return msg.includes(t);
+    });
     if (byIntent) return true;
-    const hay = `${skill.title} ${skill.trigger}`.toLowerCase();
-    return hay
+    const hayTokens = `${skill.title} ${skill.trigger}`
+      .toLowerCase()
       .split(/[^a-z0-9]+/)
-      .filter((t) => t.length >= 5)
-      .some((t) => msg.includes(t));
+      .filter((t) => t.length >= 4);
+    return hayTokens.some((t) => msg.includes(t) || msgTokens.has(t));
   });
 }
 
@@ -102,7 +112,7 @@ export class ContextBuilderService {
     let relevantKB = agent.knowledgeItems;
 
     if (relevantTags.length > 0) {
-      relevantKB = agent.knowledgeItems.filter((item) => {
+      const tagged = agent.knowledgeItems.filter((item) => {
         const metadata = item.metadata as { tags?: string[] } | null;
         const tags = metadata?.tags || [];
         return relevantTags.some(
@@ -112,12 +122,16 @@ export class ContextBuilderService {
             item.type === 'qna'
         );
       });
+      // Tag map is advisory — never drop to empty when the agent has ready docs.
+      if (tagged.length > 0) relevantKB = tagged;
     }
 
     const skillKbIds = knowledgeIdsFromMatchedSkills(relevantSkills);
     if (skillKbIds) {
       const allow = new Set(skillKbIds);
-      relevantKB = relevantKB.filter((item) => allow.has(item.id));
+      const scoped = relevantKB.filter((item) => allow.has(item.id));
+      // Stale/empty skill knowledgeItemIds must not zero out agent-wide KB.
+      if (scoped.length > 0) relevantKB = scoped;
     }
 
     const { chunks: kbChunks } = await retrieveKnowledgeChunks({

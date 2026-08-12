@@ -1,13 +1,9 @@
-/**
- * Wraps hybrid/search-knowledge-vectors.ts + hybrid/types.ts decideRetrievalPath
- * + hybrid/kb-bound.ts filterHitsByMinScore.
- * When matched skills list knowledgeItemIds, retrieval is restricted to those IDs.
- */
 import { config } from '../../../../config.js';
 import { knowledgeIdsFromMatchedSkills } from '../../context-builder.service.js';
-import { searchKnowledgeVectors } from '../../hybrid/search-knowledge-vectors.js';
-import { decideRetrievalPath } from '../../hybrid/types.js';
+import { retrieveKnowledgeChunks } from '../../knowledge/knowledge-retrieval.js';
+import { decidePathAfterRetrieval, type HybridHit } from '../../hybrid/types.js';
 import { filterHitsByMinScore, isConversationalTurn } from '../../hybrid/kb-bound.js';
+import { similarityLowFromEscalationRules } from '../../hybrid/similarity-threshold.js';
 import type { AgentGraphStateType } from '../state.js';
 
 export async function retrieveKbNode(
@@ -16,39 +12,63 @@ export async function retrieveKbNode(
   if (state.intent === 'human_request' || state.retrievalPath === 'escalate') {
     return { kbChunks: [], topScore: null, retrievalPath: 'escalate' };
   }
-  if (isConversationalTurn(state.intent || 'general', state.stage)) {
+  if (isConversationalTurn(state.intent || 'general', state.stage, state.message)) {
     return { kbChunks: [], topScore: null, retrievalPath: 'full_llm' };
   }
 
   const high = config.ai.similarityHighThreshold;
-  const low = config.ai.similarityLowThreshold;
+  const agentRow = await state.fastify.prisma.aiAgent.findFirst({
+    where: { id: state.agentId, workspaceId: state.workspaceId },
+    select: { escalationRules: true },
+  });
+  const low = similarityLowFromEscalationRules(agentRow?.escalationRules);
   const escalateOnLow = config.ai.escalateOnLowScore;
   const knowledgeItemIds = knowledgeIdsFromMatchedSkills(state.matchedSkills || []);
 
-  const search = await searchKnowledgeVectors({
+  const fallbackItems = await state.fastify.prisma.aiAgentKnowledgeItem.findMany({
+    where: { agentId: state.agentId, status: 'ready' },
+    select: { id: true, title: true, content: true },
+  });
+
+  const { chunks, source } = await retrieveKnowledgeChunks({
     workspaceId: state.workspaceId,
     agentId: state.agentId,
     query: state.message,
+    fallbackItems,
     topK: config.ai.hybridTopK,
+    minScore: low,
     knowledgeItemIds,
-    resolvePath: (s) =>
-      s.ok ? decideRetrievalPath(s.topScore, high, low, escalateOnLow) : 'escalate',
   });
 
-  const confidentHits = filterHitsByMinScore(search.hits, low);
-  const topScore = search.topScore;
-  const path = !search.ok
-    ? 'escalate'
-    : decideRetrievalPath(
-        confidentHits[0]?.score ?? (topScore != null && topScore < low ? topScore : null),
-        high,
-        low,
-        escalateOnLow
-      );
+  const confidentHits: HybridHit[] = filterHitsByMinScore(
+    chunks
+      .filter((c) => (c.content ?? '').trim())
+      .map((c, i) => ({
+        knowledgeItemId: c.knowledgeItemId || `kb-${i}`,
+        title: c.title,
+        content: c.content ?? '',
+        score: c.score ?? low,
+      })),
+    low
+  );
+  const topScore = confidentHits[0]?.score ?? null;
+  const path = decidePathAfterRetrieval({
+    source,
+    topScore,
+    high,
+    low,
+    escalateOnLow,
+    hitCount: confidentHits.length,
+  });
+
+  console.info(
+    `[HybridRetrieval] path=${path} score=${topScore ?? 'n/a'} source=${source} cache=miss agent=${state.agentId}`
+  );
 
   return {
     kbChunks: confidentHits,
     topScore,
     retrievalPath: path,
+    similarityLowThreshold: low,
   };
 }

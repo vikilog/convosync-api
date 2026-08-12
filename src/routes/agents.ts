@@ -18,6 +18,7 @@ import {
   synthesizePreviewSpeech,
   transcribePreviewAudio,
 } from '../services/preview-stt.service.js';
+import { withSimilarityLowThreshold } from '../modules/ai-agent/hybrid/similarity-threshold.js';
 const AGENT_CATEGORY = z.enum(['ai_agent', 'responsive', 'rule_based']);
 const INTENT_FALLBACK = z.enum(['silent', 'automated_response', 'transfer_human']);
 
@@ -56,6 +57,8 @@ const profileUpdateSchema = z.object({
   voiceSttProvider: z.string().min(1).optional(),
   voiceTtsProvider: z.string().min(1).optional(),
   voiceTtsVoiceId: z.string().min(1).nullable().optional(),
+  /** Knowledge match / escalate low bar (0–1). null clears override → env default. */
+  similarityLowThreshold: z.number().min(0).max(1).nullable().optional(),
   flowDefinition: z.record(z.unknown()).optional(),
 });
 
@@ -207,7 +210,19 @@ export default async function agentRoutes(fastify: FastifyInstance) {
     const existing = await prisma.aiAgent.findFirst({ where: { id, workspaceId } });
     if (!existing) return reply.code(404).send({ error: 'Not found' });
 
-    const updateData: Record<string, unknown> = { ...body };
+    const { similarityLowThreshold, ...rest } = body;
+    const updateData: Record<string, unknown> = { ...rest };
+    if (similarityLowThreshold !== undefined) {
+      // 1.0 disables vector RAG in practice — store as unset (env default).
+      const normalized =
+        similarityLowThreshold != null && similarityLowThreshold >= 1
+          ? null
+          : similarityLowThreshold;
+      updateData.escalationRules = withSimilarityLowThreshold(
+        existing.escalationRules,
+        normalized
+      );
+    }
     if (body.isPublished === true && !existing.isPublished) {
       updateData.publishedAt = new Date();
       updateData.isEnabled = body.isEnabled ?? true;

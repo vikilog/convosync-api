@@ -13,13 +13,15 @@ import {
   KB_OUT_OF_SCOPE_REPLY,
   buildKbOutOfScopeEscalation,
   filterHitsByMinScore,
-  guardKbBoundReply,
+  recoverGroundedKbReply,
   isConversationalTurn,
 } from './kb-bound.js';
 import { checkRedisCache, setRedisCache } from './redis-cache.js';
-import { searchKnowledgeVectors } from './search-knowledge-vectors.js';
+import { retrieveKnowledgeChunks } from '../knowledge/knowledge-retrieval.js';
+import { similarityLowFromEscalationRules } from './similarity-threshold.js';
 import {
-  decideRetrievalPath,
+  decidePathAfterRetrieval,
+  type HybridHit,
   type HybridQueryInput,
   type HybridQueryResult,
   type RetrievalPath,
@@ -40,6 +42,20 @@ async function skillScopedKnowledgeIds(
   );
 }
 
+function chunksToHits(
+  chunks: { knowledgeItemId?: string; title: string; content: string | null; score?: number }[],
+  floorScore: number
+): HybridHit[] {
+  return chunks
+    .filter((c) => (c.content ?? '').trim())
+    .map((c, i) => ({
+      knowledgeItemId: c.knowledgeItemId || `kb-${i}`,
+      title: c.title,
+      content: c.content ?? '',
+      score: c.score ?? floorScore,
+    }));
+}
+
 /**
  * Hybrid orchestrator: Redis → pgvector score routing → direct / RAG / full LLM / escalate.
  * Strict KB for factual queries; greeting/farewell skip retrieval and never escalate as OOS.
@@ -52,14 +68,23 @@ export async function handleAIAgentQuery(params: {
   const { fastify, llm, input } = params;
   const { workspaceId, agentId, message } = input;
   const high = config.ai.similarityHighThreshold;
-  const low = config.ai.similarityLowThreshold;
+  const agentRow = await fastify.prisma.aiAgent.findFirst({
+    where: { id: agentId, workspaceId },
+    select: {
+      name: true,
+      toneOfVoice: true,
+      brandBackground: true,
+      escalationRules: true,
+    },
+  });
+  const low = similarityLowFromEscalationRules(agentRow?.escalationRules);
   const escalateOnLow = config.ai.escalateOnLowScore;
-  const conversational = isConversationalTurn(input.intent, input.stage);
+  const conversational = isConversationalTurn(input.intent, input.stage, message);
 
   const cached = await checkRedisCache(fastify, { workspaceId, agentId, question: message });
-  // Ignore stale OOS replies cached before conversational bypass (e.g. "Hello").
-  if (cached && !(conversational && cached.trim() === KB_OUT_OF_SCOPE_REPLY)) {
-    await finish(fastify, workspaceId, agentId, 'cache', null);
+  // Never serve stale escalate/OOS from Redis (path logic may have changed).
+  if (cached && cached.trim() !== KB_OUT_OF_SCOPE_REPLY) {
+    await finish(fastify, workspaceId, agentId, 'cache', null, 'skip');
     return {
       reply: cached,
       path: 'cache',
@@ -87,7 +112,7 @@ export async function handleAIAgentQuery(params: {
     });
     const reply =
       full.content || 'Sorry, kuch galat hua. Please dobara try karein.';
-    await finish(fastify, workspaceId, agentId, 'full_llm', null);
+    await finish(fastify, workspaceId, agentId, 'full_llm', null, 'skip');
     return {
       reply,
       path: 'full_llm',
@@ -108,26 +133,31 @@ export async function handleAIAgentQuery(params: {
     message
   );
 
-  const search = await searchKnowledgeVectors({
+  const fallbackItems = await fastify.prisma.aiAgentKnowledgeItem.findMany({
+    where: { agentId, status: 'ready' },
+    select: { id: true, title: true, content: true },
+  });
+
+  const { chunks, source } = await retrieveKnowledgeChunks({
     workspaceId,
     agentId,
     query: message,
+    fallbackItems,
     topK: config.ai.hybridTopK,
+    minScore: low,
     knowledgeItemIds,
-    resolvePath: (s) =>
-      s.ok ? decideRetrievalPath(s.topScore, high, low, escalateOnLow) : 'escalate',
   });
 
-  const confidentHits = filterHitsByMinScore(search.hits, low);
-  const topScore = search.topScore;
-  let path: Exclude<RetrievalPath, 'cache'> = !search.ok
-    ? 'escalate'
-    : decideRetrievalPath(
-        confidentHits[0]?.score ?? (topScore != null && topScore < low ? topScore : null),
-        high,
-        low,
-        escalateOnLow
-      );
+  const confidentHits = filterHitsByMinScore(chunksToHits(chunks, low), low);
+  const topScore = confidentHits[0]?.score ?? null;
+  let path: Exclude<RetrievalPath, 'cache'> = decidePathAfterRetrieval({
+    source,
+    topScore,
+    high,
+    low,
+    escalateOnLow,
+    hitCount: confidentHits.length,
+  });
 
   let reply = '';
   let promptTokens = 0;
@@ -141,9 +171,11 @@ export async function handleAIAgentQuery(params: {
       path = 'rag';
     } else {
       kbChunksLoaded = 1;
-      const guarded = guardKbBoundReply({
+      const guarded = recoverGroundedKbReply({
         reply,
         kbText: confidentHits[0].content,
+        message,
+        extract: extractDirectAnswer,
       });
       reply = guarded.reply;
       if (guarded.escalate) path = 'escalate';
@@ -155,16 +187,12 @@ export async function handleAIAgentQuery(params: {
       reply = buildKbOutOfScopeEscalation('low_confidence').reply;
       path = 'escalate';
     } else {
-      const agent = await fastify.prisma.aiAgent.findFirst({
-        where: { id: agentId, workspaceId },
-        select: { name: true, toneOfVoice: true, brandBackground: true },
-      });
       const rag = await callLlmWithRagContext({
         llm,
         workspaceId,
-        agentName: agent?.name ?? 'Assistant',
-        toneOfVoice: agent?.toneOfVoice ?? 'professional',
-        brandBackground: agent?.brandBackground ?? null,
+        agentName: agentRow?.name ?? 'Assistant',
+        toneOfVoice: agentRow?.toneOfVoice ?? 'professional',
+        brandBackground: agentRow?.brandBackground ?? null,
         message,
         hits: confidentHits,
         history: input.conversationHistory,
@@ -212,7 +240,7 @@ export async function handleAIAgentQuery(params: {
     });
   }
 
-  await finish(fastify, workspaceId, agentId, path, topScore);
+  await finish(fastify, workspaceId, agentId, path, topScore, source);
 
   return {
     reply,
@@ -232,10 +260,11 @@ async function finish(
   workspaceId: string,
   agentId: string,
   path: RetrievalPath,
-  topScore: number | null
+  topScore: number | null,
+  source: 'pgvector' | 'database' | 'none' | 'skip' = 'skip'
 ): Promise<void> {
   console.info(
-    `[HybridRetrieval] path=${path} score=${topScore ?? 'n/a'} cache=${path === 'cache' ? 'hit' : 'miss'} agent=${agentId}`
+    `[HybridRetrieval] path=${path} score=${topScore ?? 'n/a'} source=${source} cache=${path === 'cache' ? 'hit' : 'miss'} agent=${agentId}`
   );
   await recordRetrievalPath(fastify, workspaceId, agentId, path);
 }
