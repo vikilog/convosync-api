@@ -85,6 +85,7 @@ import {
   type InboxScope,
 } from '../services/inboxScope.js';
 import { contentDisposition } from '../utils/contentDisposition.js';
+import { sendInboxEmailToContact } from '../services/inboxEmailSend.js';
 
 function denyInboxScope(reply: FastifyReply) {
   return reply.code(403).send({
@@ -263,6 +264,57 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         include: { contact: true, agent: true },
       })
     );
+  });
+
+  /** 1:1 email from Inbox New Conversation — creates/continues channel=email thread */
+  fastify.post('/email/send', auth, async (request, reply) => {
+    const { workspaceId, userId } = getJwtUser(request);
+    const access = await resolveMembershipAccess(userId, workspaceId);
+    const body = request.body as {
+      contactId?: string;
+      subject?: string;
+      text?: string;
+      html?: string;
+      templateId?: string;
+    };
+
+    if (!body.contactId?.trim()) {
+      return reply.code(400).send({ error: 'contactId is required' });
+    }
+
+    if (
+      !conversationMatchesInboxScope(
+        { channel: 'email', channelAccountId: null },
+        access.inboxScope
+      )
+    ) {
+      return denyInboxScope(reply);
+    }
+
+    const agent = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    });
+
+    try {
+      const result = await sendInboxEmailToContact(workspaceId, {
+        contactId: body.contactId.trim(),
+        subject: body.subject ?? '',
+        text: body.text,
+        html: body.html,
+        templateId: body.templateId,
+        senderName: agent?.name ?? undefined,
+      });
+      return reply.code(201).send(result);
+    } catch (err) {
+      const statusCode =
+        err && typeof err === 'object' && 'statusCode' in err
+          ? Number((err as { statusCode?: number }).statusCode)
+          : 400;
+      return reply.code(Number.isFinite(statusCode) && statusCode >= 400 ? statusCode : 400).send({
+        error: err instanceof Error ? err.message : 'Failed to send email',
+      });
+    }
   });
 
   fastify.get('/:id/messages', auth, async (request, reply) => {

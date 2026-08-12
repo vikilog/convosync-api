@@ -35,6 +35,13 @@ export const ROUTE_ACTIVITY: Record<string, RouteEntry> = {
     message: 'Opened or created a conversation',
     entityType: 'conversation',
   },
+  'POST /api/conversations/email/send': {
+    type: T.INBOX_MESSAGE_SENT,
+    category: C.INBOX,
+    title: 'Inbox email sent',
+    message: 'Sent a 1:1 email from Inbox',
+    entityType: 'conversation',
+  },
   'POST /api/conversations/:id/takeover': {
     type: T.INBOX_TAKEOVER,
     category: C.INBOX,

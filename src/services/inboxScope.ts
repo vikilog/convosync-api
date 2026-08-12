@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../index.js';
 import type { WorkspaceMemberRole } from './workspaceMemberAdmin.js';
 
-export type InboxChannel = 'whatsapp' | 'instagram' | 'messenger';
+export type InboxChannel = 'whatsapp' | 'instagram' | 'messenger' | 'email';
 
 export type InboxScope = {
   mode: 'all' | 'restricted';
@@ -12,7 +12,7 @@ export type InboxScope = {
 
 export const FULL_INBOX_SCOPE: InboxScope = { mode: 'all' };
 
-const INBOX_CHANNELS: InboxChannel[] = ['whatsapp', 'instagram', 'messenger'];
+const INBOX_CHANNELS: InboxChannel[] = ['whatsapp', 'instagram', 'messenger', 'email'];
 
 function isInboxChannel(value: string): value is InboxChannel {
   return (INBOX_CHANNELS as string[]).includes(value);
@@ -93,7 +93,7 @@ export function buildConversationScopeWhere(
 
   const or: Prisma.ConversationWhereInput[] = [];
   for (const [channel, allowed] of access) {
-    if (allowed === 'all') {
+    if (allowed === 'all' || channel === 'email') {
       or.push({ channel });
     } else {
       or.push({ channel, channelAccountId: { in: allowed } });
@@ -115,7 +115,7 @@ export function conversationMatchesInboxScope(
 
   const allowed = access.get(channel);
   if (!allowed) return false;
-  if (allowed === 'all') return true;
+  if (allowed === 'all' || channel === 'email') return true;
   if (!conversation.channelAccountId) return false;
   return allowed.includes(conversation.channelAccountId);
 }
@@ -172,6 +172,11 @@ export async function validateInboxScopeForWorkspace(
     if (!channels.includes('messenger') && accounts.messenger.length > 0) {
       channels.push('messenger');
     }
+  }
+
+  // email has no account ids — channel flag alone is enough
+  if (channels.includes('email')) {
+    delete accounts.email;
   }
 
   const hasAccounts = Object.values(accounts).some((ids) => ids && ids.length > 0);
