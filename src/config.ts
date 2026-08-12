@@ -212,6 +212,12 @@ export const config = {
     igAccountId: (process.env.SUPER_ADMIN_IG_ACCOUNT_ID || '').trim(),
     igAccessToken: (process.env.SUPER_ADMIN_IG_ACCESS_TOKEN || '').trim(),
   },
+  /**
+   * ConvoSync sales/ops workspace that receives signup clients as CRM Contacts
+   * (Super Admin → organization → "Add to ConvoSync CRM").
+   */
+  convosyncCrmWorkspaceId: (process.env.CONVOSYNC_CRM_WORKSPACE_ID || '').trim(),
+
   /** Account email/phone OTP (settings verification — does not block signup) */
   contactOtp: {
     ttlSeconds: parseInt(process.env.CONVOSYNC_OTP_TTL_SECONDS || '600', 10),

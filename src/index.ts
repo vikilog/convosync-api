@@ -9,7 +9,10 @@ dotenv.config({ path: path.join(backendRoot, '.env') });
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
+import { assertSafeDatabaseUrlForDev } from './lib/prodDbGuard.js';
 import { config } from './config.js';
+
+assertSafeDatabaseUrlForDev(process.env.DATABASE_URL);
 import { corsOriginDelegate } from './lib/cors.js';
 import { createOtelJsonLogStream } from './lib/pino-otel-json-stream.js';
 import { authenticate } from './middleware/auth.js';

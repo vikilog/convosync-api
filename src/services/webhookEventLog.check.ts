@@ -1,11 +1,12 @@
 /**
- * Runnable check: payload truncation + Meta webhook describe.
+ * Runnable check: payload truncation + Meta/Razorpay webhook describe.
  * Run: npx tsx src/services/webhookEventLog.check.ts
  */
 import assert from 'node:assert/strict';
 import {
   WEBHOOK_PAYLOAD_MAX_CHARS,
   describeMetaWebhook,
+  describeRazorpayWebhook,
   truncateJsonPayload,
 } from './webhookEventLog.service.js';
 
@@ -69,5 +70,41 @@ const tmpl = describeMetaWebhook({
 assert.equal(tmpl.eventType, 'message_template_status_update');
 assert.match(tmpl.summary, /order_confirm/);
 assert.match(tmpl.summary, /REJECTED/);
+
+const rzp = describeRazorpayWebhook({
+  entity: 'event',
+  event: 'payment.captured',
+  payload: {
+    payment: {
+      entity: {
+        id: 'pay_abc',
+        status: 'captured',
+        amount: 49900,
+        currency: 'INR',
+        notes: { workspaceId: 'ws_1' },
+      },
+    },
+  },
+});
+assert.equal(rzp.source, 'razorpay');
+assert.equal(rzp.eventType, 'payment.captured');
+assert.equal(rzp.workspaceId, 'ws_1');
+assert.match(rzp.summary, /pay_abc/);
+assert.match(rzp.summary, /captured/);
+
+const link = describeRazorpayWebhook({
+  event: 'payment_link.paid',
+  payload: {
+    payment_link: {
+      entity: {
+        id: 'plink_1',
+        status: 'paid',
+        notes: { purpose: 'billing_offer' },
+      },
+    },
+  },
+});
+assert.equal(link.eventType, 'payment_link.paid');
+assert.match(link.summary, /billing_offer/);
 
 console.log('webhookEventLog.check.ts: ok');

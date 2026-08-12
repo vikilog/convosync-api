@@ -1,2 +1,2 @@
 -- AlterTable
-ALTER TABLE "AiAgent" ADD COLUMN "voiceAgentEnabled" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "AiAgent" ADD COLUMN IF NOT EXISTS "voiceAgentEnabled" BOOLEAN NOT NULL DEFAULT false;

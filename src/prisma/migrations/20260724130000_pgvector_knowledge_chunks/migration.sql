@@ -1,4 +1,5 @@
 -- pgvector for AI agent knowledge retrieval (replaces Pinecone)
+-- Idempotent: safe when table already exists from `prisma db push` (bare `vector` / no typmod).
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS "knowledge_chunks" (
@@ -16,6 +17,30 @@ CREATE TABLE IF NOT EXISTS "knowledge_chunks" (
     CONSTRAINT "knowledge_chunks_pkey" PRIMARY KEY ("id")
 );
 
+-- db push with Unsupported("vector") creates typmod=-1; HNSW requires vector(N).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_attribute a
+    JOIN pg_class c ON a.attrelid = c.oid
+    JOIN pg_namespace n ON c.relnamespace = n.oid
+    JOIN pg_type t ON a.atttypid = t.oid
+    WHERE n.nspname = 'public'
+      AND c.relname = 'knowledge_chunks'
+      AND a.attname = 'embedding'
+      AND NOT a.attisdropped
+      AND t.typname = 'vector'
+      AND a.atttypmod <> 1536
+  ) THEN
+    EXECUTE $sql$
+      ALTER TABLE "knowledge_chunks"
+        ALTER COLUMN "embedding" TYPE vector(1536)
+        USING ("embedding"::vector(1536))
+    $sql$;
+  END IF;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS "knowledge_chunks_knowledgeItemId_chunkIndex_key"
   ON "knowledge_chunks"("knowledgeItemId", "chunkIndex");
 
@@ -25,7 +50,31 @@ CREATE INDEX IF NOT EXISTS "knowledge_chunks_workspaceId_agentId_idx"
 CREATE INDEX IF NOT EXISTS "knowledge_chunks_knowledgeItemId_idx"
   ON "knowledge_chunks"("knowledgeItemId");
 
--- Cosine distance index for semantic search
-CREATE INDEX IF NOT EXISTS "knowledge_chunks_embedding_hnsw_idx"
-  ON "knowledge_chunks"
-  USING hnsw ("embedding" vector_cosine_ops);
+-- Cosine HNSW only when embedding has dimensions (atttypmod = N for vector(N))
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_attribute a
+    JOIN pg_class c ON a.attrelid = c.oid
+    JOIN pg_namespace n ON c.relnamespace = n.oid
+    JOIN pg_type t ON a.atttypid = t.oid
+    WHERE n.nspname = 'public'
+      AND c.relname = 'knowledge_chunks'
+      AND a.attname = 'embedding'
+      AND NOT a.attisdropped
+      AND t.typname = 'vector'
+      AND a.atttypmod = 1536
+  ) AND NOT EXISTS (
+    SELECT 1 FROM pg_class idx
+    JOIN pg_namespace n ON idx.relnamespace = n.oid
+    WHERE n.nspname = 'public'
+      AND idx.relname = 'knowledge_chunks_embedding_hnsw_idx'
+  ) THEN
+    EXECUTE $sql$
+      CREATE INDEX "knowledge_chunks_embedding_hnsw_idx"
+        ON "knowledge_chunks"
+        USING hnsw ("embedding" vector_cosine_ops)
+    $sql$;
+  END IF;
+END $$;

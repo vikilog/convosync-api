@@ -9,6 +9,7 @@ import {
 } from '../../services/wallet.service.js';
 import { WALLET_TOPUP_PRESETS_INR, PLATFORM_MONTHLY_FEE_INR } from '../../services/wallet.constants.js';
 import type { BillingService } from './billing.service.js';
+import { listPendingBillingOffers } from '../../services/billingOffers.js';
 
 const createOrderSchema = z.object({
   amountPaise: z.number().int().positive().optional(),
@@ -83,6 +84,18 @@ export class BillingController {
     try {
       const data = await this.billing.getWorkspaceBilling(workspaceId);
       return reply.send(data);
+    } catch (err) {
+      return reply.code(500).send({ error: formatError(err) });
+    }
+  };
+
+  listPendingOffers = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { workspaceId } = getJwtUser(request);
+    if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
+
+    try {
+      const offers = await listPendingBillingOffers(workspaceId);
+      return reply.send({ offers });
     } catch (err) {
       return reply.code(500).send({ error: formatError(err) });
     }

@@ -21,9 +21,13 @@ export const PLATFORM_AUDIT_ACTIONS = {
   ORG_OWNER_UPDATE: 'organization.owner.update',
   ORG_IMPERSONATE: 'organization.impersonate',
   ORG_WALLET_CREDIT: 'organization.wallet.credit',
+  ORG_CRM_CONTACT_PUSH: 'organization.crm_contact.push',
   COUPON_CREATE: 'coupon.create',
   COUPON_UPDATE: 'coupon.update',
   COUPON_ACTIVE: 'coupon.active',
+  ORG_BILLING_OFFER_CREATE: 'organization.billing_offer.create',
+  ORG_BILLING_OFFER_CANCEL: 'organization.billing_offer.cancel',
+  ORG_BILLING_OFFER_DELETE: 'organization.billing_offer.delete',
 } as const;
 
 export type PlatformAuditAction =
@@ -38,9 +42,13 @@ const ACTION_LABELS: Record<string, string> = {
   [PLATFORM_AUDIT_ACTIONS.ORG_OWNER_UPDATE]: 'Owner Updated',
   [PLATFORM_AUDIT_ACTIONS.ORG_IMPERSONATE]: 'Impersonation Login',
   [PLATFORM_AUDIT_ACTIONS.ORG_WALLET_CREDIT]: 'Wallet Credit Added',
+  [PLATFORM_AUDIT_ACTIONS.ORG_CRM_CONTACT_PUSH]: 'Pushed to ConvoSync CRM',
   [PLATFORM_AUDIT_ACTIONS.COUPON_CREATE]: 'Coupon Created',
   [PLATFORM_AUDIT_ACTIONS.COUPON_UPDATE]: 'Coupon Updated',
   [PLATFORM_AUDIT_ACTIONS.COUPON_ACTIVE]: 'Coupon Status Changed',
+  [PLATFORM_AUDIT_ACTIONS.ORG_BILLING_OFFER_CREATE]: 'Billing Offer Created',
+  [PLATFORM_AUDIT_ACTIONS.ORG_BILLING_OFFER_CANCEL]: 'Billing Offer Cancelled',
+  [PLATFORM_AUDIT_ACTIONS.ORG_BILLING_OFFER_DELETE]: 'Billing Offer Deleted',
 };
 
 export type AuditActor = {
@@ -72,29 +80,36 @@ export function auditActionLabel(action: string): string {
   return ACTION_LABELS[action] ?? action.replace(/\./g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/**
+ * Resolve actor for PlatformAuditLog.actorId (FK → PlatformAdmin).
+ * Missing/stale/wrong ids become null — email/role still recorded.
+ */
 async function resolveActor(actor?: AuditActor) {
-  if (actor?.email) {
-    return {
-      actorId: actor.id ?? null,
-      actorEmail: actor.email,
-      actorRole: actor.role ?? 'Super Admin',
-    };
-  }
+  let actorId: string | null = null;
+  let actorEmail = actor?.email ?? null;
+  let actorRole = actor?.role ?? null;
+  let unresolvedActorId: string | null = null;
+
   if (actor?.id) {
     const admin = await prisma.platformAdmin.findUnique({
       where: { id: actor.id },
-      select: { email: true, role: true },
+      select: { id: true, email: true, role: true },
     });
-    return {
-      actorId: actor.id,
-      actorEmail: admin?.email ?? 'unknown',
-      actorRole: admin?.role ?? actor.role ?? 'Super Admin',
-    };
+    if (admin) {
+      actorId = admin.id;
+      actorEmail = actorEmail ?? admin.email;
+      actorRole = actorRole ?? admin.role;
+    } else {
+      // ponytail: JWT/stale platformAdminId or wrong table id — null FK, keep label in metadata
+      unresolvedActorId = actor.id;
+    }
   }
+
   return {
-    actorId: null,
-    actorEmail: actor?.email ?? 'system',
-    actorRole: actor?.role ?? 'System',
+    actorId,
+    actorEmail: actorEmail ?? (unresolvedActorId ? 'unknown' : 'system'),
+    actorRole: actorRole ?? (actorId ? 'Super Admin' : 'System'),
+    unresolvedActorId,
   };
 }
 
@@ -103,6 +118,12 @@ export function recordAuditEvent(input: RecordAuditEventInput): void {
   void (async () => {
     try {
       const resolved = await resolveActor(input.actor);
+      const metadata: Record<string, unknown> = {
+        ...(input.metadata ?? {}),
+      };
+      if (resolved.unresolvedActorId) {
+        metadata.unresolvedActorId = resolved.unresolvedActorId;
+      }
       await prisma.platformAuditLog.create({
         data: {
           actorId: resolved.actorId,
@@ -113,7 +134,10 @@ export function recordAuditEvent(input: RecordAuditEventInput): void {
           entityId: input.entityId ?? null,
           category: input.category ?? 'system',
           severity: input.severity ?? 'info',
-          metadata: (input.metadata ?? undefined) as Prisma.InputJsonValue | undefined,
+          metadata:
+            Object.keys(metadata).length > 0
+              ? (metadata as Prisma.InputJsonValue)
+              : undefined,
           ipAddress: input.ipAddress ?? null,
         },
       });

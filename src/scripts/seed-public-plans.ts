@@ -1,6 +1,6 @@
 /**
  * Upsert landing pricing plans (Starter / Growth / Business / Enterprise)
- * with compare-features, then create missing Razorpay plan IDs.
+ * with compare-features, then create missing Razorpay plan IDs (INR + USD).
  *
  *   npm run plans:seed
  */
@@ -23,7 +23,7 @@ async function main() {
   for (const p of plans) {
     const f = p.features as Record<string, unknown>;
     console.log(
-      `  ✓ ${p.name} (${p.slug}) ₹${p.priceMonthly ?? 'Custom'}/mo · seats=${f.teamMembers} · channels=${f.channels} · storage=${f.storageGb != null ? `${f.storageGb} GB` : 'Custom'}`
+      `  ✓ ${p.name} (${p.slug}) ₹${p.priceMonthly ?? 'Custom'}/mo · $${p.priceMonthlyUsd ?? 'Custom'}/mo · seats=${f.teamMembers} · channels=${f.channels} · storage=${f.storageGb != null ? `${f.storageGb} GB` : 'Custom'}`
     );
   }
 
@@ -42,32 +42,25 @@ async function main() {
   const createPlan = (params: Parameters<RazorpayService['createPlan']>[0]) =>
     razorpay.createPlan(params);
 
-  console.log('\nProvisioning Razorpay plan IDs where missing…');
+  console.log('\nProvisioning Razorpay plan IDs (INR + USD) where missing…');
   for (const plan of plans) {
-    const needsMonthly =
+    const needsInrMonthly =
       !!plan.priceMonthlyPaise && !isValidRazorpayPlanId(plan.razorpayPlanIdMonthly);
-    const needsAnnual =
+    const needsInrAnnual =
       !!plan.priceAnnualPaise && !isValidRazorpayPlanId(plan.razorpayPlanIdAnnual);
+    const needsUsdMonthly =
+      !!plan.priceMonthlyCents && !isValidRazorpayPlanId(plan.razorpayPlanIdMonthlyUsd);
+    const needsUsdAnnual =
+      !!plan.priceAnnualCents && !isValidRazorpayPlanId(plan.razorpayPlanIdAnnualUsd);
 
-    if (!needsMonthly && !needsAnnual) {
+    if (!needsInrMonthly && !needsInrAnnual && !needsUsdMonthly && !needsUsdAnnual) {
       console.log(
-        `  · ${plan.slug}: already linked (${plan.razorpayPlanIdMonthly ?? '—'} / ${plan.razorpayPlanIdAnnual ?? '—'})`
+        `  · ${plan.slug}: already linked INR=${plan.razorpayPlanIdMonthly ?? '—'}/${plan.razorpayPlanIdAnnual ?? '—'} USD=${plan.razorpayPlanIdMonthlyUsd ?? '—'}/${plan.razorpayPlanIdAnnualUsd ?? '—'}`
       );
       continue;
     }
 
-    const result = await provisionRazorpayPlanIds(
-      {
-        id: plan.id,
-        name: plan.name,
-        slug: plan.slug,
-        priceMonthly: needsMonthly ? plan.priceMonthly : null,
-        priceAnnual: needsAnnual ? plan.priceAnnual : null,
-        priceMonthlyPaise: needsMonthly ? plan.priceMonthlyPaise : null,
-        priceAnnualPaise: needsAnnual ? plan.priceAnnualPaise : null,
-      },
-      createPlan
-    );
+    const result = await provisionRazorpayPlanIds(plan, createPlan);
 
     if (result.warnings.length) {
       console.warn(`  ! ${plan.slug}: ${result.warnings.join(' · ')}`);
@@ -75,7 +68,7 @@ async function main() {
 
     const fresh = await prisma.subscriptionPlan.findUniqueOrThrow({ where: { id: plan.id } });
     console.log(
-      `  ✓ ${plan.slug}: monthly=${fresh.razorpayPlanIdMonthly ?? '—'} annual=${fresh.razorpayPlanIdAnnual ?? '—'}`
+      `  ✓ ${plan.slug}: INR=${fresh.razorpayPlanIdMonthly ?? '—'}/${fresh.razorpayPlanIdAnnual ?? '—'} USD=${fresh.razorpayPlanIdMonthlyUsd ?? '—'}/${fresh.razorpayPlanIdAnnualUsd ?? '—'}`
     );
   }
 

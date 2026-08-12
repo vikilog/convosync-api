@@ -22,6 +22,7 @@ import {
   updateOrganizationOwner,
   updateWorkspaceLimits,
 } from '../../services/platformOrganizationAdmin.js';
+import { pushOrganizationToCrmContact } from '../../services/pushOrganizationCrmContact.js';
 import { RazorpayService } from '../../modules/billing/razorpay.service.js';
 import {
   activateWorkspaceSubscription,
@@ -32,6 +33,13 @@ import {
   PLATFORM_AUDIT_ACTIONS,
   recordAuditEvent,
 } from '../../services/platformAudit.js';
+import {
+  cancelBillingOffer,
+  createBillingOffer,
+  deleteBillingOffer,
+  listBillingOffersForWorkspace,
+} from '../../services/billingOffers.js';
+import { extractRazorpayErrorDetails } from '../../utils/razorpay-error.utils.js';
 
 export default async function platformOrganizationRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticatePlatformAdmin);
@@ -232,6 +240,145 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
       return { ok: true, ...result };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to assign plan';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  fastify.get('/:id/billing-offers', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const query = z
+      .object({ status: z.enum(['pending', 'paid', 'cancelled', 'all']).optional() })
+      .parse(request.query ?? {});
+    try {
+      const offers = await listBillingOffersForWorkspace(id, {
+        status: query.status ?? 'all',
+      });
+      return { offers };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to list billing offers';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  fastify.post('/:id/billing-offers', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = z
+      .object({
+        planId: z.string().trim().min(1),
+        billingCycle: z.enum(['monthly', 'annual']).default('monthly'),
+        currency: z.enum(['INR', 'USD']),
+        amountMinor: z.number().int().positive().nullable().optional(),
+        note: z.string().trim().max(500).nullable().optional(),
+        checkoutKind: z.enum(['subscription', 'payment_link']).default('subscription'),
+        allowPaymentLinkFallback: z.boolean().optional().default(false),
+      })
+      .parse(request.body);
+    const admin = getJwtUser(request);
+    const ip = getRequestIp(request);
+
+    try {
+      const offer = await createBillingOffer(fastify, id, {
+        planId: body.planId,
+        billingCycle: body.billingCycle,
+        currency: body.currency,
+        amountMinor: body.amountMinor,
+        note: body.note,
+        checkoutKind: body.checkoutKind,
+        allowPaymentLinkFallback: body.allowPaymentLinkFallback,
+        createdByPlatformAdminId: admin.platformAdminId,
+      });
+      recordAuditEvent({
+        action: PLATFORM_AUDIT_ACTIONS.ORG_BILLING_OFFER_CREATE,
+        actor: { id: admin.platformAdminId, role: admin.role },
+        entityType: 'workspace',
+        entityId: id,
+        category: 'billing',
+        severity: 'info',
+        ipAddress: ip,
+        metadata: {
+          targetLabel: offer.plan?.name ?? offer.planId,
+          details: `Created ${offer.offerType} offer for ${offer.plan?.name ?? offer.planId} (${offer.currency} ${offer.amountMinor})`,
+          offerId: offer.id,
+          offerType: offer.offerType,
+          currency: offer.currency,
+          amountMinor: offer.amountMinor,
+          shortUrl: offer.shortUrl,
+        },
+      });
+      return reply.code(201).send({ offer });
+    } catch (err) {
+      const details = extractRazorpayErrorDetails(err);
+      const message =
+        details.message ||
+        (err instanceof Error ? err.message : 'Failed to create billing offer');
+      return reply.code(400).send({
+        error: message,
+        razorpay: {
+          description: details.description,
+          field: details.field,
+          reason: details.reason,
+          source: details.source,
+          step: details.step,
+          code: details.code,
+          statusCode: details.statusCode,
+          rawError: details.rawError,
+        },
+      });
+    }
+  });
+
+  fastify.post('/:id/billing-offers/:offerId/cancel', async (request, reply) => {
+    const { id, offerId } = request.params as { id: string; offerId: string };
+    const admin = getJwtUser(request);
+    const ip = getRequestIp(request);
+    try {
+      const offer = await cancelBillingOffer(fastify, id, offerId);
+      recordAuditEvent({
+        action: PLATFORM_AUDIT_ACTIONS.ORG_BILLING_OFFER_CANCEL,
+        actor: { id: admin.platformAdminId, role: admin.role },
+        entityType: 'workspace',
+        entityId: id,
+        category: 'billing',
+        severity: 'info',
+        ipAddress: ip,
+        metadata: {
+          targetLabel: offer.plan?.name ?? offer.planId,
+          details: `Cancelled billing offer ${offer.id}`,
+          offerId: offer.id,
+        },
+      });
+      return { offer };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to cancel billing offer';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  fastify.delete('/:id/billing-offers/:offerId', async (request, reply) => {
+    const { id, offerId } = request.params as { id: string; offerId: string };
+    const admin = getJwtUser(request);
+    const ip = getRequestIp(request);
+    try {
+      const offer = await deleteBillingOffer(fastify, id, offerId);
+      recordAuditEvent({
+        action: PLATFORM_AUDIT_ACTIONS.ORG_BILLING_OFFER_DELETE,
+        actor: { id: admin.platformAdminId, role: admin.role },
+        entityType: 'workspace',
+        entityId: id,
+        category: 'billing',
+        severity: 'warning',
+        ipAddress: ip,
+        metadata: {
+          targetLabel: offer.plan?.name ?? offer.planId,
+          details: `Deleted billing offer ${offer.id}`,
+          offerId: offer.id,
+          offerType: offer.offerType,
+          priorStatus: offer.status,
+        },
+      });
+      return { ok: true, offer };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete billing offer';
       return reply.code(400).send({ error: message });
     }
   });
@@ -437,6 +584,40 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to credit wallet';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  /** Push tenant owner into ConvoSync sales CRM as a Contact (WhatsApp/IG follow-up). */
+  fastify.post('/:id/push-crm-contact', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const admin = getJwtUser(request);
+    const ip = getRequestIp(request);
+
+    try {
+      const result = await pushOrganizationToCrmContact(id);
+
+      recordAuditEvent({
+        action: PLATFORM_AUDIT_ACTIONS.ORG_CRM_CONTACT_PUSH,
+        actor: { id: admin.platformAdminId, role: admin.role },
+        entityType: 'workspace',
+        entityId: id,
+        category: 'organization',
+        severity: 'info',
+        ipAddress: ip,
+        metadata: {
+          details: result.message,
+          contactId: result.contactId,
+          created: result.created,
+          alreadyExists: result.alreadyExists,
+          phone: result.phone,
+          email: result.email,
+        },
+      });
+
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to push CRM contact';
       return reply.code(400).send({ error: message });
     }
   });

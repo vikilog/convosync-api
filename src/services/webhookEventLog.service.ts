@@ -110,7 +110,7 @@ export async function recordWebhookEventLog(input: {
   error?: string | null;
 }): Promise<void> {
   try {
-    await prisma.webhookEventLog.create({
+    const row = await prisma.webhookEventLog.create({
       data: {
         source: input.source,
         eventType: input.eventType,
@@ -121,6 +121,23 @@ export async function recordWebhookEventLog(input: {
         error: input.error ? input.error.slice(0, 2000) : null,
       },
     });
+
+    // Live refresh for Super Admin webhook logs (platform room)
+    try {
+      const { getIo, PLATFORM_ROOM } = await import('../socket.js');
+      getIo().to(PLATFORM_ROOM).emit('platform_webhook_event', {
+        id: row.id,
+        source: row.source,
+        eventType: row.eventType,
+        object: row.object,
+        workspaceId: row.workspaceId,
+        summary: row.summary,
+        error: row.error,
+        receivedAt: row.receivedAt.toISOString(),
+      });
+    } catch {
+      // Socket not ready — persist still succeeded
+    }
   } catch (err) {
     console.error('[webhookEventLog] persist failed', err);
   }
@@ -149,6 +166,109 @@ export async function recordInboundMetaWebhook(
     summary: desc.summary,
     payload: body,
     error: opts?.error,
+  });
+}
+
+type RazorpayWebhookBody = {
+  entity?: string;
+  event?: string;
+  account_id?: string;
+  payload?: {
+    payment?: { entity?: Record<string, unknown> };
+    subscription?: { entity?: Record<string, unknown> };
+    payment_link?: { entity?: Record<string, unknown> };
+    invoice?: { entity?: Record<string, unknown> };
+    [key: string]: unknown;
+  };
+  created_at?: number;
+};
+
+function notesWorkspaceId(notes: unknown): string | null {
+  if (!notes || typeof notes !== 'object') return null;
+  const n = notes as Record<string, unknown>;
+  const id = n.workspaceId ?? n.workspace_id;
+  return typeof id === 'string' && id.trim() ? id.trim() : null;
+}
+
+export function describeRazorpayWebhook(body: RazorpayWebhookBody): {
+  source: string;
+  eventType: string;
+  object: string | null;
+  summary: string;
+  workspaceId: string | null;
+} {
+  const eventType = typeof body?.event === 'string' && body.event ? body.event : 'unknown';
+  const payload = body?.payload ?? {};
+  const payment = payload.payment?.entity;
+  const subscription = payload.subscription?.entity;
+  const paymentLink = payload.payment_link?.entity;
+  const invoice = payload.invoice?.entity;
+
+  const workspaceId =
+    notesWorkspaceId(payment?.notes) ??
+    notesWorkspaceId(paymentLink?.notes) ??
+    notesWorkspaceId(subscription?.notes) ??
+    null;
+
+  const parts: string[] = [];
+  if (payment && typeof payment.id === 'string') {
+    parts.push(`payment=${payment.id}`);
+    if (typeof payment.status === 'string') parts.push(`status=${payment.status}`);
+    if (typeof payment.amount === 'number') {
+      const cur = typeof payment.currency === 'string' ? payment.currency : '';
+      parts.push(`amount=${payment.amount}${cur ? ` ${cur}` : ''}`);
+    }
+    if (typeof payment.error_description === 'string' && payment.error_description) {
+      parts.push(`err=${payment.error_description}`);
+    }
+  } else if (subscription && typeof subscription.id === 'string') {
+    parts.push(`subscription=${subscription.id}`);
+    if (typeof subscription.status === 'string') parts.push(`status=${subscription.status}`);
+  } else if (paymentLink && typeof paymentLink.id === 'string') {
+    parts.push(`payment_link=${paymentLink.id}`);
+    if (typeof paymentLink.status === 'string') parts.push(`status=${paymentLink.status}`);
+    const notes = paymentLink.notes as Record<string, unknown> | undefined;
+    if (typeof notes?.purpose === 'string') parts.push(`purpose=${notes.purpose}`);
+  } else if (invoice && typeof invoice.id === 'string') {
+    parts.push(`invoice=${invoice.id}`);
+    if (typeof invoice.status === 'string') parts.push(`status=${invoice.status}`);
+  }
+
+  return {
+    source: 'razorpay',
+    eventType,
+    object: typeof body?.entity === 'string' ? body.entity : 'event',
+    summary: parts.length ? parts.join(' ') : eventType,
+    workspaceId,
+  };
+}
+
+/** Best-effort Razorpay audit log. Never throws. */
+export async function recordInboundRazorpayWebhook(
+  body: RazorpayWebhookBody | null | undefined,
+  opts?: { error?: string | null; payload?: unknown; duplicate?: boolean }
+): Promise<void> {
+  if (body && typeof body.event === 'string') {
+    const desc = describeRazorpayWebhook(body);
+    const summary = opts?.duplicate ? `${desc.summary} (duplicate)` : desc.summary;
+    await recordWebhookEventLog({
+      source: desc.source,
+      eventType: desc.eventType,
+      object: desc.object,
+      workspaceId: desc.workspaceId,
+      summary,
+      payload: opts?.payload ?? body,
+      error: opts?.error,
+    });
+    return;
+  }
+  await recordWebhookEventLog({
+    source: 'razorpay',
+    eventType: 'invalid',
+    object: 'event',
+    summary: 'unparseable or rejected webhook',
+    payload: opts?.payload ?? body ?? null,
+    error: opts?.error ?? 'invalid payload',
   });
 }
 

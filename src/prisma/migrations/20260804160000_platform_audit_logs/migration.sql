@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "platform_audit_logs" (
+CREATE TABLE IF NOT EXISTS "platform_audit_logs" (
     "id" TEXT NOT NULL,
     "actorId" TEXT,
     "actorEmail" TEXT,
@@ -17,16 +17,19 @@ CREATE TABLE "platform_audit_logs" (
 );
 
 -- CreateIndex
-CREATE INDEX "platform_audit_logs_createdAt_idx" ON "platform_audit_logs"("createdAt");
+CREATE INDEX IF NOT EXISTS "platform_audit_logs_createdAt_idx" ON "platform_audit_logs"("createdAt");
 
 -- CreateIndex
-CREATE INDEX "platform_audit_logs_action_idx" ON "platform_audit_logs"("action");
+CREATE INDEX IF NOT EXISTS "platform_audit_logs_action_idx" ON "platform_audit_logs"("action");
 
 -- CreateIndex
-CREATE INDEX "platform_audit_logs_category_idx" ON "platform_audit_logs"("category");
+CREATE INDEX IF NOT EXISTS "platform_audit_logs_category_idx" ON "platform_audit_logs"("category");
 
 -- CreateIndex
-CREATE INDEX "platform_audit_logs_actorEmail_idx" ON "platform_audit_logs"("actorEmail");
+CREATE INDEX IF NOT EXISTS "platform_audit_logs_actorEmail_idx" ON "platform_audit_logs"("actorEmail");
 
 -- AddForeignKey
-ALTER TABLE "platform_audit_logs" ADD CONSTRAINT "platform_audit_logs_actorId_fkey" FOREIGN KEY ("actorId") REFERENCES "PlatformAdmin"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "platform_audit_logs" ADD CONSTRAINT "platform_audit_logs_actorId_fkey" FOREIGN KEY ("actorId") REFERENCES "PlatformAdmin"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;

@@ -26,7 +26,9 @@ export class RazorpayService {
   }
 
   async createOrder(params: {
+    /** Minor units: paise (INR) or cents (USD). */
     amountPaise: number;
+    currency?: 'INR' | 'USD';
     receipt: string;
     notes?: Record<string, string>;
     paymentCapture?: boolean;
@@ -34,7 +36,7 @@ export class RazorpayService {
     return this.call(() =>
       this.client.orders.create({
         amount: params.amountPaise,
-        currency: 'INR',
+        currency: params.currency ?? 'INR',
         receipt: params.receipt,
         notes: params.notes ?? {},
         ...(params.paymentCapture ? { payment_capture: true } : {}),
@@ -46,6 +48,7 @@ export class RazorpayService {
   async createPlan(params: {
     name: string;
     amountPaise: number;
+    currency?: 'INR' | 'USD';
     period: 'monthly' | 'yearly';
     description?: string;
     notes?: Record<string, string>;
@@ -57,7 +60,7 @@ export class RazorpayService {
         item: {
           name: params.name,
           amount: params.amountPaise,
-          currency: 'INR',
+          currency: params.currency ?? 'INR',
           ...(params.description ? { description: params.description } : {}),
         },
         notes: params.notes ?? {},
@@ -76,27 +79,24 @@ export class RazorpayService {
 
   async createSubscription(params: {
     planId: string;
-    customerId?: string;
     totalCount: number;
-    customerNotify: number;
-    notifyEmail?: string;
-    notifyPhone?: string;
+    /** Razorpay requires a real boolean — `1`/`0` returns BAD_REQUEST_ERROR. */
+    customerNotify?: boolean;
+    /**
+     * Unix seconds. This account rejects create without a *future* start_at
+     * with opaque "Validation failed" (no field). Defaults to now+120s.
+     */
+    startAt?: number;
     notes?: Record<string, string>;
   }) {
+    // ponytail: omit start_at → opaque Validation failed on this merchant; upgrade = Razorpay fix.
+    const startAt = params.startAt ?? Math.floor(Date.now() / 1000) + 120;
     return this.call(() =>
       this.client.subscriptions.create({
         plan_id: params.planId,
         total_count: params.totalCount,
-        customer_notify: params.customerNotify,
-        ...(params.customerId ? { customer_id: params.customerId } : {}),
-        ...(params.notifyEmail || params.notifyPhone
-          ? {
-              notify_info: {
-                ...(params.notifyEmail ? { notify_email: params.notifyEmail } : {}),
-                ...(params.notifyPhone ? { notify_phone: params.notifyPhone } : {}),
-              },
-            }
-          : {}),
+        customer_notify: params.customerNotify ?? true,
+        start_at: startAt,
         notes: params.notes ?? {},
       })
     );
@@ -131,6 +131,7 @@ export class RazorpayService {
 
   async chargeWithToken(params: {
     amountPaise: number;
+    currency?: 'INR' | 'USD';
     orderId: string;
     customerId: string;
     tokenId: string;
@@ -150,7 +151,7 @@ export class RazorpayService {
     const response = await this.call(() =>
       this.client.payments.createRecurringPayment({
         amount: params.amountPaise,
-        currency: 'INR',
+        currency: params.currency ?? 'INR',
         order_id: params.orderId,
         customer_id: params.customerId,
         token: params.tokenId,
@@ -176,7 +177,7 @@ export class RazorpayService {
   async cancelSubscription(subscriptionId: string, cancelAtCycleEnd = false) {
     return this.call(() =>
       this.client.subscriptions.cancel(subscriptionId, {
-        cancel_at_cycle_end: cancelAtCycleEnd ? 1 : 0,
+        cancel_at_cycle_end: cancelAtCycleEnd,
       })
     );
   }
@@ -197,14 +198,16 @@ export class RazorpayService {
 
   async createPaymentLink(params: {
     amountPaise: number;
+    currency?: 'INR' | 'USD';
     description: string;
     customerName: string;
-    customerPhone: string;
+    customerPhone?: string | null;
     customerEmail?: string | null;
     notes?: Record<string, string>;
     expireBy?: number;
   }) {
-    const customerContact = params.customerPhone.replace(/\D/g, '').slice(-10);
+    const digits = params.customerPhone?.replace(/\D/g, '') ?? '';
+    const customerContact = digits.length >= 10 ? digits.slice(-10) : digits || undefined;
     return this.call(() =>
       (this.client as Razorpay & {
         paymentLink: {
@@ -217,11 +220,11 @@ export class RazorpayService {
         };
       }).paymentLink.create({
         amount: params.amountPaise,
-        currency: 'INR',
+        currency: params.currency ?? 'INR',
         description: params.description,
         customer: {
           name: params.customerName,
-          contact: customerContact,
+          ...(customerContact ? { contact: customerContact } : {}),
           ...(params.customerEmail ? { email: params.customerEmail } : {}),
         },
         notify: { sms: false, email: false },
@@ -237,6 +240,16 @@ export class RazorpayService {
       (this.client as Razorpay & {
         paymentLink: { fetch: (id: string) => Promise<{ id: string; status: string }> };
       }).paymentLink.fetch(linkId)
+    );
+  }
+
+  async cancelPaymentLink(linkId: string) {
+    return this.call(() =>
+      (this.client as Razorpay & {
+        paymentLink: {
+          cancel: (id: string) => Promise<{ id: string; status: string }>;
+        };
+      }).paymentLink.cancel(linkId)
     );
   }
 }

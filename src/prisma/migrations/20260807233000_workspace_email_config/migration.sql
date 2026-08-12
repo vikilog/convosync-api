@@ -1,5 +1,5 @@
 -- Bring-your-own email (AWS SES) per workspace
-CREATE TABLE "workspace_email_configs" (
+CREATE TABLE IF NOT EXISTS "workspace_email_configs" (
     "workspaceId" TEXT NOT NULL,
     "provider" TEXT NOT NULL DEFAULT 'platform',
     "accessKeyIdEncrypted" TEXT,
@@ -13,4 +13,7 @@ CREATE TABLE "workspace_email_configs" (
     CONSTRAINT "workspace_email_configs_pkey" PRIMARY KEY ("workspaceId")
 );
 
-ALTER TABLE "workspace_email_configs" ADD CONSTRAINT "workspace_email_configs_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "workspace_email_configs" ADD CONSTRAINT "workspace_email_configs_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;

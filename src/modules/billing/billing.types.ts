@@ -152,5 +152,7 @@ export interface BillingPlanResponse {
   priceAnnualPaise: number | null;
   razorpayPlanIdMonthly: string | null;
   razorpayPlanIdAnnual: string | null;
+  razorpayPlanIdMonthlyUsd: string | null;
+  razorpayPlanIdAnnualUsd: string | null;
   features: unknown;
 }

@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "workspace_tags" (
+CREATE TABLE IF NOT EXISTS "workspace_tags" (
     "id" TEXT NOT NULL,
     "workspaceId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -11,13 +11,16 @@ CREATE TABLE "workspace_tags" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "workspace_tags_workspaceId_name_key" ON "workspace_tags"("workspaceId", "name");
+CREATE UNIQUE INDEX IF NOT EXISTS "workspace_tags_workspaceId_name_key" ON "workspace_tags"("workspaceId", "name");
 
 -- CreateIndex
-CREATE INDEX "workspace_tags_workspaceId_folder_idx" ON "workspace_tags"("workspaceId", "folder");
+CREATE INDEX IF NOT EXISTS "workspace_tags_workspaceId_folder_idx" ON "workspace_tags"("workspaceId", "folder");
 
 -- AddForeignKey
-ALTER TABLE "workspace_tags" ADD CONSTRAINT "workspace_tags_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "workspace_tags" ADD CONSTRAINT "workspace_tags_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Backfill: one WorkspaceTag row per distinct (workspaceId, tag) already present on contacts.
 -- folder is left NULL ("Uncategorized" in the UI) since legacy tags have no folder info.

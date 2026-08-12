@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
+import { isValidRazorpayPlanId } from './razorpayPlanSync.js';
 import { UNLIMITED_USAGE_LIMIT } from './usageLimits.js';
 
 export type PlanFeatures = {
@@ -53,8 +54,15 @@ export const DEFAULT_PLAN_SEEDS: Array<{
   priceAnnual: number | null;
   priceMonthlyPaise: number | null;
   priceAnnualPaise: number | null;
+  /** Fixed USD list prices (international Razorpay). */
+  priceMonthlyUsd: number | null;
+  priceAnnualUsd: number | null;
+  priceMonthlyCents: number | null;
+  priceAnnualCents: number | null;
   razorpayPlanIdMonthly: string | null;
   razorpayPlanIdAnnual: string | null;
+  razorpayPlanIdMonthlyUsd: string | null;
+  razorpayPlanIdAnnualUsd: string | null;
   priceLabel?: string;
   popular?: boolean;
   borderColor?: string;
@@ -72,8 +80,14 @@ export const DEFAULT_PLAN_SEEDS: Array<{
     priceAnnual: 19990,
     priceMonthlyPaise: 199_900,
     priceAnnualPaise: 1_999_000,
+    priceMonthlyUsd: 29,
+    priceAnnualUsd: 290,
+    priceMonthlyCents: 2900,
+    priceAnnualCents: 29_000,
     razorpayPlanIdMonthly: null,
     razorpayPlanIdAnnual: null,
+    razorpayPlanIdMonthlyUsd: null,
+    razorpayPlanIdAnnualUsd: null,
     borderColor: '#064e3b',
     editButtonStyle: 'purple',
     sortOrder: 1,
@@ -105,8 +119,14 @@ export const DEFAULT_PLAN_SEEDS: Array<{
     priceAnnual: 49990,
     priceMonthlyPaise: 499_900,
     priceAnnualPaise: 4_999_000,
+    priceMonthlyUsd: 69,
+    priceAnnualUsd: 690,
+    priceMonthlyCents: 6900,
+    priceAnnualCents: 69_000,
     razorpayPlanIdMonthly: null,
     razorpayPlanIdAnnual: null,
+    razorpayPlanIdMonthlyUsd: null,
+    razorpayPlanIdAnnualUsd: null,
     borderColor: '#0f766e',
     editButtonStyle: 'blue',
     sortOrder: 2,
@@ -138,8 +158,14 @@ export const DEFAULT_PLAN_SEEDS: Array<{
     priceAnnual: 129990,
     priceMonthlyPaise: 1_299_900,
     priceAnnualPaise: 12_999_000,
+    priceMonthlyUsd: 149,
+    priceAnnualUsd: 1490,
+    priceMonthlyCents: 14_900,
+    priceAnnualCents: 149_000,
     razorpayPlanIdMonthly: null,
     razorpayPlanIdAnnual: null,
+    razorpayPlanIdMonthlyUsd: null,
+    razorpayPlanIdAnnualUsd: null,
     popular: true,
     borderColor: '#064e3b',
     editButtonStyle: 'dark',
@@ -172,8 +198,14 @@ export const DEFAULT_PLAN_SEEDS: Array<{
     priceAnnual: null,
     priceMonthlyPaise: null,
     priceAnnualPaise: null,
+    priceMonthlyUsd: null,
+    priceAnnualUsd: null,
+    priceMonthlyCents: null,
+    priceAnnualCents: null,
     razorpayPlanIdMonthly: null,
     razorpayPlanIdAnnual: null,
+    razorpayPlanIdMonthlyUsd: null,
+    razorpayPlanIdAnnualUsd: null,
     priceLabel: 'Custom',
     borderColor: '#1e293b',
     editButtonStyle: 'gray',
@@ -295,8 +327,14 @@ export async function seedSubscriptionPlans() {
         priceAnnual: seed.priceAnnual,
         priceMonthlyPaise: seed.priceMonthlyPaise,
         priceAnnualPaise: seed.priceAnnualPaise,
+        priceMonthlyUsd: seed.priceMonthlyUsd,
+        priceAnnualUsd: seed.priceAnnualUsd,
+        priceMonthlyCents: seed.priceMonthlyCents,
+        priceAnnualCents: seed.priceAnnualCents,
         razorpayPlanIdMonthly: seed.razorpayPlanIdMonthly,
         razorpayPlanIdAnnual: seed.razorpayPlanIdAnnual,
+        razorpayPlanIdMonthlyUsd: seed.razorpayPlanIdMonthlyUsd,
+        razorpayPlanIdAnnualUsd: seed.razorpayPlanIdAnnualUsd,
         priceLabel: seed.priceLabel,
         popular: seed.popular ?? false,
         borderColor: seed.borderColor,
@@ -313,6 +351,10 @@ export async function seedSubscriptionPlans() {
         priceAnnual: seed.priceAnnual,
         priceMonthlyPaise: seed.priceMonthlyPaise,
         priceAnnualPaise: seed.priceAnnualPaise,
+        priceMonthlyUsd: seed.priceMonthlyUsd,
+        priceAnnualUsd: seed.priceAnnualUsd,
+        priceMonthlyCents: seed.priceMonthlyCents,
+        priceAnnualCents: seed.priceAnnualCents,
         priceLabel: seed.priceLabel,
         popular: seed.popular ?? false,
         borderColor: seed.borderColor,
@@ -387,6 +429,8 @@ export type PlanWriteInput = {
   editButtonStyle?: string;
   razorpayPlanIdMonthly?: string | null;
   razorpayPlanIdAnnual?: string | null;
+  razorpayPlanIdMonthlyUsd?: string | null;
+  razorpayPlanIdAnnualUsd?: string | null;
 };
 
 export type PlanCreateKind = 'public' | 'custom';
@@ -487,38 +531,67 @@ export async function createSubscriptionPlan(
 type RazorpayPlanCreator = (params: {
   name: string;
   amountPaise: number;
+  currency?: 'INR' | 'USD';
   period: 'monthly' | 'yearly';
   description?: string;
   notes?: Record<string, string>;
 }) => Promise<{ id: string }>;
 
+type ProvisionPlanInput = {
+  id: string;
+  name: string;
+  slug: string;
+  priceMonthly: number | null;
+  priceAnnual: number | null;
+  priceMonthlyPaise: number | null;
+  priceAnnualPaise: number | null;
+  priceMonthlyCents?: number | null;
+  priceAnnualCents?: number | null;
+  priceMonthlyUsd?: number | null;
+  priceAnnualUsd?: number | null;
+  razorpayPlanIdMonthly?: string | null;
+  razorpayPlanIdAnnual?: string | null;
+  razorpayPlanIdMonthlyUsd?: string | null;
+  razorpayPlanIdAnnualUsd?: string | null;
+};
+
 /**
- * Create Razorpay Subscription plans for monthly/annual prices and persist IDs.
- * No-op when amount is missing or creator is unavailable.
+ * Create Razorpay Subscription plans (INR + USD) for monthly/annual prices and persist IDs.
+ * Skips cycles that already have a stored valid plan ID. No-op when amount missing / no creator.
  */
 export async function provisionRazorpayPlanIds(
-  plan: {
-    id: string;
-    name: string;
-    slug: string;
-    priceMonthly: number | null;
-    priceAnnual: number | null;
-    priceMonthlyPaise: number | null;
-    priceAnnualPaise: number | null;
-  },
+  plan: ProvisionPlanInput,
   createPlan: RazorpayPlanCreator | null
 ): Promise<{
   razorpayPlanIdMonthly: string | null;
   razorpayPlanIdAnnual: string | null;
+  razorpayPlanIdMonthlyUsd: string | null;
+  razorpayPlanIdAnnualUsd: string | null;
   warnings: string[];
 }> {
   const warnings: string[] = [];
-  let razorpayPlanIdMonthly: string | null = null;
-  let razorpayPlanIdAnnual: string | null = null;
+  let razorpayPlanIdMonthly = isValidRazorpayPlanId(plan.razorpayPlanIdMonthly)
+    ? plan.razorpayPlanIdMonthly
+    : null;
+  let razorpayPlanIdAnnual = isValidRazorpayPlanId(plan.razorpayPlanIdAnnual)
+    ? plan.razorpayPlanIdAnnual
+    : null;
+  let razorpayPlanIdMonthlyUsd = isValidRazorpayPlanId(plan.razorpayPlanIdMonthlyUsd)
+    ? plan.razorpayPlanIdMonthlyUsd
+    : null;
+  let razorpayPlanIdAnnualUsd = isValidRazorpayPlanId(plan.razorpayPlanIdAnnualUsd)
+    ? plan.razorpayPlanIdAnnualUsd
+    : null;
 
   if (!createPlan) {
     warnings.push('Razorpay is not configured — plan saved without Razorpay IDs');
-    return { razorpayPlanIdMonthly, razorpayPlanIdAnnual, warnings };
+    return {
+      razorpayPlanIdMonthly,
+      razorpayPlanIdAnnual,
+      razorpayPlanIdMonthlyUsd,
+      razorpayPlanIdAnnualUsd,
+      warnings,
+    };
   }
 
   const monthlyPaise =
@@ -531,52 +604,110 @@ export async function provisionRazorpayPlanIds(
     (plan.priceAnnual != null && plan.priceAnnual > 0
       ? Math.round(plan.priceAnnual * 100)
       : null);
+  const monthlyCents =
+    plan.priceMonthlyCents ??
+    (plan.priceMonthlyUsd != null && plan.priceMonthlyUsd > 0
+      ? Math.round(plan.priceMonthlyUsd * 100)
+      : null);
+  const annualCents =
+    plan.priceAnnualCents ??
+    (plan.priceAnnualUsd != null && plan.priceAnnualUsd > 0
+      ? Math.round(plan.priceAnnualUsd * 100)
+      : null);
 
-  if (monthlyPaise && monthlyPaise > 0) {
+  const created: Partial<{
+    razorpayPlanIdMonthly: string;
+    razorpayPlanIdAnnual: string;
+    razorpayPlanIdMonthlyUsd: string;
+    razorpayPlanIdAnnualUsd: string;
+  }> = {};
+
+  async function ensurePlan(opts: {
+    existing: string | null;
+    amount: number | null;
+    currency: 'INR' | 'USD';
+    period: 'monthly' | 'yearly';
+    cycle: 'monthly' | 'annual';
+    field: keyof typeof created;
+    label: string;
+  }) {
+    if (opts.existing) return opts.existing;
+    if (!opts.amount || opts.amount <= 0) return null;
     try {
-      const created = await createPlan({
-        name: `${plan.name} Monthly`,
-        amountPaise: monthlyPaise,
-        period: 'monthly',
-        description: `ConvoSync ${plan.name} (monthly)`,
-        notes: { convosync_slug: plan.slug, cycle: 'monthly' },
+      const suffix = opts.currency === 'USD' ? ' USD' : '';
+      const createdPlan = await createPlan!({
+        name: `${plan.name} ${opts.cycle === 'monthly' ? 'Monthly' : 'Annual'}${suffix}`,
+        amountPaise: opts.amount,
+        currency: opts.currency,
+        period: opts.period,
+        description: `ConvoSync ${plan.name} (${opts.cycle}${opts.currency === 'USD' ? ', USD' : ''})`,
+        notes: {
+          convosync_slug: plan.slug,
+          cycle: opts.cycle,
+          currency: opts.currency,
+        },
       });
-      razorpayPlanIdMonthly = created.id;
+      created[opts.field] = createdPlan.id;
+      return createdPlan.id;
     } catch (err) {
       warnings.push(
-        `Monthly Razorpay plan failed: ${err instanceof Error ? err.message : 'unknown error'}`
+        `${opts.label} failed: ${err instanceof Error ? err.message : 'unknown error'}`
       );
+      return null;
     }
   }
 
-  if (annualPaise && annualPaise > 0) {
-    try {
-      const created = await createPlan({
-        name: `${plan.name} Annual`,
-        amountPaise: annualPaise,
-        period: 'yearly',
-        description: `ConvoSync ${plan.name} (annual)`,
-        notes: { convosync_slug: plan.slug, cycle: 'annual' },
-      });
-      razorpayPlanIdAnnual = created.id;
-    } catch (err) {
-      warnings.push(
-        `Annual Razorpay plan failed: ${err instanceof Error ? err.message : 'unknown error'}`
-      );
-    }
-  }
+  razorpayPlanIdMonthly = await ensurePlan({
+    existing: razorpayPlanIdMonthly,
+    amount: monthlyPaise,
+    currency: 'INR',
+    period: 'monthly',
+    cycle: 'monthly',
+    field: 'razorpayPlanIdMonthly',
+    label: 'Monthly INR Razorpay plan',
+  });
+  razorpayPlanIdAnnual = await ensurePlan({
+    existing: razorpayPlanIdAnnual,
+    amount: annualPaise,
+    currency: 'INR',
+    period: 'yearly',
+    cycle: 'annual',
+    field: 'razorpayPlanIdAnnual',
+    label: 'Annual INR Razorpay plan',
+  });
+  razorpayPlanIdMonthlyUsd = await ensurePlan({
+    existing: razorpayPlanIdMonthlyUsd,
+    amount: monthlyCents,
+    currency: 'USD',
+    period: 'monthly',
+    cycle: 'monthly',
+    field: 'razorpayPlanIdMonthlyUsd',
+    label: 'Monthly USD Razorpay plan',
+  });
+  razorpayPlanIdAnnualUsd = await ensurePlan({
+    existing: razorpayPlanIdAnnualUsd,
+    amount: annualCents,
+    currency: 'USD',
+    period: 'yearly',
+    cycle: 'annual',
+    field: 'razorpayPlanIdAnnualUsd',
+    label: 'Annual USD Razorpay plan',
+  });
 
-  if (razorpayPlanIdMonthly || razorpayPlanIdAnnual) {
+  if (Object.keys(created).length > 0) {
     await prisma.subscriptionPlan.update({
       where: { id: plan.id },
-      data: {
-        ...(razorpayPlanIdMonthly ? { razorpayPlanIdMonthly } : {}),
-        ...(razorpayPlanIdAnnual ? { razorpayPlanIdAnnual } : {}),
-      },
+      data: created,
     });
   }
 
-  return { razorpayPlanIdMonthly, razorpayPlanIdAnnual, warnings };
+  return {
+    razorpayPlanIdMonthly,
+    razorpayPlanIdAnnual,
+    razorpayPlanIdMonthlyUsd,
+    razorpayPlanIdAnnualUsd,
+    warnings,
+  };
 }
 
 /** @deprecated use createSubscriptionPlan(..., { kind: 'custom' }) */
@@ -605,6 +736,12 @@ export async function updateSubscriptionPlan(slug: string, input: PlanWriteInput
       : {}),
     ...(input.razorpayPlanIdAnnual !== undefined
       ? { razorpayPlanIdAnnual: input.razorpayPlanIdAnnual }
+      : {}),
+    ...(input.razorpayPlanIdMonthlyUsd !== undefined
+      ? { razorpayPlanIdMonthlyUsd: input.razorpayPlanIdMonthlyUsd }
+      : {}),
+    ...(input.razorpayPlanIdAnnualUsd !== undefined
+      ? { razorpayPlanIdAnnualUsd: input.razorpayPlanIdAnnualUsd }
       : {}),
   };
 
@@ -676,8 +813,14 @@ export function serializeSubscriptionPlan(plan: Awaited<ReturnType<typeof listSu
     annualPrice: plan.priceAnnual ?? undefined,
     priceMonthlyPaise: plan.priceMonthlyPaise ?? undefined,
     priceAnnualPaise: plan.priceAnnualPaise ?? undefined,
+    priceMonthlyUsd: plan.priceMonthlyUsd ?? undefined,
+    priceAnnualUsd: plan.priceAnnualUsd ?? undefined,
+    priceMonthlyCents: plan.priceMonthlyCents ?? undefined,
+    priceAnnualCents: plan.priceAnnualCents ?? undefined,
     razorpayPlanIdMonthly: plan.razorpayPlanIdMonthly ?? null,
     razorpayPlanIdAnnual: plan.razorpayPlanIdAnnual ?? null,
+    razorpayPlanIdMonthlyUsd: plan.razorpayPlanIdMonthlyUsd ?? null,
+    razorpayPlanIdAnnualUsd: plan.razorpayPlanIdAnnualUsd ?? null,
     emailsPerMonth: features.emailsPerMonth,
     walletCredits: features.walletCredits,
     // Top-level channels for PlanFeatureFlags UI gates (Integrations / tabs)
@@ -722,10 +865,11 @@ function formatStorageForLanding(value: PlanFeatures['storageGb']): string {
 function buildLandingHighlights(features: PlanFeatures): string[] {
   const wallet = features.walletCredits ?? '—';
   const storage = formatStorageForLanding(features.storageGb);
-  const seatsLine = `${features.teamMembers} seats · ${features.aiAgents} AI Agent${
-    features.aiAgents === '1' ? '' : 's'
-  }`;
-  const lines: string[] = [features.channels, seatsLine];
+  const lines: string[] = [
+    features.channels,
+    `${features.teamMembers} seats`,
+    `${features.aiAgents} AI Agent${features.aiAgents === '1' ? '' : 's'}`,
+  ];
 
   if (features.aiCopilot) lines.push('AI Copilot included');
 

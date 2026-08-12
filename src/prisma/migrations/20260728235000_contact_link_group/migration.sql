@@ -1,5 +1,5 @@
 -- AlterTable
-ALTER TABLE "Contact" ADD COLUMN "linkGroupId" TEXT;
+ALTER TABLE "Contact" ADD COLUMN IF NOT EXISTS "linkGroupId" TEXT;
 
 -- CreateIndex
-CREATE INDEX "Contact_workspaceId_linkGroupId_idx" ON "Contact"("workspaceId", "linkGroupId");
+CREATE INDEX IF NOT EXISTS "Contact_workspaceId_linkGroupId_idx" ON "Contact"("workspaceId", "linkGroupId");

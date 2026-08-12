@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "demo_requests" (
+CREATE TABLE IF NOT EXISTS "demo_requests" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "email" TEXT NOT NULL,
@@ -14,7 +14,7 @@ CREATE TABLE "demo_requests" (
 );
 
 -- CreateIndex
-CREATE INDEX "demo_requests_createdAt_idx" ON "demo_requests"("createdAt");
+CREATE INDEX IF NOT EXISTS "demo_requests_createdAt_idx" ON "demo_requests"("createdAt");
 
 -- CreateIndex
-CREATE INDEX "demo_requests_status_idx" ON "demo_requests"("status");
+CREATE INDEX IF NOT EXISTS "demo_requests_status_idx" ON "demo_requests"("status");

@@ -52,6 +52,8 @@ const planWriteSchema = z.object({
   editButtonStyle: z.enum(['gray', 'purple', 'blue', 'dark']).optional(),
   razorpayPlanIdMonthly: z.string().trim().min(1).nullable().optional(),
   razorpayPlanIdAnnual: z.string().trim().min(1).nullable().optional(),
+  razorpayPlanIdMonthlyUsd: z.string().trim().min(1).nullable().optional(),
+  razorpayPlanIdAnnualUsd: z.string().trim().min(1).nullable().optional(),
 });
 
 export default async function platformPlanRoutes(fastify: FastifyInstance) {
@@ -121,6 +123,8 @@ export default async function platformPlanRoutes(fastify: FastifyInstance) {
         razorpay: {
           monthly: provisioned.razorpayPlanIdMonthly,
           annual: provisioned.razorpayPlanIdAnnual,
+          monthlyUsd: provisioned.razorpayPlanIdMonthlyUsd,
+          annualUsd: provisioned.razorpayPlanIdAnnualUsd,
           warnings: provisioned.warnings,
         },
       });
@@ -150,6 +154,8 @@ export default async function platformPlanRoutes(fastify: FastifyInstance) {
         editButtonStyle: body.editButtonStyle,
         razorpayPlanIdMonthly: body.razorpayPlanIdMonthly,
         razorpayPlanIdAnnual: body.razorpayPlanIdAnnual,
+        razorpayPlanIdMonthlyUsd: body.razorpayPlanIdMonthlyUsd,
+        razorpayPlanIdAnnualUsd: body.razorpayPlanIdAnnualUsd,
       });
       return { plan: serializeSubscriptionPlan(plan) };
     } catch (err) {

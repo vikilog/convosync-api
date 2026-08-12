@@ -35,6 +35,7 @@ export default async function billingRoutes(fastify: FastifyInstance) {
 
   fastify.get('/billing/plans', auth, controller.listPlans);
   fastify.get('/billing/workspace', auth, controller.getWorkspaceBilling);
+  fastify.get('/billing/offers', auth, controller.listPendingOffers);
   fastify.get('/billing/invoices', auth, controller.listTransactions);
   fastify.get('/billing/usage', auth, controller.getUsageCost);
   fastify.get('/billing/wallet', auth, controller.getWallet);

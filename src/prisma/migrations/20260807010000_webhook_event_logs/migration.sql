@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "webhook_event_logs" (
+CREATE TABLE IF NOT EXISTS "webhook_event_logs" (
     "id" TEXT NOT NULL,
     "source" TEXT NOT NULL,
     "eventType" TEXT NOT NULL,
@@ -14,10 +14,10 @@ CREATE TABLE "webhook_event_logs" (
 );
 
 -- CreateIndex
-CREATE INDEX "webhook_event_logs_receivedAt_idx" ON "webhook_event_logs"("receivedAt");
+CREATE INDEX IF NOT EXISTS "webhook_event_logs_receivedAt_idx" ON "webhook_event_logs"("receivedAt");
 
 -- CreateIndex
-CREATE INDEX "webhook_event_logs_source_receivedAt_idx" ON "webhook_event_logs"("source", "receivedAt");
+CREATE INDEX IF NOT EXISTS "webhook_event_logs_source_receivedAt_idx" ON "webhook_event_logs"("source", "receivedAt");
 
 -- CreateIndex
-CREATE INDEX "webhook_event_logs_eventType_idx" ON "webhook_event_logs"("eventType");
+CREATE INDEX IF NOT EXISTS "webhook_event_logs_eventType_idx" ON "webhook_event_logs"("eventType");

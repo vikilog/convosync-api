@@ -1247,7 +1247,8 @@ export const ROUTE_ACTIVITY: Record<string, RouteEntry> = {
     category: C.WALLET,
     title: 'Wallet top-up verified',
     message: 'Verified a wallet top-up payment',
-    forBell: true,
+    // ponytail: rich forBell emit from settlePaidOrder / paymentNotify
+    forBell: false,
   },
   'POST /api/billing/subscription/create': {
     type: T.SETTINGS_UPDATED,
@@ -1260,7 +1261,8 @@ export const ROUTE_ACTIVITY: Record<string, RouteEntry> = {
     category: C.WALLET,
     title: 'Subscription verified',
     message: 'Verified a subscription payment',
-    forBell: true,
+    // ponytail: rich forBell emit from settlePaidOrder / paymentNotify
+    forBell: false,
   },
   'POST /api/billing/subscription/cancel': {
     type: T.SETTINGS_UPDATED,

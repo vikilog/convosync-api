@@ -41,6 +41,31 @@ export function isValidRazorpayPlanId(id: string | null | undefined): id is stri
   return /^plan_[A-Z][A-Za-z0-9]+$/.test(id);
 }
 
+/** Pick the Razorpay Subscription plan_id for checkout currency + cycle. */
+export function resolveCheckoutRazorpayPlanId(
+  plan: {
+    slug: string;
+    razorpayPlanIdMonthly?: string | null;
+    razorpayPlanIdAnnual?: string | null;
+    razorpayPlanIdMonthlyUsd?: string | null;
+    razorpayPlanIdAnnualUsd?: string | null;
+  },
+  billingCycle: 'monthly' | 'annual',
+  currency: 'INR' | 'USD'
+): string | null {
+  if (currency === 'USD') {
+    const id =
+      billingCycle === 'annual' ? plan.razorpayPlanIdAnnualUsd : plan.razorpayPlanIdMonthlyUsd;
+    return isValidRazorpayPlanId(id) ? id : null;
+  }
+  const envIds = razorpayPlanIdsFromEnv(plan.slug as PlanSlug);
+  const id =
+    billingCycle === 'annual'
+      ? plan.razorpayPlanIdAnnual ?? envIds.annual
+      : plan.razorpayPlanIdMonthly ?? envIds.monthly;
+  return isValidRazorpayPlanId(id) ? id : null;
+}
+
 async function fetchAllRazorpayPlans(client: Razorpay): Promise<RazorpayPlanItem[]> {
   const plans: RazorpayPlanItem[] = [];
   let skip = 0;

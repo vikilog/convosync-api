@@ -48,6 +48,8 @@ assert.equal(landing.ctaKind, 'trial');
 assert.equal(landing.comparison.seats, '8');
 assert.equal(landing.comparison.aiCopilot, true);
 assert.equal(landing.comparison.storage, '1 GB');
+assert.ok(landing.highlights.includes('8 seats'));
+assert.ok(landing.highlights.includes('3 AI Agents'));
 assert.ok(landing.highlights.some((h) => h.includes('CC wallet')));
 assert.ok(landing.highlights.some((h) => h.includes('storage')));
 assert.ok(!landing.highlights.some((h) => /email/i.test(h)));

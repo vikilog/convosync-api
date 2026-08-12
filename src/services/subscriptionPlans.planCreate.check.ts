@@ -45,11 +45,38 @@ const noRp = await provisionRazorpayPlanIds(
     priceAnnual: 19990,
     priceMonthlyPaise: 199_900,
     priceAnnualPaise: 1_999_000,
+    priceMonthlyCents: 2900,
+    priceAnnualCents: 29_000,
   },
   null
 );
 assert.equal(noRp.razorpayPlanIdMonthly, null);
+assert.equal(noRp.razorpayPlanIdMonthlyUsd, null);
 assert.ok(noRp.warnings.length > 0);
+
+let createCalls = 0;
+const alreadyLinked = await provisionRazorpayPlanIds(
+  {
+    id: 'x',
+    name: 'TEST',
+    slug: 'test',
+    priceMonthly: null,
+    priceAnnual: null,
+    priceMonthlyPaise: null,
+    priceAnnualPaise: null,
+    priceMonthlyCents: 2900,
+    priceAnnualCents: 29_000,
+    razorpayPlanIdMonthlyUsd: 'plan_T1ExistingUsdMo',
+    razorpayPlanIdAnnualUsd: 'plan_T1ExistingUsdAn',
+  },
+  async () => {
+    createCalls += 1;
+    return { id: 'plan_T1ShouldNot' };
+  }
+);
+assert.equal(createCalls, 0);
+assert.equal(alreadyLinked.razorpayPlanIdMonthlyUsd, 'plan_T1ExistingUsdMo');
+assert.equal(alreadyLinked.razorpayPlanIdAnnualUsd, 'plan_T1ExistingUsdAn');
 
 assert.equal(DEFAULT_PLAN_SEEDS[0]!.features.storageGb, 0);
 assert.equal(DEFAULT_PLAN_SEEDS[1]!.features.storageGb, 1);

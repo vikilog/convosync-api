@@ -1,20 +1,20 @@
 -- DropForeignKey
-ALTER TABLE "wa_personal_sessions" DROP CONSTRAINT "wa_personal_sessions_workspaceId_fkey";
+ALTER TABLE IF EXISTS "wa_personal_sessions" DROP CONSTRAINT IF EXISTS "wa_personal_sessions_workspaceId_fkey";
 
 -- DropIndex
-DROP INDEX "Conversation_workspaceId_provider_channelAccountId_idx";
+DROP INDEX IF EXISTS "Conversation_workspaceId_provider_channelAccountId_idx";
 
 -- AlterTable
-ALTER TABLE "Conversation" DROP COLUMN "isArchived",
-DROP COLUMN "isPinned",
-DROP COLUMN "phoneNumber",
-DROP COLUMN "provider";
+ALTER TABLE IF EXISTS "Conversation" DROP COLUMN IF EXISTS "isArchived",
+DROP COLUMN IF EXISTS "isPinned",
+DROP COLUMN IF EXISTS "phoneNumber",
+DROP COLUMN IF EXISTS "provider";
 
 -- AlterTable
-ALTER TABLE "Message" DROP COLUMN "provider";
+ALTER TABLE IF EXISTS "Message" DROP COLUMN IF EXISTS "provider";
 
 -- DropTable
-DROP TABLE "wa_personal_sessions";
+DROP TABLE IF EXISTS "wa_personal_sessions";
 
 -- CreateIndex
-CREATE INDEX "Conversation_workspaceId_channelAccountId_idx" ON "Conversation"("workspaceId", "channelAccountId");
+CREATE INDEX IF NOT EXISTS "Conversation_workspaceId_channelAccountId_idx" ON "Conversation"("workspaceId", "channelAccountId");

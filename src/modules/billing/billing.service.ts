@@ -5,7 +5,6 @@ import {
   verifyRazorpayPaymentSignature,
   verifyRazorpaySubscriptionSignature,
 } from '../../utils/crypto.utils.js';
-import { normalizeRazorpayError } from '../../utils/razorpay-error.utils.js';
 import { readCustomPlanInput } from '../../services/customPlanPricing.js';
 import {
   seedSubscriptionPlans,
@@ -13,7 +12,7 @@ import {
   syncWorkspaceLimitsFromPlanFeatures,
   type PlanFeatures,
 } from '../../services/subscriptionPlans.js';
-import { isValidRazorpayPlanId, razorpayPlanIdsFromEnv, type PlanSlug } from '../../services/razorpayPlanSync.js';
+import { resolveCheckoutRazorpayPlanId } from '../../services/razorpayPlanSync.js';
 import { isUnlimitedUsageLimit, UNLIMITED_USAGE_LIMIT } from '../../services/usageLimits.js';
 import {
   computeTokenBillingCosts,
@@ -28,7 +27,6 @@ import type {
   OrderPurpose,
 } from './billing.types.js';
 import { ADDON_CATALOG } from './billing.types.js';
-import { MIN_WALLET_TOPUP_PAISE } from '../../services/wallet.constants.js';
 import {
   creditPlanWalletCredits,
   creditWallet,
@@ -38,7 +36,6 @@ import {
 import {
   ensureRazorpayCustomer,
   extractPaymentCredentials,
-  normalizeIndianPhone,
   persistWalletPaymentMethod,
   saveWalletPaymentCredentials,
 } from '../../services/razorpayCustomer.service.js';
@@ -49,6 +46,18 @@ import {
   validateDiscountCoupon,
 } from '../../services/discountCoupons.js';
 import { paidActivationWorkspaceFields } from '../../services/trial.js';
+import {
+  countryToCurrency,
+  minCheckoutMinor,
+  minWalletTopupMinor,
+  planAmountMinor,
+  toMinorUnits,
+  type BillingCurrency,
+} from '../../services/billingCurrency.js';
+import {
+  matchSubscriptionIdByCheckoutDescription,
+  subscriptionCheckoutPaymentOk,
+} from '../../services/subscriptionPaymentOk.js';
 import type { RazorpayService } from './razorpay.service.js';
 import {
   webhookPaymentEntity,
@@ -102,6 +111,14 @@ function walletTopupCreditPaise(invoice: {
 export class BillingService {
   constructor(private readonly razorpay: RazorpayService) {}
 
+  private async workspaceCurrency(workspaceId: string): Promise<BillingCurrency> {
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { country: true },
+    });
+    return countryToCurrency(workspace?.country);
+  }
+
   async listPlans() {
     const plans = await prisma.subscriptionPlan.findMany({
       where: { isActive: true },
@@ -116,8 +133,14 @@ export class BillingService {
         name: plan.name,
         priceMonthlyPaise: plan.priceMonthlyPaise,
         priceAnnualPaise: plan.priceAnnualPaise,
+        priceMonthlyUsd: plan.priceMonthlyUsd,
+        priceAnnualUsd: plan.priceAnnualUsd,
+        priceMonthlyCents: plan.priceMonthlyCents,
+        priceAnnualCents: plan.priceAnnualCents,
         razorpayPlanIdMonthly: plan.razorpayPlanIdMonthly,
         razorpayPlanIdAnnual: plan.razorpayPlanIdAnnual,
+        razorpayPlanIdMonthlyUsd: plan.razorpayPlanIdMonthlyUsd,
+        razorpayPlanIdAnnualUsd: plan.razorpayPlanIdAnnualUsd,
         features: plan.features,
       }));
   }
@@ -177,6 +200,8 @@ export class BillingService {
     return {
       workspaceId,
       subscriptionStatus: workspace.subscriptionStatus,
+      country: workspace.country ?? 'IN',
+      currency: countryToCurrency(workspace.country),
       wallet,
       plan: paidPlan
         ? {
@@ -204,7 +229,10 @@ export class BillingService {
       connectedChannels,
       addonCatalog: ADDON_CATALOG.map((entry) => ({
         ...entry,
-        unitPaise: this.usdToInrPaise(entry.usdPerUnit, usdInrRate),
+        unitPaise:
+          countryToCurrency(workspace.country) === 'USD'
+            ? toMinorUnits(entry.usdPerUnit)
+            : this.usdToInrPaise(entry.usdPerUnit, usdInrRate),
       })),
       fx: {
         usdInrRate,
@@ -524,6 +552,7 @@ export class BillingService {
 
   async createOrder(workspaceId: string, body: CreateOrderBody) {
     const { amountPaise, purpose, addonType, quantity, description, creditAmountPaise } = body;
+    const currency = await this.workspaceCurrency(workspaceId);
 
     let finalAmount = amountPaise ?? 0;
     let invoiceType: OrderPurpose = purpose ?? 'one_time';
@@ -538,37 +567,56 @@ export class BillingService {
       } | null;
       const monthly = selection?.monthlyTotal;
       if (monthly && monthly > 0) {
-        const { rate } = await this.getUsdInrRate();
-        finalAmount = this.usdToInrPaise(monthly, rate);
+        // Custom plan totals are authored in USD; charge USD cents abroad, INR via FX in India.
+        if (currency === 'USD') {
+          finalAmount = toMinorUnits(monthly);
+        } else {
+          const { rate } = await this.getUsdInrRate();
+          finalAmount = this.usdToInrPaise(monthly, rate);
+        }
         invoiceType = 'custom_plan';
       }
     }
 
     if (addonType) {
-      finalAmount = await this.addonAmountPaise(addonType, quantity ?? 1);
+      finalAmount = await this.addonAmountMinor(addonType, quantity ?? 1, currency);
       invoiceType = 'addon';
       addonRecord = { type: addonType, quantity: quantity ?? 1 };
     }
 
     if (purpose === 'wallet_topup') {
-      if (!amountPaise || amountPaise < MIN_WALLET_TOPUP_PAISE) {
-        throw new Error('Minimum wallet top-up is ₹100.');
+      const minTopup = minWalletTopupMinor(currency);
+      if (!amountPaise || amountPaise < minTopup) {
+        throw new Error(
+          currency === 'USD' ? 'Minimum wallet top-up is $2.' : 'Minimum wallet top-up is ₹100.'
+        );
       }
       finalAmount = amountPaise;
       invoiceType = 'wallet_topup';
-      const creditPaise = creditAmountPaise ?? amountPaise;
+      // creditAmountPaise is always ConvoCoin minor units (1 CC = ₹1), not charge currency.
+      const creditPaise = creditAmountPaise ?? (currency === 'INR' ? amountPaise : undefined);
+      if (!creditPaise || creditPaise <= 0) {
+        throw new Error('Wallet top-up requires creditAmountPaise (ConvoCoin units).');
+      }
       walletTopupMeta = {
         purpose: 'wallet_topup',
         creditAmountPaise: creditPaise,
+        chargeCurrency: currency,
       };
     }
 
-    if (!finalAmount || finalAmount < MIN_CHECKOUT_AMOUNT_PAISE) {
-      throw new Error(`Invalid order amount. Minimum is ${MIN_CHECKOUT_AMOUNT_PAISE} paise (₹1).`);
+    const minCheckout = minCheckoutMinor(currency);
+    if (!finalAmount || finalAmount < minCheckout) {
+      throw new Error(
+        currency === 'USD'
+          ? `Invalid order amount. Minimum is $${(minCheckout / 100).toFixed(2)}.`
+          : `Invalid order amount. Minimum is ${MIN_CHECKOUT_AMOUNT_PAISE} paise (₹1).`
+      );
     }
 
     const purposeKey = [
       invoiceType,
+      currency,
       addonType ?? '',
       String(quantity ?? ''),
       String(finalAmount),
@@ -587,7 +635,7 @@ export class BillingService {
           idempotencyKey,
           workspaceId,
           amount: finalAmount,
-          currency: 'INR',
+          currency,
           status: 'pending',
         },
       });
@@ -609,10 +657,12 @@ export class BillingService {
       const receipt = `convosync_${workspaceId.slice(-8)}_${Date.now()}`;
       order = await this.razorpay.createOrder({
         amountPaise: finalAmount,
+        currency,
         receipt,
         notes: {
           workspaceId,
           purpose: invoiceType,
+          currency,
           ...(addonType ? { addonType, quantity: String(quantity ?? 1) } : {}),
         },
       });
@@ -638,7 +688,7 @@ export class BillingService {
             razorpayOrderId: order.id,
             type: invoiceType,
             amountPaise: finalAmount,
-            currency: 'INR',
+            currency,
             status: 'created',
             description: description ?? `${invoiceType} payment`,
             metadata: (walletTopupMeta ??
@@ -673,7 +723,7 @@ export class BillingService {
       return {
         orderId: order.id,
         amountPaise: finalAmount,
-        currency: 'INR',
+        currency,
         keyId: this.razorpay.keyId,
         invoiceId: invoice.id,
       };
@@ -745,6 +795,10 @@ export class BillingService {
 
     if (invoice.type === 'wallet_topup' /* || invoice.type === 'wallet_auto_recharge_setup' */) {
       await persistWalletPaymentMethod(workspaceId, payment, this.razorpay);
+    }
+
+    if (!settle.alreadySettled) {
+      void this.notifyInvoicePayment(invoice, true);
     }
 
     const wallet =
@@ -856,6 +910,7 @@ export class BillingService {
 
   async createSubscription(workspaceId: string, body: CreateSubscriptionBody) {
     const billingCycle: BillingCycle = body.billingCycle ?? 'monthly';
+    const currency = await this.workspaceCurrency(workspaceId);
     let plan = await prisma.subscriptionPlan.findFirst({
       where: {
         OR: [{ id: body.planId }, { slug: body.planId }],
@@ -873,75 +928,83 @@ export class BillingService {
     }
     if (!plan) throw new Error('Plan not found');
 
-    const envPlanIds = razorpayPlanIdsFromEnv(plan.slug as PlanSlug);
-    const razorpayPlanId =
-      billingCycle === 'annual'
-        ? plan.razorpayPlanIdAnnual ?? envPlanIds.annual
-        : plan.razorpayPlanIdMonthly ?? envPlanIds.monthly;
-    const amountPaise =
-      billingCycle === 'annual' ? plan.priceAnnualPaise : plan.priceMonthlyPaise;
+    const razorpayPlanId = resolveCheckoutRazorpayPlanId(plan, billingCycle, currency);
+    const amountMinor = planAmountMinor(plan, billingCycle, currency);
 
-    if (!amountPaise) {
+    if (!amountMinor) {
       throw new Error('This plan is not available for online checkout');
     }
 
-    const hasValidRazorpayPlan = isValidRazorpayPlanId(razorpayPlanId);
+    const hasValidRazorpayPlan = Boolean(razorpayPlanId);
+    // Recurring for INR + USD once plan_id exists. start_at is required on this Razorpay
+    // account (see RazorpayService.createSubscription) — omit → opaque Validation failed.
+    const useRecurring =
+      config.razorpay.recurringEnabled &&
+      hasValidRazorpayPlan &&
+      !body.couponCode?.trim();
 
-    // ponytail: coupons only apply on one-time order checkout, not Razorpay subscriptions
-    if (config.razorpay.recurringEnabled && hasValidRazorpayPlan && !body.couponCode?.trim()) {
-      try {
-        const workspace = await prisma.workspace.findUnique({
-          where: { id: workspaceId },
-          select: { email: true, phone: true },
-        });
+    if (useRecurring) {
+      // ponytail: create-subscription schema is plan_id + total_count (+ boolean customer_notify + start_at).
+      // customer_id/notify_info are not create params — Razorpay returns opaque "Validation failed".
+      const customerId = await ensureRazorpayCustomer(workspaceId, this.razorpay);
+      const totalCount = billingCycle === 'annual' ? 10 : 120;
+      const rzSub = await this.razorpay.createSubscription({
+        planId: razorpayPlanId!,
+        totalCount,
+        customerNotify: true,
+        notes: { workspaceId, planId: plan.id, billingCycle, currency },
+      });
 
-        const customerId = await ensureRazorpayCustomer(workspaceId, this.razorpay);
-        const totalCount = billingCycle === 'annual' ? 10 : 120;
-        const rzSub = await this.razorpay.createSubscription({
-          planId: razorpayPlanId!,
-          customerId,
-          totalCount,
-          customerNotify: 1,
-          notifyEmail: workspace?.email ?? undefined,
-          notifyPhone: normalizeIndianPhone(workspace?.phone),
-          notes: { workspaceId, planId: plan.id, billingCycle },
-        });
-
-        const billingSub = await prisma.billingSubscription.create({
-          data: {
-            workspaceId,
-            planId: plan.id,
-            razorpaySubscriptionId: rzSub.id,
-            razorpayCustomerId: customerId,
-            razorpayPlanId: razorpayPlanId!,
-            status: rzSub.status,
-            billingCycle,
-          },
-        });
-
-        return {
-          checkoutMode: 'subscription' as const,
-          subscriptionId: rzSub.id,
-          customerId,
-          billingSubscriptionId: billingSub.id,
-          keyId: this.razorpay.keyId,
-          plan: { id: plan.id, name: plan.name, slug: plan.slug },
-          billingCycle,
-          amountPaise,
+      const billingSub = await prisma.billingSubscription.create({
+        data: {
+          workspaceId,
+          planId: plan.id,
+          razorpaySubscriptionId: rzSub.id,
+          razorpayCustomerId: customerId,
           razorpayPlanId: razorpayPlanId!,
-        };
-      } catch (err) {
-        throw normalizeRazorpayError(err);
-      }
+          status: rzSub.status,
+          billingCycle,
+        },
+      });
+
+      return {
+        checkoutMode: 'subscription' as const,
+        subscriptionId: rzSub.id,
+        customerId,
+        billingSubscriptionId: billingSub.id,
+        keyId: this.razorpay.keyId,
+        plan: { id: plan.id, name: plan.name, slug: plan.slug },
+        billingCycle,
+        amountPaise: amountMinor,
+        currency,
+        razorpayPlanId: razorpayPlanId!,
+      };
     }
 
-    if (config.razorpay.recurringEnabled && !hasValidRazorpayPlan) {
+    if (
+      config.razorpay.recurringEnabled &&
+      !hasValidRazorpayPlan &&
+      !body.couponCode?.trim()
+    ) {
+      const cycleKey = billingCycle === 'annual' ? 'ANNUAL' : 'MONTHLY';
+      const usdHint =
+        currency === 'USD'
+          ? ` Store razorpayPlanId${billingCycle === 'annual' ? 'Annual' : 'Monthly'}Usd on the plan (re-run npm run plans:seed).`
+          : ` Set RAZORPAY_PLAN_${plan.slug.toUpperCase()}_${cycleKey} in .env or run npm run razorpay:sync-plans.`;
       throw new Error(
-        `Razorpay plan ID missing for ${plan.slug} (${billingCycle}). Set RAZORPAY_PLAN_${plan.slug.toUpperCase()}_${billingCycle === 'annual' ? 'ANNUAL' : 'MONTHLY'} in .env or run npm run razorpay:sync-plans.`
+        `Razorpay plan ID missing for ${plan.slug} (${billingCycle}, ${currency}).${usdHint}`
       );
     }
 
-    return this.createPlanPurchaseOrder(workspaceId, plan, billingCycle, amountPaise, body.couponCode);
+    // Coupon path or non-recurring (no plan id / recurring disabled) → one-time order.
+    return this.createPlanPurchaseOrder(
+      workspaceId,
+      plan,
+      billingCycle,
+      amountMinor,
+      currency,
+      body.couponCode
+    );
   }
 
   private async createPlanPurchaseOrder(
@@ -949,6 +1012,7 @@ export class BillingService {
     plan: { id: string; slug: string; name: string; features: unknown },
     billingCycle: BillingCycle,
     amountPaise: number,
+    currency: BillingCurrency,
     couponCode?: string
   ) {
     let chargePaise = amountPaise;
@@ -978,8 +1042,8 @@ export class BillingService {
     }
 
     const purposeKey = couponMeta
-      ? `plan_purchase:${plan.id}:${billingCycle}:${chargePaise}:coupon:${couponMeta.couponId}`
-      : `plan_purchase:${plan.id}:${billingCycle}:${chargePaise}`;
+      ? `plan_purchase:${currency}:${plan.id}:${billingCycle}:${chargePaise}:coupon:${couponMeta.couponId}`
+      : `plan_purchase:${currency}:${plan.id}:${billingCycle}:${chargePaise}`;
     const idempotencyKey = buildServerIdempotencyKey(workspaceId, purposeKey);
 
     const existing = await this.checkoutFromExistingIntent(idempotencyKey);
@@ -988,7 +1052,7 @@ export class BillingService {
         checkoutMode: 'order' as const,
         orderId: existing.orderId,
         amountPaise: existing.amountPaise,
-        currency: 'INR' as const,
+        currency: existing.currency as BillingCurrency,
         keyId: this.razorpay.keyId,
         plan: { id: plan.id, name: plan.name, slug: plan.slug },
         billingCycle,
@@ -1003,7 +1067,7 @@ export class BillingService {
           idempotencyKey,
           workspaceId,
           amount: chargePaise,
-          currency: 'INR',
+          currency,
           status: 'pending',
         },
       });
@@ -1015,7 +1079,7 @@ export class BillingService {
             checkoutMode: 'order' as const,
             orderId: raced.orderId,
             amountPaise: raced.amountPaise,
-            currency: 'INR' as const,
+            currency: raced.currency as BillingCurrency,
             keyId: this.razorpay.keyId,
             plan: { id: plan.id, name: plan.name, slug: plan.slug },
             billingCycle,
@@ -1035,12 +1099,14 @@ export class BillingService {
     try {
       order = await this.razorpay.createOrder({
         amountPaise: chargePaise,
+        currency,
         receipt: `plan_${plan.slug}_${Date.now()}`,
         notes: {
           workspaceId,
           purpose: 'plan_purchase',
           planId: plan.id,
           billingCycle,
+          currency,
           ...(couponMeta ? { couponId: couponMeta.couponId, couponCode: couponMeta.couponCode } : {}),
         },
       });
@@ -1065,7 +1131,7 @@ export class BillingService {
           razorpayOrderId: order.id,
           type: 'plan_purchase',
           amountPaise: chargePaise,
-          currency: 'INR',
+          currency,
           status: 'created',
           description: `${plan.name} plan (${billingCycle})${couponMeta ? ` · ${couponMeta.couponCode}` : ''}`,
           metadata: {
@@ -1088,7 +1154,7 @@ export class BillingService {
       checkoutMode: 'order' as const,
       orderId: order.id,
       amountPaise: chargePaise,
-      currency: 'INR' as const,
+      currency,
       keyId: this.razorpay.keyId,
       plan: { id: plan.id, name: plan.name, slug: plan.slug },
       billingCycle,
@@ -1208,14 +1274,30 @@ export class BillingService {
     const rzSub = await this.razorpay.fetchSubscription(params.razorpay_subscription_id);
     const payment = await this.razorpay.fetchPayment(params.razorpay_payment_id);
 
-    if (payment.status !== 'captured' && payment.status !== 'authorized') {
-      throw new Error(`Payment not successful: ${payment.status}`);
+    if (
+      !subscriptionCheckoutPaymentOk({
+        paymentStatus: String(payment.status ?? ''),
+        subscriptionStatus: String(rzSub.status ?? ''),
+      })
+    ) {
+      throw new Error(
+        `Payment not successful: ${payment.status} (subscription ${rzSub.status})`
+      );
     }
 
+    const paymentCurrency =
+      typeof payment.currency === 'string' && payment.currency
+        ? String(payment.currency).toUpperCase()
+        : 'INR';
     const amountPaise =
-      billingSub.billingCycle === 'annual'
+      (typeof payment.amount === 'number' ? payment.amount : null) ??
+      (billingSub.billingCycle === 'annual'
         ? billingSub.plan.priceAnnualPaise
-        : billingSub.plan.priceMonthlyPaise;
+        : billingSub.plan.priceMonthlyPaise);
+
+    const existingInvoice = await prisma.billingInvoice.findFirst({
+      where: { razorpayPaymentId: params.razorpay_payment_id },
+    });
 
     await prisma.$transaction(async (tx) => {
       await tx.billingSubscription.update({
@@ -1230,19 +1312,21 @@ export class BillingService {
         },
       });
 
-      await tx.billingInvoice.create({
-        data: {
-          workspaceId,
-          subscriptionId: billingSub.id,
-          razorpayPaymentId: params.razorpay_payment_id,
-          type: 'subscription',
-          amountPaise: amountPaise ?? payment.amount,
-          currency: 'INR',
-          status: 'paid',
-          paidAt: new Date(),
-          description: `${billingSub.plan.name} subscription`,
-        },
-      });
+      if (!existingInvoice) {
+        await tx.billingInvoice.create({
+          data: {
+            workspaceId,
+            subscriptionId: billingSub.id,
+            razorpayPaymentId: params.razorpay_payment_id,
+            type: 'subscription',
+            amountPaise: amountPaise ?? 0,
+            currency: paymentCurrency,
+            status: 'paid',
+            paidAt: new Date(),
+            description: `${billingSub.plan.name} subscription`,
+          },
+        });
+      }
 
       await tx.workspace.update({
         where: { id: workspaceId },
@@ -1270,6 +1354,22 @@ export class BillingService {
         tx,
       });
     });
+
+    console.log('[billing.verifySubscriptionPayment] workspace plan activated', {
+      workspaceId,
+      planId: billingSub.planId,
+      razorpaySubscriptionId: params.razorpay_subscription_id,
+      paymentStatus: payment.status,
+      subscriptionStatus: rzSub.status,
+    });
+
+    const { markBillingOfferPaidBySubscription } = await import(
+      '../../services/billingOffers.js'
+    );
+    await markBillingOfferPaidBySubscription(
+      params.razorpay_subscription_id,
+      'verifySubscriptionPayment'
+    );
 
     await persistWalletPaymentMethod(
       workspaceId,
@@ -1446,12 +1546,16 @@ export class BillingService {
       paymentCreds = extractPaymentCredentials(fetchedPayment);
     }
 
-    await prisma.$transaction(async (tx) =>
+    const settle = await prisma.$transaction(async (tx) =>
       this.settlePaidOrder(tx, { invoice, paymentId })
     );
 
     if (paymentCreds) {
       await saveWalletPaymentCredentials(workspaceId, paymentCreds);
+    }
+
+    if (!settle.alreadySettled) {
+      void this.notifyInvoicePayment(invoice, true);
     }
   }
 
@@ -1469,6 +1573,10 @@ export class BillingService {
       (typeof payment.error_reason === 'string' && payment.error_reason) ||
       (typeof payment.error_code === 'string' && payment.error_code) ||
       'payment_failed';
+
+    const invoice = await prisma.billingInvoice.findFirst({
+      where: { razorpayOrderId: orderId },
+    });
 
     await prisma.$transaction(async (tx) => {
       await tx.paymentIntent.updateMany({
@@ -1499,6 +1607,10 @@ export class BillingService {
         data: { status: 'failed' },
       });
     });
+
+    if (invoice && invoice.status !== 'paid' && invoice.status !== 'failed') {
+      void this.notifyInvoicePayment(invoice, false, failureReason);
+    }
   }
 
   /**
@@ -1715,6 +1827,20 @@ export class BillingService {
           billingSub.plan.features as PlanFeatures
         );
       }
+      console.log('[billing.handleSubscriptionEvent] workspace plan activated', {
+        event,
+        workspaceId,
+        planId: billingSub.planId,
+        razorpaySubscriptionId: billingSub.razorpaySubscriptionId,
+        status,
+      });
+      const { markBillingOfferPaidBySubscription } = await import(
+        '../../services/billingOffers.js'
+      );
+      await markBillingOfferPaidBySubscription(
+        billingSub.razorpaySubscriptionId!,
+        event
+      );
     }
 
     if (event === 'subscription.cancelled') {
@@ -1730,6 +1856,26 @@ export class BillingService {
         data: { subscriptionStatus: 'past_due' },
       });
     }
+
+    if (event === 'subscription.halted') {
+      const amountPaise =
+        billingSub.billingCycle === 'annual'
+          ? billingSub.plan?.priceAnnualPaise
+          : billingSub.plan?.priceMonthlyPaise;
+      void import('../../services/notifications/paymentNotify.js').then(({ notifyPaymentOutcome }) =>
+        notifyPaymentOutcome({
+          workspaceId,
+          success: false,
+          label: billingSub.plan?.name ?? 'Subscription',
+          amountPaise: amountPaise ?? 0,
+          currency: 'INR',
+          entityType: 'subscription',
+          entityId: billingSub.id,
+          reason: 'subscription halted',
+          metadata: { event },
+        })
+      );
+    }
   }
 
   async handleSubscriptionCharged(payload: Record<string, unknown>) {
@@ -1743,10 +1889,15 @@ export class BillingService {
     });
     if (!billingSub) return;
 
+    const paymentCurrency =
+      typeof payment.currency === 'string' && payment.currency
+        ? String(payment.currency).toUpperCase()
+        : 'INR';
     const amountPaise =
-      billingSub.billingCycle === 'annual'
+      (typeof payment.amount === 'number' ? payment.amount : null) ??
+      (billingSub.billingCycle === 'annual'
         ? billingSub.plan.priceAnnualPaise
-        : billingSub.plan.priceMonthlyPaise;
+        : billingSub.plan.priceMonthlyPaise);
 
     const existing = await prisma.billingInvoice.findFirst({
       where: { razorpayPaymentId: payment.id as string },
@@ -1760,8 +1911,8 @@ export class BillingService {
           subscriptionId: billingSub.id,
           razorpayPaymentId: payment.id as string,
           type: 'subscription',
-          amountPaise: amountPaise ?? (payment.amount as number),
-          currency: 'INR',
+          amountPaise: amountPaise ?? 0,
+          currency: paymentCurrency,
           status: 'paid',
           paidAt: new Date(),
           description: `${billingSub.plan.name} renewal`,
@@ -1788,6 +1939,152 @@ export class BillingService {
         tx,
       });
     });
+
+    console.log('[billing.handleSubscriptionCharged] workspace plan activated', {
+      workspaceId: billingSub.workspaceId,
+      planId: billingSub.planId,
+      razorpaySubscriptionId: billingSub.razorpaySubscriptionId,
+      razorpayPaymentId: payment.id,
+    });
+
+    const { markBillingOfferPaidBySubscription } = await import(
+      '../../services/billingOffers.js'
+    );
+    await markBillingOfferPaidBySubscription(
+      billingSub.razorpaySubscriptionId!,
+      'subscription.charged'
+    );
+
+    void import('../../services/notifications/paymentNotify.js').then(({ notifyPaymentOutcome }) =>
+      notifyPaymentOutcome({
+        workspaceId: billingSub.workspaceId,
+        success: true,
+        label: billingSub.plan.name,
+        amountPaise: amountPaise ?? 0,
+        currency: paymentCurrency,
+        entityType: 'subscription',
+        entityId: billingSub.id,
+        metadata: { razorpayPaymentId: String(payment.id) },
+      })
+    );
+  }
+
+  /**
+   * Resolve razorpay subscription id for an auth payment.
+   * Razorpay often omits payment.subscription_id on the $0.50/₹1 auth token.
+   */
+  private async resolveSubscriptionIdFromAuthPayment(payment: Record<string, unknown>) {
+    if (typeof payment.subscription_id === 'string' && payment.subscription_id) {
+      return { subscriptionId: payment.subscription_id, via: 'payment.subscription_id' as const };
+    }
+
+    const currency = String(payment.currency ?? '').toUpperCase();
+    if (currency !== 'INR' && currency !== 'USD') return null;
+
+    const amount = typeof payment.amount === 'number' ? payment.amount : null;
+    // Auth tokens are the currency minimum; skip full-price authorizations (orders / links).
+    if (amount == null || amount !== minCheckoutMinor(currency as BillingCurrency)) return null;
+
+    const description = typeof payment.description === 'string' ? payment.description : '';
+    if (!description.trim()) return null;
+
+    const pending = await prisma.billingOffer.findMany({
+      where: {
+        status: 'pending',
+        offerType: 'subscription',
+        currency,
+        razorpaySubscriptionId: { not: null },
+        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      },
+      include: { plan: { select: { name: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+
+    // ponytail: if two identical pending offers, pick newest; upgrade = require subscription_id.
+    const subscriptionId = matchSubscriptionIdByCheckoutDescription(
+      description,
+      pending.map((offer) => ({
+        planName: offer.plan.name,
+        billingCycle: offer.billingCycle,
+        razorpaySubscriptionId: offer.razorpaySubscriptionId!,
+      }))
+    );
+    if (!subscriptionId) return null;
+
+    return { subscriptionId, via: 'pending_offer_description' as const };
+  }
+
+  /**
+   * Auth-token payments for subscriptions often arrive as payment.authorized
+   * (and may never emit subscription.* if those events aren't enabled).
+   */
+  async handleSubscriptionPaymentAuthorized(payload: Record<string, unknown>) {
+    const payment = webhookPaymentEntity(payload) ?? webhookEntity(payload, 'payment');
+    if (!payment?.id) return;
+
+    const status =
+      typeof payment.status === 'string' && payment.status
+        ? String(payment.status)
+        : 'authorized';
+    if (status !== 'authorized' && status !== 'captured') return;
+
+    const resolved = await this.resolveSubscriptionIdFromAuthPayment(payment);
+    if (!resolved) return;
+
+    const { subscriptionId, via } = resolved;
+    const billingSub = await prisma.billingSubscription.findFirst({
+      where: { razorpaySubscriptionId: subscriptionId },
+      include: { plan: true },
+    });
+    if (!billingSub) {
+      console.warn('[billing.handleSubscriptionPaymentAuthorized] no BillingSubscription', {
+        razorpayPaymentId: payment.id,
+        razorpaySubscriptionId: subscriptionId,
+        via,
+      });
+      return;
+    }
+
+    // Already live — still clear any pending billing offer.
+    const alreadyLive = LIVE_BILLING_SUB_STATUSES.includes(
+      billingSub.status as (typeof LIVE_BILLING_SUB_STATUSES)[number]
+    );
+
+    if (!alreadyLive) {
+      await prisma.billingSubscription.update({
+        where: { id: billingSub.id },
+        data: { status: 'authenticated' },
+      });
+    }
+
+    await prisma.workspace.update({
+      where: { id: billingSub.workspaceId },
+      data: {
+        planId: billingSub.planId,
+        ...paidActivationWorkspaceFields(),
+      },
+    });
+    if (billingSub.plan) {
+      await syncWorkspaceLimitsFromPlanFeatures(
+        billingSub.workspaceId,
+        billingSub.plan.features as PlanFeatures
+      );
+    }
+
+    console.log('[billing.handleSubscriptionPaymentAuthorized] workspace plan activated', {
+      workspaceId: billingSub.workspaceId,
+      planId: billingSub.planId,
+      razorpaySubscriptionId: subscriptionId,
+      razorpayPaymentId: payment.id,
+      paymentStatus: status,
+      via,
+    });
+
+    const { markBillingOfferPaidBySubscription } = await import(
+      '../../services/billingOffers.js'
+    );
+    await markBillingOfferPaidBySubscription(subscriptionId, 'payment.authorized');
   }
 
   async handleInvoicePaid(payload: Record<string, unknown>) {
@@ -1818,6 +2115,35 @@ export class BillingService {
 
   // --- Helpers ---
 
+  private notifyInvoicePayment(
+    invoice: {
+      id: string;
+      workspaceId: string;
+      type: string;
+      amountPaise: number;
+      currency: string;
+      description: string | null;
+      metadata: Prisma.JsonValue | null;
+    },
+    success: boolean,
+    reason?: string | null
+  ) {
+    void import('../../services/notifications/paymentNotify.js').then(
+      ({ notifyPaymentOutcome, paymentLabelFromInvoice }) =>
+        notifyPaymentOutcome({
+          workspaceId: invoice.workspaceId,
+          success,
+          label: paymentLabelFromInvoice(invoice),
+          amountPaise: invoice.amountPaise,
+          currency: invoice.currency || 'INR',
+          entityType: 'invoice',
+          entityId: invoice.id,
+          reason: reason ?? null,
+          metadata: { invoiceType: invoice.type },
+        })
+    );
+  }
+
   private async getActiveBillingSubscription(workspaceId: string) {
     const billingSub = await prisma.billingSubscription.findFirst({
       where: {
@@ -1830,9 +2156,16 @@ export class BillingService {
     return billingSub;
   }
 
-  private async addonAmountPaise(type: AddOnType, quantity: number): Promise<number> {
+  private async addonAmountMinor(
+    type: AddOnType,
+    quantity: number,
+    currency: BillingCurrency
+  ): Promise<number> {
     const entry = ADDON_CATALOG.find((item) => item.type === type);
     if (!entry) throw new Error(`Unknown add-on type: ${type}`);
+    if (currency === 'USD') {
+      return toMinorUnits(entry.usdPerUnit) * quantity;
+    }
     const { rate } = await this.getUsdInrRate();
     return this.usdToInrPaise(entry.usdPerUnit, rate) * quantity;
   }

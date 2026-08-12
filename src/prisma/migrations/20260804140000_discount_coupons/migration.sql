@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "discount_coupons" (
+CREATE TABLE IF NOT EXISTS "discount_coupons" (
     "id" TEXT NOT NULL,
     "code" TEXT NOT NULL,
     "discountPercent" INTEGER NOT NULL,
@@ -17,10 +17,10 @@ CREATE TABLE "discount_coupons" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "discount_coupons_code_key" ON "discount_coupons"("code");
+CREATE UNIQUE INDEX IF NOT EXISTS "discount_coupons_code_key" ON "discount_coupons"("code");
 
 -- CreateIndex
-CREATE INDEX "discount_coupons_isActive_idx" ON "discount_coupons"("isActive");
+CREATE INDEX IF NOT EXISTS "discount_coupons_isActive_idx" ON "discount_coupons"("isActive");
 
 -- CreateIndex
-CREATE INDEX "discount_coupons_validFrom_validUntil_idx" ON "discount_coupons"("validFrom", "validUntil");
+CREATE INDEX IF NOT EXISTS "discount_coupons_validFrom_validUntil_idx" ON "discount_coupons"("validFrom", "validUntil");

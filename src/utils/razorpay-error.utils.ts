@@ -1,47 +1,110 @@
 import { ZodError } from 'zod';
 
-/** Razorpay Node SDK rejects with plain objects, not Error instances. */
-export function normalizeRazorpayError(err: unknown): Error {
-  if (err instanceof Error) return err;
+export type RazorpayErrorDetails = {
+  message: string;
+  statusCode?: number;
+  code?: string;
+  description?: string;
+  field?: string;
+  reason?: string;
+  source?: string;
+  step?: string;
+  metadata?: unknown;
+  /** Nested `error` object from the SDK/HTTP body, when present. */
+  rawError?: unknown;
+};
 
+type NestedRazorpayError = {
+  description?: string;
+  code?: string;
+  field?: string;
+  reason?: string;
+  source?: string;
+  step?: string;
+  metadata?: unknown;
+};
+
+function nestedFrom(err: unknown): NestedRazorpayError | null {
+  if (typeof err !== 'object' || err === null) return null;
+  const nested = (err as { error?: unknown }).error;
+  if (typeof nested !== 'object' || nested === null) return null;
+  return nested as NestedRazorpayError;
+}
+
+/** Pull description/field/source/etc. — Razorpay often omits field on account-level rejects. */
+export function extractRazorpayErrorDetails(err: unknown): RazorpayErrorDetails {
   if (err instanceof ZodError) {
-    return new Error(err.errors.map((e) => e.message).join('; '));
+    return { message: err.errors.map((e) => e.message).join('; ') };
   }
 
   if (typeof err === 'string' && err.trim()) {
-    return new Error(err);
+    return { message: err };
   }
 
   if (typeof err === 'object' && err !== null) {
     const o = err as Record<string, unknown>;
-    const nested = o.error;
+    const statusCode = typeof o.statusCode === 'number' ? o.statusCode : undefined;
+    const nested = nestedFrom(err);
 
-    if (typeof nested === 'object' && nested !== null) {
-      const description = (nested as { description?: string }).description;
-      const code = (nested as { code?: string }).code;
-      if (description) {
-        return new Error(code ? `${description} (${code})` : description);
+    if (nested?.description) {
+      const bits = [nested.description];
+      if (nested.field) bits.push(`field=${nested.field}`);
+      if (nested.reason) bits.push(`reason=${nested.reason}`);
+      if (nested.source) bits.push(`source=${nested.source}`);
+      if (nested.step) bits.push(`step=${nested.step}`);
+      if (nested.code) bits.push(`(${nested.code})`);
+      return {
+        message: bits.join(' '),
+        statusCode,
+        code: nested.code,
+        description: nested.description,
+        field: nested.field,
+        reason: nested.reason,
+        source: nested.source,
+        step: nested.step,
+        metadata: nested.metadata,
+        rawError: nested,
+      };
+    }
+
+    if (typeof o.error === 'string' && o.error.trim()) {
+      if (statusCode === 401) {
+        return { message: razorpay401Message(), statusCode, rawError: o.error };
       }
+      return {
+        message: `Razorpay: ${o.error}${statusCode != null ? ` (${statusCode})` : ''}`,
+        statusCode,
+        rawError: o.error,
+      };
     }
 
-    if (typeof nested === 'string' && nested.trim()) {
-      const status = o.statusCode != null ? ` (${o.statusCode})` : '';
-      if (o.statusCode === 401) {
-        return new Error(razorpay401Message());
-      }
-      return new Error(`Razorpay: ${nested}${status}`);
+    if (statusCode === 401) {
+      return { message: razorpay401Message(), statusCode };
     }
 
-    if (typeof o.message === 'string' && o.message.trim()) {
-      return new Error(o.message);
+    // Normalized Error that already carries `.razorpay` details
+    const attached = o.razorpay;
+    if (typeof attached === 'object' && attached !== null) {
+      const d = attached as RazorpayErrorDetails;
+      if (typeof d.message === 'string' && d.message.trim()) return d;
     }
 
-    if (o.statusCode === 401) {
-      return new Error(razorpay401Message());
+    if (typeof o.message === 'string' && o.message.trim() && o.message !== '[object Object]') {
+      return { message: o.message, statusCode, rawError: nested ?? undefined };
     }
   }
 
-  return new Error('Billing operation failed');
+  if (err instanceof Error) return { message: err.message };
+
+  return { message: 'Billing operation failed' };
+}
+
+/** Razorpay Node SDK often rejects with Error-like objects that still carry `.error`. */
+export function normalizeRazorpayError(err: unknown): Error & { razorpay?: RazorpayErrorDetails } {
+  const details = extractRazorpayErrorDetails(err);
+  const out = new Error(details.message) as Error & { razorpay?: RazorpayErrorDetails };
+  out.razorpay = details;
+  return out;
 }
 
 function razorpay401Message(): string {

@@ -1,3 +1,3 @@
 -- AlterTable
-ALTER TABLE "AiAgent" ADD COLUMN "voiceTtsProvider" TEXT NOT NULL DEFAULT 'cartesia';
-ALTER TABLE "AiAgent" ADD COLUMN "voiceTtsVoiceId" TEXT;
+ALTER TABLE "AiAgent" ADD COLUMN IF NOT EXISTS "voiceTtsProvider" TEXT NOT NULL DEFAULT 'cartesia';
+ALTER TABLE "AiAgent" ADD COLUMN IF NOT EXISTS "voiceTtsVoiceId" TEXT;

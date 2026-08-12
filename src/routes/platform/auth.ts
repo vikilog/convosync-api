@@ -71,12 +71,16 @@ export default async function platformAuthRoutes(fastify: FastifyInstance) {
   fastify.get(
     '/me',
     { preHandler: [authenticatePlatformAdmin] },
-    async (request) => {
+    async (request, reply) => {
       const jwt = getJwtUser(request);
-      const admin = await prisma.platformAdmin.findUniqueOrThrow({
+      const admin = await prisma.platformAdmin.findUnique({
         where: { id: jwt.platformAdminId! },
         select: { id: true, name: true, email: true, role: true, createdAt: true },
       });
+      // Stale JWT after DB switch / missing seed — clear session, don't 500
+      if (!admin) {
+        return reply.code(401).send({ error: 'Unauthorized' });
+      }
       return { admin };
     }
   );

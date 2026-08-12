@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "payment_intents" (
+CREATE TABLE IF NOT EXISTS "payment_intents" (
     "id" TEXT NOT NULL,
     "idempotencyKey" TEXT NOT NULL,
     "workspaceId" TEXT NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE "payment_intents" (
 );
 
 -- CreateTable
-CREATE TABLE "razorpay_webhook_logs" (
+CREATE TABLE IF NOT EXISTS "razorpay_webhook_logs" (
     "id" TEXT NOT NULL,
     "eventId" TEXT NOT NULL,
     "event" TEXT NOT NULL,
@@ -27,22 +27,28 @@ CREATE TABLE "razorpay_webhook_logs" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "payment_intents_idempotencyKey_key" ON "payment_intents"("idempotencyKey");
+CREATE UNIQUE INDEX IF NOT EXISTS "payment_intents_idempotencyKey_key" ON "payment_intents"("idempotencyKey");
 
 -- CreateIndex
-CREATE INDEX "payment_intents_workspaceId_idx" ON "payment_intents"("workspaceId");
+CREATE INDEX IF NOT EXISTS "payment_intents_workspaceId_idx" ON "payment_intents"("workspaceId");
 
 -- CreateIndex
-CREATE INDEX "payment_intents_razorpayOrderId_idx" ON "payment_intents"("razorpayOrderId");
+CREATE INDEX IF NOT EXISTS "payment_intents_razorpayOrderId_idx" ON "payment_intents"("razorpayOrderId");
 
 -- CreateIndex
-CREATE INDEX "payment_intents_status_idx" ON "payment_intents"("status");
+CREATE INDEX IF NOT EXISTS "payment_intents_status_idx" ON "payment_intents"("status");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "razorpay_webhook_logs_eventId_key" ON "razorpay_webhook_logs"("eventId");
+CREATE UNIQUE INDEX IF NOT EXISTS "razorpay_webhook_logs_eventId_key" ON "razorpay_webhook_logs"("eventId");
 
 -- AddForeignKey
-ALTER TABLE "payment_intents" ADD CONSTRAINT "payment_intents_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "payment_intents" ADD CONSTRAINT "payment_intents_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES "Workspace"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "payment_intents" ADD CONSTRAINT "payment_intents_billingInvoiceId_fkey" FOREIGN KEY ("billingInvoiceId") REFERENCES "billing_invoices"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "payment_intents" ADD CONSTRAINT "payment_intents_billingInvoiceId_fkey" FOREIGN KEY ("billingInvoiceId") REFERENCES "billing_invoices"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;

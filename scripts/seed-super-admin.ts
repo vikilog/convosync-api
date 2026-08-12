@@ -50,6 +50,109 @@ function loadSuperAdminEnv(): SuperAdminEnv {
   };
 }
 
+/** WA is connected when workspace Graph creds + at least one phone account exist. */
+async function ensureWhatsAppConnection(
+  workspaceId: string,
+  env: SuperAdminEnv,
+  mode: 'connect' | 'reconnect'
+): Promise<'skipped' | 'connected' | 'reconnected'> {
+  const workspace = await prisma.workspace.findUniqueOrThrow({
+    where: { id: workspaceId },
+    select: {
+      waNumberId: true,
+      wabaId: true,
+      waToken: true,
+      _count: { select: { whatsappPhoneAccounts: true } },
+    },
+  });
+
+  const hasCreds = Boolean(workspace.waNumberId && workspace.wabaId && workspace.waToken);
+  const hasAccount = workspace._count.whatsappPhoneAccounts > 0;
+  if (hasCreds && hasAccount) {
+    console.log('WhatsApp: skipped (already connected)');
+    return 'skipped';
+  }
+
+  await prisma.workspace.update({
+    where: { id: workspaceId },
+    data: {
+      wabaId: env.wabaId,
+      waNumberId: env.phoneNumberId,
+      waToken: env.whatsappAccessToken,
+    },
+  });
+
+  await prisma.whatsAppPhoneAccount.upsert({
+    where: {
+      workspaceId_phoneNumberId: {
+        workspaceId,
+        phoneNumberId: env.phoneNumberId,
+      },
+    },
+    create: {
+      workspaceId,
+      phoneNumberId: env.phoneNumberId,
+      wabaId: env.wabaId,
+    },
+    update: {
+      wabaId: env.wabaId,
+    },
+  });
+
+  const action = mode === 'reconnect' ? 'reconnected' : 'connected';
+  console.log(`WhatsApp: ${action}`);
+  return action;
+}
+
+/** IG is connected when a status=connected InstagramAccount exists. */
+async function ensureInstagramConnection(
+  workspaceId: string,
+  env: SuperAdminEnv,
+  mode: 'connect' | 'reconnect'
+): Promise<'skipped' | 'connected' | 'reconnected'> {
+  const connected = await prisma.instagramAccount.findFirst({
+    where: { workspaceId, status: 'connected' },
+    select: { id: true },
+  });
+  if (connected) {
+    console.log('Instagram: skipped (already connected)');
+    return 'skipped';
+  }
+
+  await prisma.workspace.update({
+    where: { id: workspaceId },
+    data: {
+      fbPageId: env.facebookPageId,
+      fbPageToken: env.instagramAccessToken,
+    },
+  });
+
+  await prisma.instagramAccount.upsert({
+    where: {
+      workspaceId_instagramUserId: {
+        workspaceId,
+        instagramUserId: env.instagramAccountId,
+      },
+    },
+    create: {
+      workspaceId,
+      instagramUserId: env.instagramAccountId,
+      pageId: env.facebookPageId,
+      pageAccessToken: env.instagramAccessToken,
+      status: 'connected',
+    },
+    update: {
+      pageId: env.facebookPageId,
+      pageAccessToken: env.instagramAccessToken,
+      status: 'connected',
+    },
+  });
+
+  const action = mode === 'reconnect' ? 'reconnected' : 'connected';
+  console.log(`Instagram: ${action}`);
+  return action;
+}
+
 async function ensureSuperAdminWorkspace(env: SuperAdminEnv) {
   const existing = await prisma.workspace.findFirst({
     where: {
@@ -62,6 +165,8 @@ async function ensureSuperAdminWorkspace(env: SuperAdminEnv) {
     console.log(
       `Super admin tenant already exists (id=${existing.id}, slug=${existing.slug}, name=${existing.name}).`
     );
+    await ensureWhatsAppConnection(existing.id, env, 'reconnect');
+    await ensureInstagramConnection(existing.id, env, 'reconnect');
     return existing;
   }
 
@@ -74,24 +179,6 @@ async function ensureSuperAdminWorkspace(env: SuperAdminEnv) {
       isSuperAdmin: true,
       planTier: 'SUPER_ADMIN',
       subscriptionStatus: 'active',
-      wabaId: env.wabaId,
-      waNumberId: env.phoneNumberId,
-      waToken: env.whatsappAccessToken,
-      fbPageId: env.facebookPageId,
-      fbPageToken: env.instagramAccessToken,
-      whatsappPhoneAccounts: {
-        create: {
-          phoneNumberId: env.phoneNumberId,
-          wabaId: env.wabaId,
-        },
-      },
-      instagramAccounts: {
-        create: {
-          instagramUserId: env.instagramAccountId,
-          pageId: env.facebookPageId,
-          pageAccessToken: env.instagramAccessToken,
-        },
-      },
       usageLimits: {
         create: {
           contactsLimit: unlimited,
@@ -108,7 +195,29 @@ async function ensureSuperAdminWorkspace(env: SuperAdminEnv) {
   });
 
   console.log(`Super admin tenant created successfully. tenantId=${workspace.id}`);
+  await ensureWhatsAppConnection(workspace.id, env, 'connect');
+  await ensureInstagramConnection(workspace.id, env, 'connect');
   return workspace;
+}
+
+/** Platform console login (PlatformAdmin) — separate from workspace User. */
+async function ensurePlatformAdmin(passwordHash: string) {
+  const admin = await prisma.platformAdmin.upsert({
+    where: { email: SUPER_ADMIN_EMAIL },
+    create: {
+      email: SUPER_ADMIN_EMAIL,
+      name: SUPER_ADMIN_USER_NAME,
+      password: passwordHash,
+      role: 'super_admin',
+    },
+    update: {
+      name: SUPER_ADMIN_USER_NAME,
+      password: passwordHash,
+      role: 'super_admin',
+    },
+  });
+  console.log(`Platform admin ready: ${admin.email} (id=${admin.id})`);
+  return admin;
 }
 
 async function ensureSuperAdminUser(workspaceId: string, passwordHash: string) {
@@ -178,11 +287,13 @@ async function main() {
 
   const workspace = await ensureSuperAdminWorkspace(env);
   await ensureSuperAdminUser(workspace.id, passwordHash);
+  await ensurePlatformAdmin(passwordHash);
 
   console.log('');
   console.log('Super admin login credentials:');
   console.log(`  Email: ${SUPER_ADMIN_EMAIL}`);
   console.log(`  Password: ${SUPER_ADMIN_PASSWORD}`);
+  console.log('  (workspace User + platform PlatformAdmin)');
 }
 
 main()

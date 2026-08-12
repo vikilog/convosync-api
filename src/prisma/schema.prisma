@@ -125,6 +125,7 @@ model Workspace {
   billingInvoices      BillingInvoice[]
   billingAddOnPurchases BillingAddOnPurchase[]
   paymentIntents       PaymentIntent[]
+  billingOffers        BillingOffer[]
   usageLimits          WorkspaceUsageLimits?
   agentChatConversations AgentChatConversation[]
   tokenUsageLogs         TokenUsageLog[]
@@ -1579,7 +1580,7 @@ model KnowledgeChunk {
   chunkIndex      Int
   title           String
   content         String                       @db.Text
-  embedding       Unsupported("vector")?
+  embedding       Unsupported("vector(1536)")?
   createdAt       DateTime                     @default(now())
   updatedAt       DateTime                     @updatedAt
 
@@ -1896,8 +1897,16 @@ model SubscriptionPlan {
   priceAnnual     Int?
   priceMonthlyPaise Int?
   priceAnnualPaise  Int?
+  /// Fixed USD catalog prices (no live FX at checkout).
+  priceMonthlyUsd   Int?
+  priceAnnualUsd    Int?
+  priceMonthlyCents Int?
+  priceAnnualCents  Int?
   razorpayPlanIdMonthly String?
   razorpayPlanIdAnnual  String?
+  /// Razorpay Subscription plan IDs for USD catalog (international checkout).
+  razorpayPlanIdMonthlyUsd String?
+  razorpayPlanIdAnnualUsd  String?
   priceLabel      String?
   popular         Boolean  @default(false)
   borderColor     String?
@@ -1911,8 +1920,42 @@ model SubscriptionPlan {
 
   workspaces            Workspace[]
   billingSubscriptions  BillingSubscription[]
+  billingOffers         BillingOffer[]
 
   @@map("subscription_plans")
+}
+
+/// Super-admin–created Razorpay checkout invite for a workspace (subscription or payment link).
+model BillingOffer {
+  id                       String   @id @default(cuid())
+  workspaceId              String
+  workspace                Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  planId                   String
+  plan                     SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  billingCycle             String   @default("monthly") // monthly | annual
+  currency                 String   @default("INR") // INR | USD
+  amountMinor              Int
+  /// subscription | payment_link
+  offerType                String
+  /// pending | paid | cancelled
+  status                   String   @default("pending")
+  razorpayPlanId           String?
+  razorpaySubscriptionId   String?
+  razorpayPaymentLinkId    String?
+  /// Hosted checkout URL (subscription short_url or payment link short_url).
+  shortUrl                 String?
+  note                     String?
+  createdByPlatformAdminId String?
+  createdBy                PlatformAdmin? @relation(fields: [createdByPlatformAdminId], references: [id], onDelete: SetNull)
+  paidAt                   DateTime?
+  cancelledAt              DateTime?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  @@index([workspaceId, status])
+  @@index([razorpaySubscriptionId])
+  @@index([razorpayPaymentLinkId])
+  @@map("billing_offers")
 }
 
 /// Razorpay recurring subscription for a workspace.
@@ -2130,6 +2173,7 @@ model PlatformAdmin {
 
   trialExtensionLogs   TrialExtensionLog[]
   platformAuditLogs    PlatformAuditLog[]
+  billingOffers        BillingOffer[]
 }
 
 /// Super-admin platform audit trail (org/plan/coupon/auth actions).

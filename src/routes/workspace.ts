@@ -36,6 +36,7 @@ import {
   listSubscriptionPlans,
   serializeTenantSubscriptionPlan,
 } from '../services/subscriptionPlans.js';
+import { countryToCurrency } from '../services/billingCurrency.js';
 import { serializeTrialInfo } from '../services/trial.js';
 import { validateAvatarValue } from '../services/userProfile.js';
 import {
@@ -235,6 +236,8 @@ export default async function workspaceRoutes(fastify: FastifyInstance) {
       plans: plans.map(serializeTenantSubscriptionPlan),
       pricingRules: CUSTOM_PLAN_PRICING_RULES,
       customPlan,
+      country: workspace.country ?? 'IN',
+      currency: countryToCurrency(workspace.country),
     };
   });
 

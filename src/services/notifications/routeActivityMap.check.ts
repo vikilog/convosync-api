@@ -62,6 +62,7 @@ assert.equal(chat!.type, NOTIFICATION_TYPES.TEAM_CHAT_MESSAGE);
 // Bell defaults for alert types
 assert.equal(forBellForType(NOTIFICATION_TYPES.TEAM_MEMBER_ADDED), true);
 assert.equal(forBellForType(NOTIFICATION_TYPES.CAMPAIGN_CREATED), false);
+assert.equal(forBellForType(NOTIFICATION_TYPES.PAYMENT_SUCCESS), true);
 
 // Inventory coverage smoke: SideNav-critical areas present
 const keys = listMappedRouteKeys();

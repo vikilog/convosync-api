@@ -27,6 +27,19 @@ async function main() {
     ipAddress: '127.0.0.1',
   });
 
+  // Missing PlatformAdmin FK target must not throw P2003 — actorId null + label kept
+  const missingActorId = 'platform-admin-does-not-exist';
+  recordAuditEvent({
+    action: PLATFORM_AUDIT_ACTIONS.ORG_IMPERSONATE,
+    actor: { id: missingActorId, role: 'super_admin', email: 'ghost@convosync.test' },
+    entityType: 'workspace',
+    entityId: 'self-check-missing-actor',
+    category: 'security',
+    severity: 'warning',
+    metadata: { details: 'missing actor FK self-check' },
+    ipAddress: '127.0.0.1',
+  });
+
   await new Promise((r) => setTimeout(r, 250));
 
   const row = await prisma.platformAuditLog.findFirst({
@@ -44,6 +57,22 @@ async function main() {
     throw new Error(`details mismatch: ${mapped.details}`);
   }
 
+  const missingActorRow = await prisma.platformAuditLog.findFirst({
+    where: { entityId: 'self-check-missing-actor' },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (!missingActorRow) throw new Error('expected audit row for missing actor id');
+  if (missingActorRow.actorId !== null) {
+    throw new Error(`expected null actorId, got ${missingActorRow.actorId}`);
+  }
+  if (missingActorRow.actorEmail !== 'ghost@convosync.test') {
+    throw new Error(`expected ghost email, got ${missingActorRow.actorEmail}`);
+  }
+  const meta = missingActorRow.metadata as Record<string, unknown> | null;
+  if (meta?.unresolvedActorId !== missingActorId) {
+    throw new Error('expected unresolvedActorId in metadata');
+  }
+
   const listed = await listPlatformAuditLogs({
     page: 1,
     pageSize: 5,
@@ -53,7 +82,9 @@ async function main() {
     throw new Error('listed logs missing self-check row');
   }
 
-  await prisma.platformAuditLog.delete({ where: { id: row.id } });
+  await prisma.platformAuditLog.deleteMany({
+    where: { id: { in: [row.id, missingActorRow.id] } },
+  });
 
   console.log('platform-audit self-check OK');
 }
