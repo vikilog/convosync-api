@@ -915,6 +915,7 @@ export function serializeLandingPlan(
     id: plan.slug,
     name: displayName,
     priceMonthly: plan.priceMonthly,
+    priceMonthlyUsd: plan.priceMonthlyUsd ?? null,
     priceLabel: plan.priceLabel ?? undefined,
     description: customPrice
       ? 'Unlimited scale, CTWA/Ads, and priority onboarding.'

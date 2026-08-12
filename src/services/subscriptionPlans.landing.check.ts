@@ -11,8 +11,14 @@ const sample = {
   priceAnnual: 49990,
   priceMonthlyPaise: 499_900,
   priceAnnualPaise: 4_999_000,
+  priceMonthlyUsd: 69,
+  priceAnnualUsd: 690,
+  priceMonthlyCents: 6900,
+  priceAnnualCents: 69_000,
   razorpayPlanIdMonthly: null,
   razorpayPlanIdAnnual: null,
+  razorpayPlanIdMonthlyUsd: null,
+  razorpayPlanIdAnnualUsd: null,
   priceLabel: null,
   popular: false,
   borderColor: null,
@@ -44,6 +50,7 @@ const landing = serializeLandingPlan(sample as never);
 assert.equal(landing.id, 'growth');
 assert.equal(landing.name, 'Growth');
 assert.equal(landing.priceMonthly, 4999);
+assert.equal(landing.priceMonthlyUsd, 69);
 assert.equal(landing.ctaKind, 'trial');
 assert.equal(landing.comparison.seats, '8');
 assert.equal(landing.comparison.aiCopilot, true);
