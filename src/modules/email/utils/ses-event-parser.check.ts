@@ -12,7 +12,7 @@ import {
   sesEventType,
 } from './ses-event-parser.ts';
 import { sesConfigSetNameForWorkspace, sesSnsTopicNameForWorkspace } from './ses-config-set-name.ts';
-import { shouldAdvanceEmailStatus } from './email-event-status.ts';
+import { shouldAdvanceEmailStatus, mapEmailLogStatusToMessageStatus } from './email-event-status.ts';
 
 const confirmRaw = JSON.stringify({
   Type: 'SubscriptionConfirmation',
@@ -59,6 +59,15 @@ assert.equal(bounceDetail, 'Permanent/General: 550 user unknown');
 assert.equal(shouldAdvanceEmailStatus('sent', 'delivered'), true);
 assert.equal(shouldAdvanceEmailStatus('opened', 'delivered'), false);
 assert.equal(shouldAdvanceEmailStatus('delivered', 'bounced'), true);
+assert.equal(shouldAdvanceEmailStatus('read', 'clicked'), true);
+assert.equal(shouldAdvanceEmailStatus('clicked', 'opened'), false);
+
+assert.equal(mapEmailLogStatusToMessageStatus('sent'), 'sent');
+assert.equal(mapEmailLogStatusToMessageStatus('delivered'), 'delivered');
+assert.equal(mapEmailLogStatusToMessageStatus('opened'), 'read');
+assert.equal(mapEmailLogStatusToMessageStatus('clicked'), 'read');
+assert.equal(mapEmailLogStatusToMessageStatus('bounced'), 'failed');
+assert.equal(mapEmailLogStatusToMessageStatus('failed'), 'failed');
 
 const name = sesConfigSetNameForWorkspace('clxyz_bad!chars');
 assert.match(name, /^[a-zA-Z0-9_-]+$/);

@@ -24,6 +24,9 @@ const templateBranch = src.match(
   /if\s*\(\s*templateId\s*\)\s*\{[\s\S]*?log\s*=\s*await\s+getEmailService\(\)\.sendEmail\([\s\S]*?\n\s*\}\);/
 );
 assert.ok(templateBranch, 'expected templateId sendEmail call');
+assert.match(src, /templateName/);
+assert.match(src, /type:\s*templateId\s*\?\s*['"]template['"]\s*:\s*['"]email['"]/);
+assert.match(src, /applyTemplateVariables/);
 assert.match(templateBranch[0], /templateId:\s*tpl\.id/);
 assert.match(templateBranch[0], /variables/);
 

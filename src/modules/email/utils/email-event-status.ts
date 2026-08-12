@@ -22,9 +22,33 @@ export function shouldAdvanceEmailStatus(current: string, next: EmailLogStatus):
   if (next === 'bounced' || next === 'failed' || next === 'complained' || next === 'rejected') {
     return true;
   }
-  const cur = EMAIL_STATUS_RANK[current.toLowerCase()] ?? 0;
+  const cur = EMAIL_STATUS_RANK[normalizeEmailStatusKey(current)] ?? 0;
   const nxt = EMAIL_STATUS_RANK[next] ?? 0;
   return nxt >= cur;
+}
+
+/** Inbox Message.status uses WA-style ticks; map provider email events onto that. */
+export function mapEmailLogStatusToMessageStatus(status: EmailLogStatus): string {
+  switch (status) {
+    case 'opened':
+    case 'clicked':
+      return 'read';
+    case 'bounced':
+    case 'failed':
+    case 'complained':
+    case 'rejected':
+      return 'failed';
+    case 'queued':
+      return 'sent';
+    default:
+      return status;
+  }
+}
+
+/** Treat Message `read` as email `opened` for rank compares. */
+function normalizeEmailStatusKey(status: string): string {
+  const s = status.toLowerCase();
+  return s === 'read' ? 'opened' : s;
 }
 
 export function appendEmailDeliveryEvent(

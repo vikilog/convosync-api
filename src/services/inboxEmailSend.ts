@@ -4,7 +4,10 @@
 import { prisma } from '../lib/prisma.js';
 import { getIo } from '../socket.js';
 import { getEmailService } from '../modules/email/container.js';
-import { stripHtmlToText } from '../modules/email/utils/template-variables.js';
+import {
+  applyTemplateVariables,
+  stripHtmlToText,
+} from '../modules/email/utils/template-variables.js';
 import {
   interpolateContactTokens,
   resolveCampaignEmailVariables,
@@ -71,13 +74,14 @@ export async function sendInboxEmailToContact(
   let subject: string;
   let text: string | undefined;
   let html: string | undefined;
+  let templateName: string | undefined;
   let log: Awaited<ReturnType<ReturnType<typeof getEmailService>['sendEmail']>>;
 
   if (templateId) {
     // Same path as campaigns: EmailService loads HTML from template + interpolates variables.
     const tpl = await prisma.emailTemplate.findFirst({
       where: { id: templateId, workspaceId },
-      select: { id: true, variables: true },
+      select: { id: true, name: true, variables: true, htmlBody: true, textBody: true },
     });
     if (!tpl) {
       throw Object.assign(new Error('Email template not found'), { statusCode: 404 });
@@ -97,9 +101,15 @@ export async function sendInboxEmailToContact(
     });
 
     subject = log.subject;
+    templateName = tpl.name;
+    // Inbox body preview: rendered plain text (not raw HTML / subject-only).
+    const renderedBody = applyTemplateVariables(
+      tpl.textBody?.trim() || stripHtmlToText(tpl.htmlBody),
+      variables
+    ).trim();
     text = input.text?.trim()
       ? interpolateContactTokens(input.text.trim(), campaignContact)
-      : undefined;
+      : renderedBody || undefined;
     html = undefined;
   } else {
     const subjectRaw = input.subject?.trim() ?? '';
@@ -137,7 +147,12 @@ export async function sendInboxEmailToContact(
   });
 
   const previewText = text || (html ? stripHtmlToText(html) : subject);
-  const content = subject === previewText ? previewText : `${subject}\n\n${previewText}`;
+  // Template bubbles show subject separately — keep content as body preview only.
+  const content = templateId
+    ? previewText
+    : subject === previewText
+      ? previewText
+      : `${subject}\n\n${previewText}`;
 
   const message = await prisma.message.create({
     data: {
@@ -146,12 +161,16 @@ export async function sendInboxEmailToContact(
       sender: 'agent',
       senderName: input.senderName?.trim() || 'Agent',
       content,
-      type: 'email',
+      // Match WA inbox: template sends use type=template + templateName metadata.
+      type: templateId ? 'template' : 'email',
       status: 'sent',
       metadata: {
         emailLogId: log.id,
         subject,
-        ...(templateId ? { templateId } : {}),
+        emailStatus: 'sent',
+        ...(templateId
+          ? { templateId, ...(templateName ? { templateName } : {}) }
+          : {}),
         events: [{ type: 'sent', at: new Date().toISOString() }],
       },
     },
@@ -160,7 +179,10 @@ export async function sendInboxEmailToContact(
   await prisma.conversation.updateMany({
     where: { id: conversation.id, workspaceId },
     data: {
-      lastMessage: content.slice(0, 500),
+      lastMessage: (templateId
+        ? `${subject}${previewText && previewText !== subject ? ` — ${previewText}` : ''}`
+        : content
+      ).slice(0, 500),
       lastMessageAt: new Date(),
       status: 'open',
     },
