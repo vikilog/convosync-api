@@ -12,6 +12,7 @@ export default async function instagramJourneyRoutes(fastify: FastifyInstance) {
   fastify.get('/', auth, controller.list);
   fastify.post('/', auth, controller.create);
   fastify.get('/contacts/:contactId/progress', auth, controller.contactProgress);
+  fastify.post('/executions/:id/resume', auth, controller.resume);
   fastify.get('/:id/graph', auth, controller.getGraph);
   fastify.put('/:id/graph', auth, controller.saveGraph);
   fastify.post('/:id/publish', auth, controller.publish);

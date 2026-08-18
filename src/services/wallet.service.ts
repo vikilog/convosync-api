@@ -321,14 +321,24 @@ export async function debitWallet(params: DebitParams) {
       }
     }
 
-    const wallet = await ensureWallet(workspaceId, client);
-    if (wallet.balancePaise < amountPaise) {
-      throw new InsufficientWalletBalanceError(wallet.balancePaise, amountPaise);
-    }
+    await ensureWallet(workspaceId, client);
 
-    const updated = await client.workspaceWallet.update({
-      where: { workspaceId },
+    // Compare-and-swap: the balance check lives in the WHERE clause of the
+    // same UPDATE, not a separate preceding read — two concurrent debits
+    // racing a low balance could otherwise both pass a stale read's check
+    // before either commits, driving the balance negative past either
+    // individual check. If this affects 0 rows, re-read just for the error
+    // message (the common, successful path never pays that extra query).
+    const debited = await client.workspaceWallet.updateMany({
+      where: { workspaceId, balancePaise: { gte: amountPaise } },
       data: { balancePaise: { decrement: amountPaise } },
+    });
+    if (debited.count === 0) {
+      const current = await ensureWallet(workspaceId, client);
+      throw new InsufficientWalletBalanceError(current.balancePaise, amountPaise);
+    }
+    const updated = await client.workspaceWallet.findUniqueOrThrow({
+      where: { workspaceId },
     });
 
     const transaction = await client.walletTransaction.create({

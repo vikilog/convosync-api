@@ -63,6 +63,8 @@ export type InboundWhatsAppContext = {
   forcedAgentId?: string;
   /** Inbox channel — defaults to whatsapp for backward compat. */
   channel?: 'whatsapp' | 'instagram' | 'messenger';
+  /** Saved Message row id — lets journey reply-resume dedupe a redelivered webhook. */
+  messageId?: string;
 };
 
 /** Channel-agnostic alias (WA + IG AI Agent / automation routing). */
@@ -447,6 +449,38 @@ async function runFlowFromIndex(
       continue;
     }
 
+    if (node.type === 'unsubscribe') {
+      // Same tag campaignAudience.service.ts's EXCLUDED_TAGS filters out —
+      // this was previously a no-op, so a business wiring "reply STOP →
+      // Unsubscribe node" believed it worked while the contact stayed
+      // eligible for every future campaign.
+      if (!contact.tags.includes('Unsubscribed')) {
+        const updated = await prisma.contact.update({
+          where: { id: contact.id },
+          data: { tags: Array.from(new Set([...contact.tags, 'Unsubscribed'])) },
+        });
+        contact = updated;
+        getIo().to(session.workspaceId).emit('contact_updated', {
+          contactId: contact.id,
+          tags: updated.tags,
+        });
+      }
+      await sendFlowText(
+        session.workspaceId,
+        session.conversationId,
+        contact.phone,
+        agent.name,
+        "You've been unsubscribed and won't receive further campaign messages.",
+        {
+          phoneNumberId,
+          channel: conversation.channel,
+          channelAccountId: conversation.channelAccountId,
+        }
+      );
+      nodeIndex += 1;
+      continue;
+    }
+
     if (node.type === 'agent_takeover') {
       status = 'handed_off';
       await prisma.conversation.updateMany({
@@ -476,7 +510,7 @@ async function runFlowFromIndex(
       continue;
     }
 
-    // call_api, unsubscribe — no-op for MVP
+    // call_api — no-op for MVP
     nodeIndex += 1;
   }
 

@@ -16,6 +16,14 @@ export {
   type OrgCrmContactInput,
 } from './pushOrganizationCrmContact.helpers.js';
 
+function tenantWorkspaceIdFromCustomFields(customFields: unknown): string | null {
+  if (!customFields || typeof customFields !== 'object' || Array.isArray(customFields)) {
+    return null;
+  }
+  const value = (customFields as Record<string, unknown>).tenantWorkspaceId;
+  return typeof value === 'string' && value ? value : null;
+}
+
 /**
  * Upsert tenant owner into ConvoSync sales CRM workspace as a Contact.
  * Requires CONVOSYNC_CRM_WORKSPACE_ID and a usable phone on the org/owner.
@@ -92,12 +100,20 @@ export async function pushOrganizationToCrmContact(tenantWorkspaceId: string) {
   });
 
   if (!existing && emailNorm) {
-    existing = await prisma.contact.findFirst({
+    const emailMatch = await prisma.contact.findFirst({
       where: {
         workspaceId: crmWorkspaceId,
         email: { equals: emailNorm, mode: 'insensitive' },
       },
     });
+    // A shared/generic email address between two DIFFERENT tenants must not
+    // let the second tenant's push silently reassign the first tenant's
+    // already-linked CRM contact (name, tags, tenantWorkspaceId) to itself —
+    // only trust the email match if it's unambiguously the same tenant.
+    const matchedTenantId = tenantWorkspaceIdFromCustomFields(emailMatch?.customFields);
+    if (emailMatch && (!matchedTenantId || matchedTenantId === tenant.id)) {
+      existing = emailMatch;
+    }
   }
 
   if (existing) {

@@ -5,6 +5,7 @@ import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import {
   campaignScheduleDelayMs,
+  cancelScheduledCampaignBroadcast,
   enqueueCampaignBroadcast,
   isScheduledCampaignEditable,
 } from '../queue/campaign-broadcast.queue.js';
@@ -15,6 +16,21 @@ import {
   resendAllCampaignFailed,
   resendCampaignRecipient,
 } from '../services/campaignResend.service.js';
+
+// Whitelists + type-checks the fields campaignBroadcast.service.ts actually
+// consumes from this client-controlled JSON blob — anything else is silently
+// stripped by zod's default object parsing rather than stored verbatim.
+const audienceFilterSchema = z.object({
+  channel: z.enum(['whatsapp', 'email', 'instagram']).optional(),
+  segmentId: z.string().optional(),
+  segmentIds: z.array(z.string()).optional(),
+  tag: z.string().optional(),
+  variableMappings: z.record(z.string()).optional(),
+  headerMediaStorageKey: z.string().optional(),
+  headerMediaMimeType: z.string().optional(),
+  headerMediaFileName: z.string().optional(),
+  headerMediaAssetId: z.string().optional(),
+});
 
 export default async function campaignRoutes(fastify: FastifyInstance) {
   const auth = companyAuth;
@@ -35,11 +51,11 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
   fastify.post('/', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const schema = z.object({
-      name: z.string(),
-      templateId: z.string().optional(),
+      name: z.string().trim().min(1),
+      templateId: z.string().min(1),
       channel: z.enum(['whatsapp', 'email', 'instagram']).optional(),
       audienceType: z.enum(['all', 'segment', 'tag', 'csv']),
-      audienceFilter: z.record(z.unknown()).optional(),
+      audienceFilter: audienceFilterSchema.optional(),
       scheduledAt: z.string().optional(),
     });
     const body = schema.parse(request.body);
@@ -54,15 +70,29 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
       if (Number.isNaN(scheduledAt.getTime())) {
         return reply.code(400).send({ error: 'Invalid scheduledAt' });
       }
+      // A past/near-past scheduledAt previously fell through to a silent
+      // 'draft' with the stale date stored anyway — reject it explicitly,
+      // matching how PATCH already treats this same input.
+      if (campaignScheduleDelayMs(scheduledAt) <= 0) {
+        return reply.code(400).send({ error: 'scheduledAt must be in the future' });
+      }
     }
 
-    const delayMs = campaignScheduleDelayMs(scheduledAt);
-    const isScheduled = Boolean(scheduledAt) && delayMs > 0;
-    const totalRecipients = await countCampaignAudienceFromFilter(
-      workspaceId,
-      body.audienceType,
-      audienceFilter
-    );
+    const isScheduled = Boolean(scheduledAt);
+    let totalRecipients: number;
+    try {
+      totalRecipients = await countCampaignAudienceFromFilter(
+        workspaceId,
+        body.audienceType,
+        audienceFilter
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid audience filter';
+      return reply.code(400).send({ error: message });
+    }
+    if (totalRecipients === 0) {
+      return reply.code(400).send({ error: 'Audience is empty — no contacts match this filter' });
+    }
 
     const campaign = await prisma.campaign.create({
       data: {
@@ -81,7 +111,7 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
       try {
         await enqueueCampaignBroadcast(
           { campaignId: campaign.id, workspaceId },
-          delayMs
+          campaignScheduleDelayMs(scheduledAt)
         );
       } catch (err) {
         request.log.error({ err, campaignId: campaign.id }, 'Failed to enqueue scheduled campaign');
@@ -99,17 +129,17 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
     return reply.code(201).send(campaign);
   });
 
-  // Full edit of scheduled campaign while more than 10 minutes before send.
+  // Full edit of a draft, or a scheduled campaign while more than 10 minutes before send.
   fastify.patch('/:id', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const schema = z
       .object({
         name: z.string().trim().min(1).optional(),
-        templateId: z.string().optional(),
+        templateId: z.string().min(1).optional(),
         channel: z.enum(['whatsapp', 'email', 'instagram']).optional(),
         audienceType: z.enum(['all', 'segment', 'tag', 'csv']).optional(),
-        audienceFilter: z.record(z.unknown()).optional(),
+        audienceFilter: audienceFilterSchema.optional(),
         scheduledAt: z.string().optional(),
       })
       .refine(
@@ -127,8 +157,13 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
     if (!campaign) return reply.code(404).send({ error: 'Not found' });
 
     if (!isScheduledCampaignEditable(campaign.status, campaign.scheduledAt)) {
+      // 'draft' is always editable, so only a 'scheduled' campaign inside its
+      // 10-minute send-lock window, or another terminal status, lands here.
       return reply.code(409).send({
-        error: 'Can only edit when more than 10 minutes before send',
+        error:
+          campaign.status === 'scheduled'
+            ? 'Can only edit when more than 10 minutes before send'
+            : `Campaign is ${campaign.status} — not editable`,
       });
     }
 
@@ -138,11 +173,13 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
       if (Number.isNaN(scheduledAt.getTime())) {
         return reply.code(400).send({ error: 'Invalid scheduledAt' });
       }
-      const delayMs = campaignScheduleDelayMs(scheduledAt);
-      if (delayMs <= 0) {
-        return reply.code(400).send({ error: 'scheduledAt must be in the future' });
-      }
       nextScheduledAt = scheduledAt;
+    }
+    // Required either way — a draft has no existing scheduledAt to fall back
+    // on, so skipping this check let a draft PATCHed without a new
+    // scheduledAt silently schedule for "now" via a 0ms enqueue delay below.
+    if (!nextScheduledAt || campaignScheduleDelayMs(nextScheduledAt) <= 0) {
+      return reply.code(400).send({ error: 'scheduledAt must be in the future' });
     }
 
     const prevFilter =
@@ -158,12 +195,25 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
           }
         : undefined;
     const nextAudienceType = body.audienceType ?? campaign.audienceType;
+    const nextTemplateId = body.templateId ?? campaign.templateId;
+    if (!nextTemplateId) {
+      return reply.code(400).send({ error: 'Select a template before scheduling' });
+    }
     const filterForCount = nextFilter ?? prevFilter;
-    const totalRecipients = await countCampaignAudienceFromFilter(
-      workspaceId,
-      nextAudienceType,
-      filterForCount
-    );
+    let totalRecipients: number;
+    try {
+      totalRecipients = await countCampaignAudienceFromFilter(
+        workspaceId,
+        nextAudienceType,
+        filterForCount
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid audience filter';
+      return reply.code(400).send({ error: message });
+    }
+    if (totalRecipients === 0) {
+      return reply.code(400).send({ error: 'Audience is empty — no contacts match this filter' });
+    }
 
     const updated = await prisma.campaign.update({
       where: { id },
@@ -224,6 +274,44 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
         error: err instanceof Error ? err.message : 'Campaign send failed',
       });
     }
+  });
+
+  fastify.post('/:id/cancel', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const campaign = await prisma.campaign.findFirst({ where: { id, workspaceId } });
+    if (!campaign) return reply.code(404).send({ error: 'Not found' });
+
+    if (campaign.status === 'scheduled') {
+      await cancelScheduledCampaignBroadcast(id);
+      const updated = await prisma.campaign.updateMany({
+        where: { id, workspaceId, status: 'scheduled' },
+        data: { status: 'cancelled' },
+      });
+      if (updated.count === 0) {
+        return reply.code(409).send({ error: 'Campaign is no longer scheduled' });
+      }
+      return { ok: true, status: 'cancelled' };
+    }
+
+    if (campaign.status === 'running') {
+      // The send loop polls for status !== 'running' every
+      // CAMPAIGN_PROGRESS_CHECK_INTERVAL contacts and stops early there,
+      // preserving whatever it already sent — this does not stop instantly.
+      // It also overwrites this status with the same 'cancelled' value once
+      // it actually stops, so setting it directly here (rather than a
+      // transient "cancelling") is enough for the loop to notice.
+      const updated = await prisma.campaign.updateMany({
+        where: { id, workspaceId, status: 'running' },
+        data: { status: 'cancelled' },
+      });
+      if (updated.count === 0) {
+        return reply.code(409).send({ error: 'Campaign is no longer running' });
+      }
+      return { ok: true, status: 'cancelled' };
+    }
+
+    return reply.code(409).send({ error: `Campaign is ${campaign.status} — nothing to cancel` });
   });
 
   fastify.post('/:id/resend-failed', auth, async (request, reply) => {

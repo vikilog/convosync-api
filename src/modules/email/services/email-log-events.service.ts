@@ -14,13 +14,23 @@ export async function applyEmailLogProviderEvent(input: {
   eventType: string;
   detail?: string;
   metaKey: string;
-}): Promise<{ ok: true; updated: boolean; eventType: string }> {
+}): Promise<{
+  ok: true;
+  updated: boolean;
+  eventType: string;
+  workspaceId?: string;
+  contactId?: string;
+}> {
   const log = await prisma.emailLog.findFirst({
     where: { messageId: input.messageId },
   });
   if (!log) {
     return { ok: true, updated: false, eventType: input.eventType };
   }
+  const contactId =
+    log.metadata && typeof log.metadata === 'object' && !Array.isArray(log.metadata)
+      ? (log.metadata as Record<string, unknown>).contactId
+      : undefined;
 
   const prevMeta =
     log.metadata && typeof log.metadata === 'object' && !Array.isArray(log.metadata)
@@ -65,7 +75,13 @@ export async function applyEmailLogProviderEvent(input: {
     at,
   });
 
-  return { ok: true, updated: true, eventType: input.eventType };
+  return {
+    ok: true,
+    updated: true,
+    eventType: input.eventType,
+    workspaceId: log.workspaceId,
+    contactId: typeof contactId === 'string' ? contactId : undefined,
+  };
 }
 
 /**

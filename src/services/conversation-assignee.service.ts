@@ -30,13 +30,25 @@ export async function applyConversationAssignee(
   workspaceId: string,
   conversationId: string,
   patch: ConversationAssigneePatch,
-  actor?: AssigneeActorContext
+  actor?: AssigneeActorContext,
+  opts?: { requireCurrentlyUnassigned?: boolean }
 ): Promise<void> {
   const conv = await prisma.conversation.findFirst({
     where: { id: conversationId, workspaceId },
     select: { id: true, contactId: true, assigneeType: true, assigneeId: true, channel: true },
   });
   if (!conv) throw new ConversationAssigneeError('Conversation not found');
+
+  // Auto-assign's own precondition ("only steal if still unassigned") must
+  // be checked against THIS read — the one the CAS write below is keyed on
+  // — not against whatever the caller observed earlier. Several async steps
+  // (eligible-member lookup, rule matching) can run between auto-assign's
+  // own initial check and this call, during which a human could have
+  // manually assigned the conversation; without this, that manual
+  // assignment would be silently overwritten below.
+  if (opts?.requireCurrentlyUnassigned && conv.assigneeType) {
+    throw new ConversationAssigneeError('Conversation was already assigned');
+  }
 
   const assigneeType = patch.assigneeType ?? null;
   const assigneeId = patch.assigneeId ?? null;
@@ -108,14 +120,42 @@ export async function applyConversationAssignee(
     conv.assigneeType !== assigneeType ||
     (assigneeType ? conv.assigneeId !== assigneeId : Boolean(conv.assigneeId));
 
-  await prisma.conversation.updateMany({
-    where: { id: conversationId, workspaceId },
+  // Compare-and-swap on the assignee state we just read: two concurrent
+  // requests (double-click, auto-assign racing a manual assign) must not
+  // both observe `changed = true` and both fire the side effects below —
+  // one of those side effects is a real outbound AI reply to the customer.
+  const cas = await prisma.conversation.updateMany({
+    where: {
+      id: conversationId,
+      workspaceId,
+      assigneeType: conv.assigneeType,
+      assigneeId: conv.assigneeId,
+    },
     data: {
       assigneeType,
       assigneeId: assigneeType ? assigneeId : null,
       assignedTo,
     },
   });
+
+  if (cas.count === 0) {
+    const latest = await prisma.conversation.findFirst({
+      where: { id: conversationId, workspaceId },
+      select: { assigneeType: true, assigneeId: true },
+    });
+    const alreadyDesired =
+      latest &&
+      latest.assigneeType === assigneeType &&
+      (assigneeType ? latest.assigneeId === assigneeId : !latest.assigneeId);
+    if (!alreadyDesired) {
+      throw new ConversationAssigneeError(
+        'Conversation was reassigned by someone else — refresh and try again'
+      );
+    }
+    // Another concurrent request already applied this exact assignment —
+    // treat as success without repeating the side effects below.
+    return;
+  }
 
   if (changed && isAiAssigneeType(assigneeType)) {
     let actorName = actor?.actorName ?? null;

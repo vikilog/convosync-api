@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import {
   hasCampaignHeaderMediaSource,
+  isHeaderMediaStorageKeyOwnedByWorkspace,
   parseCampaignHeaderMediaOverride,
 } from './campaignHeaderMedia.js';
 
@@ -28,5 +29,22 @@ assert.equal(
   true
 );
 assert.equal(hasCampaignHeaderMediaSource({ headerMediaAssetId: 'm1' }, null), true);
+
+// Cross-tenant IDOR guard: a storage key must be prefixed with the calling
+// workspace's own id, matching how saveTemplateHeaderMedia writes keys.
+assert.equal(
+  isHeaderMediaStorageKeyOwnedByWorkspace('ws_A/template-headers/th_1.jpg', 'ws_A'),
+  true
+);
+assert.equal(
+  isHeaderMediaStorageKeyOwnedByWorkspace('ws_B/template-headers/th_1.jpg', 'ws_A'),
+  false,
+  'workspace A must not be able to read workspace B storage keys'
+);
+assert.equal(
+  isHeaderMediaStorageKeyOwnedByWorkspace('ws_AB/template-headers/th_1.jpg', 'ws_A'),
+  false,
+  'prefix match must be a full path segment, not a bare string prefix'
+);
 
 console.log('campaignHeaderMedia.check.ts: ok');

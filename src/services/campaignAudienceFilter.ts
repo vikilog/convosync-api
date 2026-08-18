@@ -30,6 +30,12 @@ export function resolveSegmentIdsFromFilter(
   filter: { segmentId?: string; segmentIds?: unknown; tag?: string }
 ): string[] {
   if (audienceType === 'all') return ['all'];
+  if (audienceType === 'csv') {
+    // No CSV-upload audience path exists yet (no contactIds handling anywhere
+    // in this service or its callers) — fail loudly instead of silently
+    // falling through to 'all' and broadcasting to the entire workspace.
+    throw new Error('CSV audience upload is not supported yet');
+  }
   if (Array.isArray(filter.segmentIds) && filter.segmentIds.length > 0) {
     return normalizeSegmentIds(filter.segmentIds.map(String));
   }

@@ -166,7 +166,13 @@ export class ConversationService {
       await this.saveMessage(conversation.id, 'assistant', reply, 0, INTENTS.MEDIA_REQUEST);
       await this.prisma.agentChatConversation.update({
         where: { id: conversation.id },
-        data: { stage: 'intent_identified', detectedIntent: INTENTS.MEDIA_REQUEST },
+        data: {
+          stage: 'intent_identified',
+          detectedIntent: INTENTS.MEDIA_REQUEST,
+          // +2: one AgentChatMessage row for the user turn, one for the assistant reply
+          // (messageCount tracks raw row count — matches ai-agent-inbox-seed.service.ts).
+          messageCount: { increment: 2 },
+        },
       });
       return {
         reply,
@@ -223,6 +229,10 @@ export class ConversationService {
         'Bilkul! Main aapko abhi ek human agent se connect karta hun. Thoda wait karein. 🙏';
       await this.saveMessage(conversation.id, 'user', params.message, 0, intent);
       await this.saveMessage(conversation.id, 'assistant', reply, 0, intent);
+      await this.prisma.agentChatConversation.update({
+        where: { id: conversation.id },
+        data: { messageCount: { increment: 2 } },
+      });
       // Escalate must run even though this path skips hybrid.
       await this.runPostReplyActions({
         workspaceId: params.workspaceId,
@@ -326,7 +336,7 @@ export class ConversationService {
 
     await this.prisma.agentChatConversation.update({
       where: { id: conversation.id },
-      data: { stage, detectedIntent: intent },
+      data: { stage, detectedIntent: intent, messageCount: { increment: 2 } },
     });
 
     // Actions never block the chat reply (errors logged inside).
@@ -450,7 +460,11 @@ export class ConversationService {
 
     await this.prisma.agentChatConversation.update({
       where: { id: conversation.id },
-      data: { stage: finalStage, detectedIntent: graphResult.intent },
+      data: {
+        stage: finalStage,
+        detectedIntent: graphResult.intent,
+        messageCount: { increment: 2 },
+      },
     });
 
     return {

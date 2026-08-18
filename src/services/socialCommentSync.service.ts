@@ -104,6 +104,7 @@ export async function upsertListeningCommentsForPost(input: {
         commentId: c.id,
         parentCommentId: c.parentCommentId,
         commenterUsername: c.username,
+        commenterId: c.fromId,
         commenterProfilePic: null,
         commentText: c.text || '',
         classificationStatus: isOwnComment ? 'classified' : 'pending',
@@ -118,6 +119,7 @@ export async function upsertListeningCommentsForPost(input: {
       update: {
         commentText: c.text || '',
         commenterUsername: c.username,
+        commenterId: c.fromId,
         parentCommentId: c.parentCommentId,
         postCaption: input.postCaption ?? undefined,
         postThumbnailUrl: input.postThumbnailUrl ?? undefined,

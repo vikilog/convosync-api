@@ -38,13 +38,19 @@ export function campaignScheduleDelayMs(scheduledAt: Date | string | null | unde
   return Math.max(0, t - Date.now());
 }
 
-/** status === scheduled && scheduledAt more than 10 minutes from now. */
+/**
+ * 'draft' — always editable (never sent, no in-flight job to race).
+ * 'scheduled' — only more than 10 minutes before its own send time.
+ * Anything else (running/completed/failed/cancelled) — not editable here.
+ */
 export function isScheduledCampaignEditable(
   status: string | null | undefined,
   scheduledAt: Date | string | null | undefined,
   now = Date.now()
 ): boolean {
-  if ((status ?? '').toLowerCase() !== 'scheduled') return false;
+  const s = (status ?? '').toLowerCase();
+  if (s === 'draft') return true;
+  if (s !== 'scheduled') return false;
   if (!scheduledAt) return false;
   const t = scheduledAt instanceof Date ? scheduledAt.getTime() : new Date(scheduledAt).getTime();
   if (!Number.isFinite(t)) return false;
@@ -80,4 +86,20 @@ export async function enqueueCampaignBroadcast(
     jobId,
   });
   return job.id ?? '';
+}
+
+/** Removes a not-yet-started scheduled job (cancel before it fires). No-op if already active/gone. */
+export async function cancelScheduledCampaignBroadcast(campaignId: string): Promise<void> {
+  const q = getCampaignBroadcastQueue();
+  const jobId = `campaign-broadcast-${campaignId}`;
+  try {
+    const existing = await q.getJob(jobId);
+    if (!existing) return;
+    const state = await existing.getState();
+    if (state === 'delayed' || state === 'waiting') {
+      await existing.remove();
+    }
+  } catch {
+    /* ignore getJob/remove races */
+  }
 }

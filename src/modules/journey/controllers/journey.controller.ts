@@ -60,9 +60,14 @@ export class JourneyController {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const body = saveGraphSchema.parse(request.body);
-    const graph = await this.c.graphService.saveGraph(workspaceId, id, body);
-    if (!graph) return reply.code(404).send({ error: 'Not found' });
-    return graph;
+    try {
+      const graph = await this.c.graphService.saveGraph(workspaceId, id, body);
+      if (!graph) return reply.code(404).send({ error: 'Not found' });
+      return graph;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Save failed';
+      return reply.code(400).send({ error: message });
+    }
   };
 
   publish = async (request: FastifyRequest, reply: FastifyReply) => {
@@ -85,9 +90,10 @@ export class JourneyController {
   };
 
   resume = async (request: FastifyRequest, reply: FastifyReply) => {
+    const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     try {
-      await this.c.engine.resumeExecution(id);
+      await this.c.engine.resumeExecution(workspaceId, id);
       return { ok: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Resume failed';

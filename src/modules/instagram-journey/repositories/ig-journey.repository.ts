@@ -72,6 +72,26 @@ export class InstagramJourneyRepository {
     });
     if (!journey) return null;
 
+    // Nodes are deleted + recreated wholesale below. currentNodeId on an active
+    // execution is a plain string, not an FK, so removing a node a contact is
+    // currently parked on would silently strand them (executeNode fails to find
+    // the node and marks the execution 'failed' with no alert to anyone).
+    const incomingNodeIds = new Set(graph.nodes.map((n) => n.id));
+    const stuck = await this.db.instagramJourneyExecution.findMany({
+      where: { journeyId, status: { in: ['running', 'waiting'] }, currentNodeId: { not: null } },
+      select: { currentNodeId: true },
+    });
+    const blockedNodeIds = new Set(
+      stuck
+        .map((e) => e.currentNodeId)
+        .filter((id): id is string => !!id && !incomingNodeIds.has(id))
+    );
+    if (blockedNodeIds.size > 0) {
+      throw new Error(
+        `${blockedNodeIds.size} contact(s) are currently on a step this save would remove. Wait for them to move past it, or leave that step in place.`
+      );
+    }
+
     await this.db.$transaction(async (tx) => {
       await tx.instagramJourneyEdge.deleteMany({ where: { journeyId } });
       await tx.instagramJourneyNode.deleteMany({ where: { journeyId } });

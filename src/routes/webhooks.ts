@@ -1,4 +1,4 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import { prisma } from '../index.js';
 import { getIo } from '../socket.js';
 import { config } from '../config.js';
@@ -35,19 +35,59 @@ import {
   type MessageMediaMetadata,
 } from '../services/whatsappMedia.js';
 import { getWorkspaceWhatsAppCredentials } from '../services/whatsappCredentials.js';
+import { isOptOutMessage, markContactUnsubscribed } from '../services/contactOptOut.service.js';
+import { sendWhatsAppMessage } from '../services/whatsapp.js';
 import {
   mergeWhatsAppStatusMetadata,
   normalizeWhatsAppStatusErrors,
   type WhatsAppStatusUpdate,
 } from '../lib/whatsappStatusErrors.js';
 import { recordInboundMetaWebhook } from '../services/webhookEventLog.service.js';
+import { safeStringEquals, verifyMetaWebhookSignature } from '../utils/crypto.utils.js';
+import {
+  handleTelegramUpdate,
+  type TelegramUpdate,
+} from '../services/telegramWebhookHandler.js';
 
 function logWebhook(label: string, payload: unknown) {
   const line = `[WhatsApp Webhook] ${label}`;
   console.log(line, typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2));
 }
 
+type RawBodyRequest = FastifyRequest & { rawBody?: string };
+
 export default async function webhookRoutes(fastify: FastifyInstance) {
+  // Capture the exact bytes Meta sent (before JSON parsing) so the POST
+  // handlers below can verify X-Hub-Signature-256 against them — HMAC only
+  // matches over the raw body, not a re-serialized copy of the parsed object.
+  fastify.addHook('preParsing', async (request, _reply, payload) => {
+    if (!request.url.includes('/whatsapp') && !request.url.includes('/instagram')) return payload;
+    const chunks: Buffer[] = [];
+    for await (const chunk of payload) {
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+    const raw = Buffer.concat(chunks).toString('utf8');
+    (request as RawBodyRequest).rawBody = raw;
+    const { Readable } = await import('node:stream');
+    return Readable.from([raw]);
+  });
+
+  function verifyMetaSignature(request: FastifyRequest): boolean {
+    if (!config.meta.appSecret) {
+      if (process.env.NODE_ENV === 'production') return false;
+      console.warn('[Webhook] META_APP_SECRET unset — accepting unverified payload in dev');
+      return true;
+    }
+    const rawBody = (request as RawBodyRequest).rawBody;
+    if (!rawBody) return false;
+    const signature = request.headers['x-hub-signature-256'];
+    return verifyMetaWebhookSignature(
+      rawBody,
+      typeof signature === 'string' ? signature : undefined,
+      config.meta.appSecret
+    );
+  }
+
   fastify.get('/whatsapp', async (request, reply) => {
     console.log('[WhatsApp Webhook] GET hit — verification request', new Date().toISOString());
     const { 'hub.mode': mode, 'hub.verify_token': token, 'hub.challenge': challenge } = request.query as {
@@ -56,9 +96,10 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
       'hub.challenge'?: string;
     };
 
-    logWebhook('GET verify', { mode, tokenMatch: token === config.meta.webhookVerifyToken, challenge });
+    const tokenMatch = safeStringEquals(token, config.meta.webhookVerifyToken);
+    logWebhook('GET verify', { mode, tokenMatch, challenge });
 
-    if (mode === 'subscribe' && token === config.meta.webhookVerifyToken) {
+    if (mode === 'subscribe' && tokenMatch) {
       logWebhook('GET verify → success', { challenge });
       return reply.send(challenge);
     }
@@ -69,6 +110,10 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
 
   fastify.post('/whatsapp', async (request, reply) => {
     console.log('[WhatsApp Webhook] POST hit — incoming event', new Date().toISOString());
+    if (!verifyMetaSignature(request)) {
+      logWebhook('POST → rejected', 'invalid or missing X-Hub-Signature-256');
+      return reply.code(401).send({ error: 'Invalid signature' });
+    }
     const body = request.body as {
       object?: string;
       entry?: Array<{
@@ -278,6 +323,35 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
                 contactId: contact.id,
               });
 
+              // Opt-out works regardless of whatever automation (if any) is
+              // currently assigned to this conversation — a business relying
+              // solely on a rule-based flow's "Unsubscribe" node would miss
+              // every contact not currently inside that flow.
+              if (parsed.sender !== 'system' && !parsed.reaction && isOptOutMessage(displayContent)) {
+                try {
+                  const tagged = await markContactUnsubscribed(contact.id, workspace.id);
+                  if (tagged) {
+                    const credentials = await getWorkspaceWhatsAppCredentials(
+                      workspace.id,
+                      waNumberId
+                    );
+                    if (credentials.accessToken && credentials.phoneNumberId) {
+                      await sendWhatsAppMessage(
+                        credentials.accessToken,
+                        credentials.phoneNumberId,
+                        contact.phone,
+                        "You've been unsubscribed and won't receive further campaign messages."
+                      );
+                    }
+                  }
+                } catch (optOutErr) {
+                  logWebhook(
+                    'POST → opt-out handling error',
+                    optOutErr instanceof Error ? optOutErr.message : optOutErr
+                  );
+                }
+              }
+
               // Don't feed system/reaction noise into journeys / AI.
               if (parsed.sender !== 'system' && !parsed.reaction) {
                 try {
@@ -289,6 +363,7 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
                     text: displayContent,
                     buttonPayload,
                     phoneNumberId: waNumberId,
+                    messageId: message.id,
                   });
                 } catch (flowErr) {
                   logWebhook(
@@ -445,13 +520,10 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
       'hub.challenge'?: string;
     };
 
-    logInstagramWebhook('GET verify', {
-      mode,
-      tokenMatch: token === config.meta.webhookVerifyToken,
-      challenge,
-    });
+    const tokenMatch = safeStringEquals(token, config.meta.webhookVerifyToken);
+    logInstagramWebhook('GET verify', { mode, tokenMatch, challenge });
 
-    if (mode === 'subscribe' && token === config.meta.webhookVerifyToken) {
+    if (mode === 'subscribe' && tokenMatch) {
       logInstagramWebhook('GET verify → success', { challenge });
       return reply.send(challenge);
     }
@@ -462,6 +534,10 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
 
   fastify.post('/instagram', async (request, reply) => {
     console.log('[Instagram Webhook] POST hit — incoming event', new Date().toISOString());
+    if (!verifyMetaSignature(request)) {
+      logInstagramWebhook('POST → rejected', 'invalid or missing X-Hub-Signature-256');
+      return reply.code(401).send({ error: 'Invalid signature' });
+    }
     const body = request.body as PageMessagingWebhookBody;
     console.log('[Instagram Webhook] payload', JSON.stringify(body, null, 2));
 
@@ -479,6 +555,33 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
     }
 
     logInstagramWebhook('POST → response', 'ok');
+    return reply.send('ok');
+  });
+
+  fastify.post('/telegram/:botId', async (request, reply) => {
+    const { botId } = request.params as { botId: string };
+    const secretHeaderRaw = request.headers['x-telegram-bot-api-secret-token'];
+    const secretHeader = Array.isArray(secretHeaderRaw) ? secretHeaderRaw[0] : secretHeaderRaw;
+
+    const account = await prisma.telegramAccount.findFirst({ where: { botId } });
+    if (!account) {
+      console.log('[Telegram Webhook] unknown bot', botId);
+      return reply.code(404).send({ error: 'Unknown bot' });
+    }
+    if (!account.webhookSecret || !safeStringEquals(secretHeader, account.webhookSecret)) {
+      console.log('[Telegram Webhook] rejected — bad secret token', { botId });
+      return reply.code(401).send({ error: 'Invalid secret token' });
+    }
+
+    const body = request.body as TelegramUpdate;
+    try {
+      await handleTelegramUpdate(botId, body);
+    } catch (err) {
+      console.error('[Telegram Webhook] processing error', err);
+      fastify.log.error(err);
+    }
+
+    // Telegram only cares about the HTTP status — always ack so it doesn't retry forever.
     return reply.send('ok');
   });
 

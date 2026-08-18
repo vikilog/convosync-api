@@ -102,6 +102,7 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
         headerMedia = await uploadTemplateHeaderMediaForSend(
           credentials.accessToken,
           credentials.phoneNumberId,
+          input.workspaceId,
           templateRecord
         );
       }

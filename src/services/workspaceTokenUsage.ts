@@ -92,7 +92,6 @@ export async function recordWorkspaceTokenUsage(params: {
         data: {
           totalTokensUsed: { increment: totalTokens },
           totalCostInr: { increment: costInr },
-          messageCount: { increment: 1 },
           lastMessageAt: new Date(),
         },
       });

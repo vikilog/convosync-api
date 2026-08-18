@@ -138,7 +138,7 @@ export async function callLlmWithRagContext(params: {
   const kbBlock = hits
     .map(
       (h, i) =>
-        `[${i + 1}] (score=${h.score.toFixed(3)}) ${h.title}\n${h.content.slice(0, 1200)}`
+        `[${i + 1}] (score=${h.score.toFixed(3)}) ${h.title}\n${extractDirectAnswer(h.content, params.message).slice(0, 1200)}`
     )
     .join('\n\n');
 

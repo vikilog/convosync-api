@@ -532,6 +532,8 @@ async function persistTurn(input: {
     where: { id: input.chatId },
     data: {
       detectedIntent: input.intent,
+      // +2 = one AgentChatMessage row for the user turn, one for the assistant reply.
+      // logUsage() above no longer double-counts this (see workspaceTokenUsage.ts).
       messageCount: { increment: 2 },
     },
   });

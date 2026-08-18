@@ -1,5 +1,6 @@
 import multipart from '@fastify/multipart';
 import { FastifyInstance } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
@@ -10,6 +11,7 @@ import {
   buildMetaComponents,
   createMetaMessageTemplate,
   deleteMetaMessageTemplate,
+  extractVariableIndexes,
   fetchMetaMessageTemplates,
   metaErrorMessage,
   normalizeMetaLanguageCode,
@@ -21,8 +23,10 @@ import {
   isAllowedTemplateHeaderMime,
   readTemplateHeaderMedia,
   saveTemplateHeaderMedia,
+  sniffAllowedHeaderMediaType,
   uploadMetaResumableMedia,
 } from '../services/templateMedia.js';
+import { isHeaderMediaStorageKeyOwnedByWorkspace } from '../services/campaignHeaderMedia.js';
 
 const templateBodySchema = z.object({
   name: z.string().min(1),
@@ -48,6 +52,80 @@ const templateBodySchema = z.object({
 
 function normalizeCategory(category: string) {
   return metaCategoryToSystem(category);
+}
+
+function isPrismaUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+}
+
+/**
+ * The stored Template.variables length drives buildCampaignBodyParams at
+ * campaign-send time (one param built per entry) — if it doesn't match the
+ * actual {{n}} placeholder count in bodyPattern, every campaign send using
+ * this template builds the wrong number of parameters and gets rejected by
+ * Meta at send time, on an otherwise-approved template. buildVariableSamples
+ * masks this at submit time by silently padding samples to the body's real
+ * count, so this mismatch was previously invisible until send.
+ */
+function assertVariablesMatchBody(bodyPattern: string, variables: string[]): void {
+  const expected = extractVariableIndexes(bodyPattern).length;
+  if (variables.length !== expected) {
+    throw new Error(
+      expected === 0
+        ? `bodyPattern has no {{n}} placeholders, but ${variables.length} variable(s) were provided.`
+        : `bodyPattern has ${expected} placeholder(s) ({{1}}..{{${expected}}}), but ${variables.length} variable(s) were provided.`
+    );
+  }
+}
+
+// Meta's documented WhatsApp template component limits — checking these
+// locally means a template that's too long fails with an immediate, clear
+// message instead of only surfacing as an opaque Meta API error at submit.
+const META_CONTENT_LIMITS = {
+  bodyPattern: 1024,
+  header: 60,
+  footer: 60,
+  buttonText: 25,
+} as const;
+
+function assertMetaContentLimits(fields: {
+  bodyPattern?: string | null;
+  header?: string | null;
+  footer?: string | null;
+  buttonText?: string | null;
+}): void {
+  const checks: Array<[keyof typeof META_CONTENT_LIMITS, string | null | undefined]> = [
+    ['bodyPattern', fields.bodyPattern],
+    ['header', fields.header],
+    ['footer', fields.footer],
+    ['buttonText', fields.buttonText],
+  ];
+  for (const [field, value] of checks) {
+    if (value && value.length > META_CONTENT_LIMITS[field]) {
+      throw new Error(
+        `${field} is ${value.length} characters — Meta allows at most ${META_CONTENT_LIMITS[field]}.`
+      );
+    }
+  }
+}
+
+/**
+ * headerMediaStorageKey is a free-form string field on the request body —
+ * unlike headerMediaAssetId (a real workspace-scoped DB row), nothing
+ * inherently ties it to the caller's workspace. Without this check a client
+ * could set it to another workspace's stored file (or, pre-existing
+ * objectStorage.ts hardening aside, attempt a path-traversal string) and
+ * have that file read and uploaded to Meta on send — see
+ * resolveTemplateHeaderMediaBuffer's matching read-time check.
+ */
+function assertHeaderMediaStorageKeyOwnership(
+  workspaceId: string,
+  headerMediaStorageKey: string | null | undefined
+): void {
+  if (!headerMediaStorageKey) return;
+  if (!isHeaderMediaStorageKeyOwnedByWorkspace(headerMediaStorageKey, workspaceId)) {
+    throw new Error('Header media does not belong to this workspace');
+  }
 }
 
 async function resolveHeaderMediaHandle(
@@ -110,7 +188,7 @@ async function syncTemplatesFromMeta(workspaceId: string) {
     const status = metaStatusToSystem(mt.status);
     await prisma.template.upsert({
       where: {
-        workspaceId_name: { workspaceId, name: mt.name },
+        workspaceId_name_language: { workspaceId, name: mt.name, language: mt.language || 'en' },
       },
       create: {
         workspaceId,
@@ -202,7 +280,7 @@ export default async function templateRoutes(fastify: FastifyInstance) {
 
     const buffer = await part.toBuffer();
     const mimeType = part.mimetype || 'application/octet-stream';
-    if (!isAllowedTemplateHeaderMime(mimeType)) {
+    if (!isAllowedTemplateHeaderMime(mimeType) || !sniffAllowedHeaderMediaType(buffer)) {
       return reply.code(400).send({
         error: 'Use JPEG/PNG for image, MP4 for video, or PDF for document headers.',
       });
@@ -240,7 +318,17 @@ export default async function templateRoutes(fastify: FastifyInstance) {
   fastify.get('/header-media/*', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const storageKey = (request.params as { '*': string })['*'];
-    if (!storageKey || !storageKey.startsWith(`${workspaceId}/template-headers/`)) {
+    // The prefix check alone doesn't reject `..` segments — a key like
+    // `${workspaceId}/template-headers/../../other-workspace/x.jpg` still
+    // starts with the required prefix. objectStorage.ts's local-disk path
+    // resolution now rejects that too (defense in depth), but check it
+    // explicitly here as well so a malformed key 404s immediately instead
+    // of relying solely on that deeper guard.
+    if (
+      !storageKey ||
+      !storageKey.startsWith(`${workspaceId}/template-headers/`) ||
+      storageKey.split('/').includes('..')
+    ) {
       return reply.code(404).send({ error: 'Media not found' });
     }
     try {
@@ -265,19 +353,34 @@ export default async function templateRoutes(fastify: FastifyInstance) {
     const name = sanitizeTemplateName(body.name);
     const submitToMeta = body.submitToMeta !== false;
 
+    try {
+      assertHeaderMediaStorageKeyOwnership(workspaceId, body.headerMediaStorageKey);
+      assertVariablesMatchBody(body.bodyPattern, body.variables ?? []);
+      assertMetaContentLimits({
+        bodyPattern: body.bodyPattern,
+        header: body.headerFormat === 'TEXT' ? body.header : null,
+        footer: body.footer,
+        buttonText: body.buttonText,
+      });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : 'Invalid template' });
+    }
+
+    const language = normalizeMetaLanguageCode(body.language);
+
     const existing = await prisma.template.findUnique({
-      where: { workspaceId_name: { workspaceId, name } },
+      where: { workspaceId_name_language: { workspaceId, name, language } },
     });
     if (existing) {
-      return reply.code(409).send({ error: 'A template with this name already exists for this company' });
+      return reply.code(409).send({
+        error: 'A template with this name and language already exists for this company',
+      });
     }
 
     const buttons = body.buttonText?.trim() ? [body.buttonText.trim()] : [];
     let status = 'draft';
     let waTemplateId: string | null = null;
     let rejectionReason: string | null = null;
-
-    const language = normalizeMetaLanguageCode(body.language);
 
     if (submitToMeta) {
       try {
@@ -322,31 +425,47 @@ export default async function templateRoutes(fastify: FastifyInstance) {
       }
     }
 
-    const template = await prisma.template.create({
-      data: {
-        name,
-        category: normalizeCategory(body.category),
-        language,
-        bodyPattern: body.bodyPattern,
-        header: body.header ?? null,
-        headerFormat: body.headerFormat ?? null,
-        headerMediaHandle: body.headerMediaHandle ?? null,
-        headerMediaStorageKey: body.headerMediaStorageKey ?? null,
-        headerMediaMimeType: body.headerMediaMimeType ?? null,
-        headerMediaFileName: body.headerMediaFileName ?? null,
-        footer: body.footer ?? null,
-        variables: body.variables ?? [],
-        buttons,
-        buttonType: body.buttonType ?? null,
-        buttonText: body.buttonText ?? null,
-        buttonUrl: body.buttonUrl ?? null,
-        buttonPhoneNumber: body.buttonPhoneNumber ?? null,
-        status,
-        waTemplateId,
-        rejectionReason,
-        workspaceId,
-      },
-    });
+    let template;
+    try {
+      template = await prisma.template.create({
+        data: {
+          name,
+          category: normalizeCategory(body.category),
+          language,
+          bodyPattern: body.bodyPattern,
+          header: body.header ?? null,
+          headerFormat: body.headerFormat ?? null,
+          headerMediaHandle: body.headerMediaHandle ?? null,
+          headerMediaStorageKey: body.headerMediaStorageKey ?? null,
+          headerMediaMimeType: body.headerMediaMimeType ?? null,
+          headerMediaFileName: body.headerMediaFileName ?? null,
+          footer: body.footer ?? null,
+          variables: body.variables ?? [],
+          buttons,
+          buttonType: body.buttonType ?? null,
+          buttonText: body.buttonText ?? null,
+          buttonUrl: body.buttonUrl ?? null,
+          buttonPhoneNumber: body.buttonPhoneNumber ?? null,
+          status,
+          waTemplateId,
+          rejectionReason,
+          workspaceId,
+        },
+      });
+    } catch (err) {
+      // The findUnique check above is a plain read — two concurrent
+      // creates for the same name can both pass it. If Meta was already
+      // submitted to above, the loser's submission stands at Meta with no
+      // local row until a manual /sync rediscovers it; this at least turns
+      // the crash into a clean, actionable error instead of a raw 500.
+      if (isPrismaUniqueViolation(err)) {
+        return reply.code(409).send({
+          error:
+            'A template with this name and language already exists for this company — refresh, or run Sync if you just submitted it.',
+        });
+      }
+      throw err;
+    }
     return reply.code(201).send(template);
   });
 
@@ -357,6 +476,12 @@ export default async function templateRoutes(fastify: FastifyInstance) {
     if (!existing) return reply.code(404).send({ error: 'Template not found' });
 
     const body = templateBodySchema.partial().parse(request.body);
+
+    try {
+      assertHeaderMediaStorageKeyOwnership(workspaceId, body.headerMediaStorageKey);
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : 'Invalid header media' });
+    }
 
     // Approved on Meta: name/body locked; allow local language fix so send matches Meta's code.
     if (existing.status === 'approved') {
@@ -375,6 +500,23 @@ export default async function templateRoutes(fastify: FastifyInstance) {
 
     // Meta-only fields — not on Template model
     const { submitToMeta: _s, variableSamples: _v, buttonUrlSample: _b, ...rest } = body;
+
+    try {
+      assertVariablesMatchBody(
+        rest.bodyPattern ?? existing.bodyPattern,
+        rest.variables ?? (existing.variables as string[])
+      );
+      const effectiveHeaderFormat = rest.headerFormat ?? existing.headerFormat;
+      assertMetaContentLimits({
+        bodyPattern: rest.bodyPattern ?? existing.bodyPattern,
+        header: effectiveHeaderFormat === 'TEXT' ? (rest.header ?? existing.header) : null,
+        footer: rest.footer ?? existing.footer,
+        buttonText: rest.buttonText ?? existing.buttonText,
+      });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : 'Invalid template' });
+    }
+
     const data = scopedUpdateData(rest as Record<string, unknown>);
 
     if (typeof rest.name === 'string') {
@@ -386,10 +528,20 @@ export default async function templateRoutes(fastify: FastifyInstance) {
       data.buttons = rest.buttonText?.trim() ? [rest.buttonText.trim()] : [];
     }
 
-    const template = await prisma.template.update({
-      where: { id },
-      data,
-    });
+    let template;
+    try {
+      template = await prisma.template.update({
+        where: { id },
+        data,
+      });
+    } catch (err) {
+      if (isPrismaUniqueViolation(err)) {
+        return reply.code(409).send({
+          error: 'A template with this name and language already exists for this company',
+        });
+      }
+      throw err;
+    }
     return template;
   });
 
@@ -413,8 +565,14 @@ export default async function templateRoutes(fastify: FastifyInstance) {
               : 'No matching template found on Meta for this name.',
         };
       }
-      const template = await prisma.template.update({
-        where: { id },
+      // CAS on updatedAt — a concurrent bulk /sync for this same workspace
+      // can race this single-template refresh, both fetching Meta at
+      // slightly different moments and writing the same row. If the row
+      // changed since we read it above, something else already wrote a
+      // (presumably at-least-as-fresh) status — return that instead of
+      // blindly overwriting it with what may now be the stale value.
+      await prisma.template.updateMany({
+        where: { id, updatedAt: existing.updatedAt },
         data: {
           status: metaStatusToSystem(mt.status),
           category: normalizeCategory(mt.category),
@@ -423,6 +581,9 @@ export default async function templateRoutes(fastify: FastifyInstance) {
           waTemplateId: mt.id ?? existing.waTemplateId,
         },
       });
+      // Re-fetch regardless of whether our own write landed — this always
+      // reflects whichever write actually won.
+      const template = await prisma.template.findUnique({ where: { id } });
       return { ...template, metaFound: true };
     } catch (err) {
       return reply.code(400).send({ error: metaErrorMessage(err) });
@@ -438,17 +599,27 @@ export default async function templateRoutes(fastify: FastifyInstance) {
     if (existing.status === 'approved') {
       return reply.code(400).send({ error: 'Template is already approved on Meta' });
     }
+    if (existing.status === 'pending') {
+      return reply.code(400).send({ error: 'Template is already pending review at Meta' });
+    }
+
+    // Atomic claim — only one concurrent submit for this template proceeds
+    // past this point. Without it, a double-click (or a slow request plus
+    // an impatient retry) both read status draft/rejected, both call
+    // Meta's create-template API for the same name+language, and the
+    // loser's "duplicate template" error used to overwrite the winner's
+    // real status with a false 'rejected'.
+    const claim = await prisma.template.updateMany({
+      where: { id, workspaceId, status: { in: ['draft', 'rejected'] } },
+      data: { status: 'pending' },
+    });
+    if (claim.count === 0) {
+      return reply.code(409).send({ error: 'This template is already being submitted or reviewed' });
+    }
 
     try {
       const creds = await getWorkspaceWhatsAppCredentials(workspaceId);
-      let components;
-      try {
-        components = await buildComponentsForSubmit(workspaceId, existing);
-      } catch (validationErr) {
-        return reply.code(400).send({
-          error: validationErr instanceof Error ? validationErr.message : 'Invalid template',
-        });
-      }
+      const components = await buildComponentsForSubmit(workspaceId, existing);
       const metaRes = await createMetaMessageTemplate(creds, {
         name: existing.name,
         category: existing.category,
@@ -466,10 +637,12 @@ export default async function templateRoutes(fastify: FastifyInstance) {
       return template;
     } catch (err) {
       const message = metaErrorMessage(err);
-      await prisma.template.update({
-        where: { id },
-        data: { status: 'rejected', rejectionReason: message },
-      });
+      await prisma.template
+        .update({
+          where: { id },
+          data: { status: 'rejected', rejectionReason: message },
+        })
+        .catch(() => {});
       return reply.code(400).send({ error: message });
     }
   });
@@ -480,12 +653,37 @@ export default async function templateRoutes(fastify: FastifyInstance) {
     const existing = await prisma.template.findFirst({ where: { id, workspaceId } });
     if (!existing) return reply.code(404).send({ error: 'Template not found' });
 
+    const [campaignRef, paymentRef, journeyRef] = await Promise.all([
+      prisma.campaign.findFirst({ where: { workspaceId, templateId: id }, select: { id: true } }),
+      prisma.whatsAppPaymentRequest.findFirst({
+        where: { workspaceId, templateId: id },
+        select: { id: true },
+      }),
+      prisma.journeyNode.findFirst({
+        where: { journey: { workspaceId }, data: { path: ['templateId'], equals: id } },
+        select: { id: true },
+      }),
+    ]);
+    if (campaignRef || paymentRef || journeyRef) {
+      return reply.code(409).send({
+        error:
+          'This template is still referenced by a campaign, payment request, or journey step — remove those references first.',
+      });
+    }
+
     if (existing.waTemplateId || existing.status !== 'draft') {
       try {
         const creds = await getWorkspaceWhatsAppCredentials(workspaceId);
         await deleteMetaMessageTemplate(creds, existing.name);
       } catch (err) {
+        // Don't silently delete the local row when the Meta-side delete
+        // failed — the template would still be live (and billable) on
+        // Meta while the app forgets it ever existed, with no way back
+        // short of a full re-sync rediscovering it under a new local id.
         fastify.log.warn({ err, template: existing.name }, 'Meta template delete failed');
+        return reply.code(502).send({
+          error: `Could not delete this template on Meta (${metaErrorMessage(err)}). It was not removed locally — try again.`,
+        });
       }
     }
 

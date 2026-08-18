@@ -11,7 +11,10 @@ import {
   shapeWebhookComment,
   type InstagramCommentWebhookValue,
 } from './instagramCommentWebhook.shape.js';
-import { getPostCommentAutomationJourneyId } from './socialListeningPostSetting.service.js';
+import {
+  getPostCommentAutomationJourneyId,
+  isPostAutomationEnabled,
+} from './socialListeningPostSetting.service.js';
 import { getInstagramJourneyContainer } from '../modules/instagram-journey/container.js';
 
 export {
@@ -110,11 +113,21 @@ export async function handleInstagramCommentWebhookBody(
         }
 
         try {
-          const contactId = await ensureInstagramCommentContact(
+          // "Off (safe): every comment on this post stays in the review
+          // queue" is the Social Listening agent panel's own promise to the
+          // user — respect it here, or a post whose toggle was switched off
+          // (or never configured) still gets auto-handled behind their back.
+          const autoEnabled = await isPostAutomationEnabled(
             account.workspaceId,
-            shaped.comment.fromId,
-            shaped.comment.username
+            shaped.postId
           );
+          const contactId = autoEnabled
+            ? await ensureInstagramCommentContact(
+                account.workspaceId,
+                shaped.comment.fromId,
+                shaped.comment.username
+              )
+            : null;
           if (contactId) {
             const postJourneyId = await getPostCommentAutomationJourneyId(
               account.workspaceId,

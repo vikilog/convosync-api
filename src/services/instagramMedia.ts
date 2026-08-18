@@ -8,6 +8,7 @@ import {
   previewForMessage,
   saveMessageMediaFile,
 } from './whatsappMedia.js';
+import { ssrfSafeRequestAgents } from '../utils/ssrfGuard.js';
 
 const GRAPH = 'https://graph.facebook.com/v25.0';
 
@@ -101,6 +102,13 @@ export function parseInboundInstagramMessage(
   };
 }
 
+/**
+ * The attachment URL comes straight from webhook payload content (Instagram
+ * DM or Messenger), so it's attacker-suppliable in principle — fetched
+ * through the same pinned-DNS/private-IP SSRF guard used for outbound
+ * journey webhooks, with redirects disabled so a redirect can't hop to an
+ * internal address after the initial host check passes.
+ */
 export async function downloadInstagramMediaUrl(
   url: string,
   pageAccessToken?: string
@@ -110,11 +118,14 @@ export async function downloadInstagramMediaUrl(
     headers.Authorization = `Bearer ${pageAccessToken}`;
   }
 
+  const { httpAgent, httpsAgent } = await ssrfSafeRequestAgents(url);
   const res = await axios.get(url, {
     headers,
     responseType: 'arraybuffer',
-    maxRedirects: 5,
+    maxRedirects: 0,
     timeout: 60_000,
+    httpAgent,
+    httpsAgent,
   });
 
   const mimeType =

@@ -1,7 +1,10 @@
 import axios from 'axios';
 import type { WebhookNodeData } from '../types/journey.types.js';
 import { renderTemplateVariables } from './message-renderer.service.js';
+import { isBlockedIp, ssrfSafeRequestAgents } from '../../../utils/ssrfGuard.js';
 import type { Contact } from '@prisma/client';
+
+export { isBlockedIp };
 
 export type WebhookExecutionResult = {
   statusCode: number;
@@ -48,6 +51,8 @@ export async function executeWebhookNode(
   const headers = renderHeaders(config.headers, contact);
   const body = method === 'POST' ? renderBody(config.body, contact) : undefined;
 
+  const { httpAgent, httpsAgent } = await ssrfSafeRequestAgents(url);
+
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
@@ -58,6 +63,9 @@ export async function executeWebhookNode(
         data: body,
         timeout: timeoutMs,
         validateStatus: () => true,
+        maxRedirects: 0,
+        httpAgent,
+        httpsAgent,
       });
       if (res.status >= 200 && res.status < 300) {
         return { statusCode: res.status, body: res.data, attempts: attempt + 1 };

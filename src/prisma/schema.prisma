@@ -81,6 +81,7 @@ model Workspace {
   whatsappPhoneAccounts WhatsAppPhoneAccount[]
   instagramAccounts     InstagramAccount[]
   messengerAccounts     MessengerAccount[]
+  telegramAccounts      TelegramAccount[]
   socialComments        SocialComment[]
   leadFunnels           LeadFunnel[]
   leads                 Lead[]
@@ -546,6 +547,11 @@ model SocialComment {
   commentId            String
   parentCommentId      String?
   commenterUsername    String?
+  /// IG-scoped commenter id (webhook `from.id`) — used to link the eventual
+  /// Lead to the SAME Contact row findOrCreateInstagramContact already
+  /// created for this commenter, instead of a synthetic phone that can
+  /// never match.
+  commenterId          String?
   commenterProfilePic  String?
   commentText          String
   /// interested | question | complaint | spam | unclear | null while pending
@@ -617,6 +623,9 @@ model LeadFunnelStage {
   leads Lead[]
 
   @@index([funnelId, position])
+  // Partial unique index (funnelId) WHERE isFinal = true lives in a
+  // hand-written migration — Prisma's DSL can't express a filtered index.
+  // See 20260817100000_lead_funnel_single_final_stage.
 }
 
 model Lead {
@@ -658,6 +667,10 @@ model Lead {
   @@index([funnelId, stage])
   @@index([stageId])
   @@index([contactId])
+  // Partial unique index (workspaceId, contactId, funnelId) WHERE contactId
+  // IS NOT NULL AND funnelId IS NOT NULL lives in a hand-written migration —
+  // Prisma's DSL can't express a filtered index. See
+  // 20260817093000_lead_contact_funnel_unique.
 }
 
 /// Per-workspace Social Listening automation (auto-reply / DM / lead rules).
@@ -743,6 +756,13 @@ model SocialListeningPostSetting {
   workingHoursOnly    Boolean   @default(false)
   workingHoursStart   String?
   workingHoursEnd     String?
+  /// Atomic reservation counter for maxAutoDmsPerDay — see migration
+  /// 20260817110000_social_listening_auto_dm_counter. autoDmsCounterDate
+  /// holds the workspace-tz start-of-day this count belongs to; a mismatch
+  /// against the caller's freshly-computed "today" means the bucket has
+  /// rolled over and the count is stale (treated as 0).
+  autoDmsCounterDate  DateTime?
+  autoDmsCounterCount Int       @default(0)
   updatedAt           DateTime  @updatedAt
 
   @@unique([workspaceId, postId])
@@ -767,6 +787,25 @@ model MessengerAccount {
   @@unique([workspaceId, pageId])
   @@index([workspaceId])
   @@index([metaUserId])
+}
+
+model TelegramAccount {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  botId         String
+  botUsername   String?
+  botName       String?
+  botToken      String
+  /// Verifies incoming webhook calls via X-Telegram-Bot-Api-Secret-Token.
+  /// Null until the bot completes webhook registration (e.g. legacy rows pre-dating this field).
+  webhookSecret String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([workspaceId, botId])
+  @@index([workspaceId])
+  @@index([botId])
 }
 
 model WorkspaceMembership {
@@ -1168,7 +1207,12 @@ model Template {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  @@unique([workspaceId, name])
+  /// Matches Meta's real uniqueness rule (name + language, not name alone) —
+  /// see migration 20260818070000_template_name_language_unique. A
+  /// (workspaceId, name) constraint alone made a legitimate multi-language
+  /// rollout of the same template name impossible, and made syncTemplatesFromMeta's
+  /// upsert key collide two different-language templates that share a name.
+  @@unique([workspaceId, name, language])
   @@index([workspaceId])
 }
 
@@ -1188,9 +1232,18 @@ model Campaign {
   workspaceId     String
   workspace       Workspace @relation(fields: [workspaceId], references: [id])
   createdAt       DateTime  @default(now())
+  /// Touched periodically while sending (see CAMPAIGN_PROGRESS_CHECK_INTERVAL) —
+  /// the reaper uses staleness here to tell a genuinely stuck 'running' campaign
+  /// (crashed worker) apart from one still actively sending.
+  updatedAt       DateTime  @updatedAt
+  /// Set when status flips to 'failed' from a pre-send validation error
+  /// (e.g. template no longer approved) — the scheduled/worker path had no
+  /// column to record why a campaign failed before this, unlike the
+  /// synchronous send path which returns the error over HTTP directly.
+  lastError       String?
 
   @@index([workspaceId])
-
+  @@index([status, updatedAt])
 }
 
 model Journey {
@@ -1250,6 +1303,8 @@ model JourneyExecution {
   currentNodeId  String?
   status         String    @default("running") // running | waiting | completed | failed | cancelled
   context        Json?
+  /// Optimistic lock — bumped on every updateProgress; a stale-based update is rejected.
+  version        Int       @default(0)
   startedAt      DateTime  @default(now())
   lastExecutedAt DateTime?
 
@@ -1259,6 +1314,9 @@ model JourneyExecution {
   @@index([contactId])
   @@index([status])
   @@index([journeyId, contactId])
+  // Partial unique index (journeyId, contactId) WHERE status IN ('running','waiting')
+  // is added by hand in the migration SQL — Prisma's schema DSL can't express a
+  // filtered/partial unique index, so it isn't declared here.
 }
 
 model JourneyExecutionLog {
@@ -1337,6 +1395,8 @@ model InstagramJourneyExecution {
   currentNodeId  String?
   status         String    @default("running") // running | waiting | completed | failed | cancelled
   context        Json?
+  /// Optimistic lock — bumped on every updateProgress; a stale-based update is rejected.
+  version        Int       @default(0)
   startedAt      DateTime  @default(now())
   lastExecutedAt DateTime?
 
@@ -1346,6 +1406,9 @@ model InstagramJourneyExecution {
   @@index([contactId])
   @@index([status])
   @@index([journeyId, contactId])
+  // Partial unique index (journeyId, contactId) WHERE status IN ('running','waiting')
+  // is added by hand in the migration SQL — Prisma's schema DSL can't express a
+  // filtered/partial unique index, so it isn't declared here.
   @@map("instagram_journey_executions")
 }
 

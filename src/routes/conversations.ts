@@ -26,12 +26,20 @@ import {
   isMessengerSource,
   parseInstagramScopedUserId,
   parseMessengerPsid,
+  parseTelegramChatId,
 } from '../lib/channelContact.js';
 import { getWorkspaceInstagramCredentials } from '../services/instagramCredentials.js';
 import { formatInstagramSendError, sendInstagramMessage } from '../services/instagram.js';
 import { refreshInstagramContactProfile } from '../services/instagramContactProfile.js';
 import { getWorkspaceMessengerCredentials } from '../services/messengerCredentials.js';
 import { formatMessengerSendError, sendMessengerMessage } from '../services/messenger.js';
+import { getWorkspaceTelegramCredentials } from '../services/telegramCredentials.js';
+import {
+  formatTelegramSendError,
+  sendTelegramMedia,
+  sendTelegramMediaGroup,
+  sendTelegramMessage,
+} from '../services/telegramConnect.js';
 import { getWorkspaceWhatsAppCredentials } from '../services/whatsappCredentials.js';
 import { extractVariableIndexes } from '../services/metaMessageTemplates.js';
 import { deleteConversationThread } from '../services/conversation-delete.service.js';
@@ -711,6 +719,58 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
       return reply.code(201).send(message);
     }
 
+    if (conv.channel === 'telegram') {
+      const chatId = parseTelegramChatId(conv.contact?.phone || '');
+      if (!chatId) {
+        return reply.code(400).send({ error: 'Contact has no Telegram chat id' });
+      }
+
+      let credentials;
+      try {
+        credentials = await getWorkspaceTelegramCredentials(workspaceId, conv.channelAccountId);
+      } catch (err) {
+        return reply.code(400).send({
+          error: err instanceof Error ? err.message : 'Telegram not connected',
+        });
+      }
+
+      let messageId: string | undefined;
+      try {
+        const sent = await sendTelegramMessage(credentials.botToken, chatId, text);
+        messageId = sent.messageId;
+      } catch (err) {
+        request.log.error({ err }, 'Telegram send failed');
+        const sendError = formatTelegramSendError(err);
+        const failed = await persistFailedOutboundMessage({
+          workspaceId,
+          conversationId: id,
+          senderName: agent?.name ?? 'Agent',
+          content: text,
+          sendError,
+        });
+        return reply.code(502).send({ error: sendError, message: failed });
+      }
+
+      const message = await prisma.message.create({
+        data: {
+          conversationId: id,
+          waMessageId: messageId,
+          sender: 'agent',
+          senderName: agent?.name ?? 'Agent',
+          content: text,
+          status: 'sent',
+        },
+      });
+
+      await prisma.conversation.updateMany({
+        where: { id, workspaceId },
+        data: { lastMessage: text, lastMessageAt: new Date(), channelAccountId: credentials.botId },
+      });
+
+      getIo().to(workspaceId).emit('new_message', { conversationId: id, message });
+      return reply.code(201).send(message);
+    }
+
     if (!conv.contact?.phone) {
       return reply.code(400).send({ error: 'Contact has no phone number' });
     }
@@ -832,6 +892,9 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     if (conv.channel === 'messenger') {
       return reply.code(400).send({ error: 'Templates are not supported for Messenger yet' });
     }
+    if (conv.channel === 'telegram') {
+      return reply.code(400).send({ error: 'Telegram has no template system — send a normal message instead' });
+    }
     if (!conv.contact?.phone) {
       return reply.code(400).send({ error: 'Contact has no phone number' });
     }
@@ -899,6 +962,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         const resolved = await uploadTemplateHeaderMediaForSend(
           credentials.accessToken,
           credentials.phoneNumberId,
+          workspaceId,
           template,
           uploaded
         );
@@ -1054,13 +1118,22 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     if (!assertConversationInScope(message.conversation, access.inboxScope, reply)) return;
 
     const metadata = (message.metadata ?? {}) as MessageMediaMetadata;
-    if (!metadata.storageKey) {
+    const { index } = request.query as { index?: string };
+
+    // Carousel/album messages hold multiple files under metadata.items — pick
+    // one by ?index=N; single-media messages ignore the param.
+    const target =
+      index !== undefined && metadata.items
+        ? metadata.items[Number(index)]
+        : { storageKey: metadata.storageKey, fileName: metadata.fileName };
+
+    if (!target?.storageKey) {
       return reply.code(404).send({ error: 'No attachment for this message' });
     }
 
     try {
-      const { buffer, mimeType } = await readMessageMediaFile(metadata.storageKey);
-      const fileName = metadata.fileName || `attachment-${messageId}`;
+      const { buffer, mimeType } = await readMessageMediaFile(target.storageKey);
+      const fileName = target.fileName || `attachment-${messageId}`;
       const body = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
       return reply
         .header('Content-Type', mimeType)
@@ -1082,8 +1155,15 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     });
     if (!conv) return reply.code(404).send({ error: 'Not found' });
     if (!assertConversationInScope(conv, access.inboxScope, reply)) return;
-    if (conv.channel !== 'whatsapp' && conv.channel !== 'instagram' && conv.channel !== 'messenger') {
-      return reply.code(400).send({ error: 'Media messages are only supported on WhatsApp, Instagram, and Messenger' });
+    if (
+      conv.channel !== 'whatsapp' &&
+      conv.channel !== 'instagram' &&
+      conv.channel !== 'messenger' &&
+      conv.channel !== 'telegram'
+    ) {
+      return reply.code(400).send({
+        error: 'Media messages are only supported on WhatsApp, Instagram, Messenger, and Telegram',
+      });
     }
     if (!conv.contact?.phone) {
       return reply.code(400).send({ error: 'Contact has no phone number' });
@@ -1295,6 +1375,75 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
           return reply.code(502).send({ error: sendError, message: failed });
         }
       }
+    } else if (conv.channel === 'telegram') {
+      const chatId = parseTelegramChatId(conv.contact.phone);
+      if (!chatId) {
+        return reply.code(400).send({ error: 'Contact has no Telegram chat id' });
+      }
+
+      let credentials;
+      try {
+        credentials = await getWorkspaceTelegramCredentials(workspaceId, conv.channelAccountId);
+      } catch (err) {
+        return reply.code(400).send({
+          error: err instanceof Error ? err.message : 'Telegram not connected',
+        });
+      }
+
+      const tgKind = resolveOutboundWhatsAppKind(mimeType);
+      messageKind = tgKind;
+      content = previewForMessage(tgKind, caption || fileName, caption);
+      channelAccountId = credentials.botId;
+
+      try {
+        const sent = await sendTelegramMedia(
+          credentials.botToken,
+          chatId,
+          tgKind,
+          fileBuffer,
+          mimeType,
+          fileName,
+          caption || undefined
+        );
+        waMessageId = sent.messageId;
+        initialMetadata = {
+          mimeType,
+          fileName,
+          caption: caption || undefined,
+        };
+      } catch (err) {
+        request.log.error({ err }, 'Telegram media send failed');
+        const sendError = formatTelegramSendError(err);
+        const failed = await persistFailedOutboundMessage({
+          workspaceId,
+          conversationId: id,
+          senderName: agent?.name ?? 'Agent',
+          content,
+          type: messageKind,
+          metadata: { mimeType, fileName, caption: caption || undefined },
+          sendError,
+        });
+        try {
+          const storageKey = await saveMessageMediaFile(
+            workspaceId,
+            failed.id,
+            fileBuffer,
+            mimeType,
+            fileName
+          );
+          const metadata = mergeSendErrorMetadata(
+            { mimeType, fileName, caption: caption || undefined, storageKey },
+            sendError
+          );
+          const updated = await prisma.message.update({
+            where: { id: failed.id },
+            data: { metadata: metadata as object },
+          });
+          return reply.code(502).send({ error: sendError, message: updated });
+        } catch {
+          return reply.code(502).send({ error: sendError, message: failed });
+        }
+      }
     } else {
       let credentials;
       try {
@@ -1431,6 +1580,137 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         lastMessageAt: new Date(),
         channelAccountId,
       },
+    });
+
+    getIo().to(workspaceId).emit('new_message', { conversationId: id, message });
+    return reply.code(201).send(message);
+  });
+
+  /** Telegram-only album/carousel — sendMediaGroup. 2-10 photos/videos, one shared caption. */
+  fastify.post('/:id/messages/carousel', auth, async (request, reply) => {
+    const { workspaceId, userId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const access = await resolveMembershipAccess(userId, workspaceId);
+
+    const conv = await prisma.conversation.findFirst({
+      where: { id, workspaceId },
+      include: { contact: true },
+    });
+    if (!conv) return reply.code(404).send({ error: 'Not found' });
+    if (!assertConversationInScope(conv, access.inboxScope, reply)) return;
+    if (conv.channel !== 'telegram') {
+      return reply.code(400).send({ error: 'Albums are only supported on Telegram' });
+    }
+
+    const chatId = parseTelegramChatId(conv.contact?.phone || '');
+    if (!chatId) {
+      return reply.code(400).send({ error: 'Contact has no Telegram chat id' });
+    }
+
+    let credentials;
+    try {
+      credentials = await getWorkspaceTelegramCredentials(workspaceId, conv.channelAccountId);
+    } catch (err) {
+      return reply.code(400).send({
+        error: err instanceof Error ? err.message : 'Telegram not connected',
+      });
+    }
+
+    const files: { buffer: Buffer; mimeType: string; fileName: string }[] = [];
+    let caption = '';
+
+    const parts = request.parts();
+    for await (const part of parts) {
+      if (part.type === 'file') {
+        const buffer = await part.toBuffer();
+        files.push({
+          buffer,
+          mimeType: part.mimetype || 'application/octet-stream',
+          fileName: part.filename || `file-${files.length}`,
+        });
+      } else if (part.type === 'field' && part.fieldname === 'caption') {
+        caption = String(part.value ?? '').trim();
+      }
+    }
+
+    if (files.length < 2 || files.length > 10) {
+      return reply.code(400).send({ error: 'Pick between 2 and 10 files for an album.' });
+    }
+
+    const items = files.map((file) => {
+      const kind = resolveOutboundWhatsAppKind(file.mimeType);
+      return { ...file, kind };
+    });
+    const badFile = items.find((item) => item.kind !== 'image' && item.kind !== 'video');
+    if (badFile) {
+      return reply.code(400).send({
+        error: `${badFile.fileName} isn't a photo or video — Telegram albums only support photos and videos.`,
+      });
+    }
+
+    const agent = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    });
+
+    let sent;
+    try {
+      sent = await sendTelegramMediaGroup(
+        credentials.botToken,
+        chatId,
+        items as Array<{ buffer: Buffer; mimeType: string; fileName: string; kind: 'image' | 'video' }>,
+        caption || undefined
+      );
+    } catch (err) {
+      request.log.error({ err }, 'Telegram album send failed');
+      return reply.code(502).send({ error: formatTelegramSendError(err) });
+    }
+
+    const content = caption || `📷 Album (${files.length} items)`;
+    const message = await prisma.message.create({
+      data: {
+        conversationId: id,
+        waMessageId: sent.messageIds[0],
+        sender: 'agent',
+        senderName: agent?.name ?? 'Agent',
+        content,
+        type: 'carousel',
+        status: 'sent',
+        metadata: { caption: caption || undefined, telegramMessageIds: sent.messageIds } as object,
+      },
+    });
+
+    const storedItems: Array<{ storageKey: string; mimeType: string; fileName: string }> = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      try {
+        const storageKey = await saveMessageMediaFile(
+          workspaceId,
+          `${message.id}-${i}`,
+          file.buffer,
+          file.mimeType,
+          file.fileName
+        );
+        storedItems.push({ storageKey, mimeType: file.mimeType, fileName: file.fileName });
+      } catch (err) {
+        request.log.error({ err }, 'Failed to persist album item');
+      }
+    }
+
+    const metadata: MessageMediaMetadata = {
+      caption: caption || undefined,
+      telegramMessageIds: sent.messageIds,
+      items: storedItems,
+    };
+    await prisma.message.update({
+      where: { id: message.id },
+      data: { metadata: metadata as object },
+    });
+    message.metadata = metadata as object;
+
+    await prisma.conversation.updateMany({
+      where: { id, workspaceId },
+      data: { lastMessage: content, lastMessageAt: new Date(), channelAccountId: credentials.botId },
     });
 
     getIo().to(workspaceId).emit('new_message', { conversationId: id, message });

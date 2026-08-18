@@ -69,3 +69,13 @@ export async function findMessengerAccountByPageId(pageId: string) {
     include: { workspace: true },
   });
 }
+
+export async function findTelegramAccountByBotId(botId: string) {
+  const id = botId.trim();
+  if (!id) return null;
+
+  return prisma.telegramAccount.findFirst({
+    where: { botId: id },
+    include: { workspace: true },
+  });
+}

@@ -11,6 +11,7 @@ import {
   type PlanFeatures,
 } from './subscriptionPlans.js';
 import { getMediaGalleryUsedBytes } from '../modules/media-gallery/media-storage.js';
+import { getRedis } from '../lib/redis.js';
 
 const DEFAULT_LIMITS = {
   aiAgentsLimit: 1,
@@ -235,6 +236,39 @@ export async function assertMediaStorageUploadAllowed(
       `Media storage limit reached (${limitGb} GB). Upgrade your plan or delete files to upload more.`
     );
   }
+}
+
+/**
+ * getMediaGalleryUsedBytes recomputes usage by listing S3 live — there's no
+ * atomic counter behind it, so two concurrent uploads can both read the
+ * same "used" total before either write lands, both pass
+ * assertMediaStorageUploadAllowed, and jointly exceed the workspace's
+ * limit. Serializing the check-then-upload window per workspace through a
+ * short-lived Redis lock closes that race without needing a byte-ledger
+ * migration. Legitimate concurrent uploads from the same workspace are
+ * simply asked to retry rather than silently allowed to both succeed.
+ */
+export class MediaUploadBusyError extends Error {
+  constructor() {
+    super('Another upload is already in progress for this workspace — try again in a moment.');
+    this.name = 'MediaUploadBusyError';
+  }
+}
+
+function mediaUploadLockKey(workspaceId: string): string {
+  return `media_gallery_upload_lock:${workspaceId}`;
+}
+
+/** Throws MediaUploadBusyError if another upload for this workspace holds the lock. */
+export async function acquireMediaUploadLock(workspaceId: string): Promise<void> {
+  const acquired = await getRedis().set(mediaUploadLockKey(workspaceId), '1', 'EX', 30, 'NX');
+  if (!acquired) {
+    throw new MediaUploadBusyError();
+  }
+}
+
+export async function releaseMediaUploadLock(workspaceId: string): Promise<void> {
+  await getRedis().del(mediaUploadLockKey(workspaceId)).catch(() => undefined);
 }
 
 function channelLabel(channel: ChannelKind): string {

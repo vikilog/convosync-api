@@ -295,6 +295,12 @@ export function validateSettingsPatch(patch: SettingsPatch): {
       return { ok: false, error: 'maxAutoDmsPerDay must be an integer 0–10000' };
     }
   }
+  if (patch.fallbackMessage != null && patch.fallbackMessage.length > 1000) {
+    return { ok: false, error: 'fallbackMessage must be 1000 characters or fewer' };
+  }
+  if (patch.dmAgentSkillId != null && patch.dmAgentSkillId.length > 100) {
+    return { ok: false, error: 'dmAgentSkillId is invalid' };
+  }
   if (patch.workingHoursStart != null && patch.workingHoursStart !== '') {
     if (parseHhMm(patch.workingHoursStart) == null) {
       return { ok: false, error: 'workingHoursStart must be HH:mm' };
@@ -305,7 +311,19 @@ export function validateSettingsPatch(patch: SettingsPatch): {
       return { ok: false, error: 'workingHoursEnd must be HH:mm' };
     }
   }
-  return { ok: true, data: patch };
+  // leadFunnelId has a real FK constraint (SET NULL on delete) — an empty
+  // string is neither a valid id nor NULL, so writing it straight through
+  // would surface as a raw foreign-key-violation error instead of a clean
+  // validation message. Normalize blank to null at this shared boundary
+  // (used by both the workspace-level and per-post settings callers) so a
+  // caller that skips the frontend's own `|| null` normalization can't hit it.
+  const data: SettingsPatch = {
+    ...patch,
+    ...(patch.leadFunnelId !== undefined
+      ? { leadFunnelId: patch.leadFunnelId?.trim() ? patch.leadFunnelId.trim() : null }
+      : {}),
+  };
+  return { ok: true, data };
 }
 
 export async function updateSocialListeningSettings(

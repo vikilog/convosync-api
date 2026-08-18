@@ -309,6 +309,7 @@ export class WhatsAppPayService {
           headerMedia = await uploadTemplateHeaderMediaForSend(
             credentials.accessToken,
             credentials.phoneNumberId,
+            workspaceId,
             template
           );
         }

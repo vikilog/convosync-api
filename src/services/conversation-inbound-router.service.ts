@@ -124,6 +124,7 @@ export async function routeInboundConversation(ctx: InboundMessagingContext): Pr
           buttonPayload: ctx.buttonPayload,
           conversationId: ctx.conversationId,
           channel,
+          messageId: ctx.messageId,
         },
       });
       return;

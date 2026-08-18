@@ -26,14 +26,23 @@ export async function applyInstagramProfileToContact(
   const contactName = resolveInstagramContactName(profile, senderId, fallbackName);
   const customFields = instagramProfileToCustomFields(profile, existing);
 
+  // Re-check against the CURRENT name right before deciding, not the
+  // possibly-stale `contact` snapshot the caller fetched earlier — the live
+  // webhook and a background profile sync can run concurrently for the
+  // same contact, and the slower call's decision must reflect whatever the
+  // faster call already wrote, not overwrite it with older data.
+  const fresh = await prisma.contact.findUnique({
+    where: { id: contact.id },
+    select: { name: true },
+  });
+  const currentName = fresh?.name ?? contact.name;
   const shouldReplaceName =
-    isInstagramPlaceholderContactName(contact.name, senderId) ||
-    contact.name === contact.phone;
+    isInstagramPlaceholderContactName(currentName, senderId) || currentName === contact.phone;
 
   await prisma.contact.update({
     where: { id: contact.id },
     data: {
-      name: shouldReplaceName ? contactName : contact.name,
+      name: shouldReplaceName ? contactName : currentName,
       avatar: contact.avatar || profile.profile_pic || undefined,
       customFields,
     },

@@ -1,4 +1,14 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../index.js';
+
+function isPrismaUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+}
+
+/** Prisma's code for an interactive-transaction write conflict (Postgres serialization_failure). */
+function isPrismaWriteConflict(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034';
+}
 
 export type PublicLeadFunnelStage = {
   id: string;
@@ -220,38 +230,60 @@ export async function createFunnelStage(
   const name = input.name.trim();
   if (!name) throw new Error('Board name is required');
 
-  const existingFinal = await prisma.leadFunnelStage.findFirst({
-    where: { funnelId, isFinal: true },
-    select: { id: true, position: true },
-  });
-  if (input.isFinal && existingFinal) {
-    throw new Error('Final board already exists');
-  }
+  // Serializable so two admins creating stages in the same funnel at once
+  // can't both read the same existingFinal.position and both insert at the
+  // same numeric position — Postgres detects the conflict and one call
+  // retries against the other's now-committed state instead of corrupting
+  // the column order.
+  const attempt = () =>
+    prisma.$transaction(
+      async (tx) => {
+        const existingFinal = await tx.leadFunnelStage.findFirst({
+          where: { funnelId, isFinal: true },
+          select: { id: true, position: true },
+        });
+        if (input.isFinal && existingFinal) {
+          throw new Error('Final board already exists');
+        }
 
-  let position: number;
-  if (existingFinal && !input.isFinal) {
-    // Insert before the final board so Final stays last
-    position = existingFinal.position;
-    await prisma.leadFunnelStage.updateMany({
-      where: { funnelId, position: { gte: existingFinal.position } },
-      data: { position: { increment: 1 } },
-    });
-  } else {
-    const agg = await prisma.leadFunnelStage.aggregate({
-      where: { funnelId },
-      _max: { position: true },
-    });
-    position = (agg._max.position ?? -1) + 1;
-  }
+        let position: number;
+        if (existingFinal && !input.isFinal) {
+          // Insert before the final board so Final stays last
+          position = existingFinal.position;
+          await tx.leadFunnelStage.updateMany({
+            where: { funnelId, position: { gte: existingFinal.position } },
+            data: { position: { increment: 1 } },
+          });
+        } else {
+          const agg = await tx.leadFunnelStage.aggregate({
+            where: { funnelId },
+            _max: { position: true },
+          });
+          position = (agg._max.position ?? -1) + 1;
+        }
 
-  const row = await prisma.leadFunnelStage.create({
-    data: {
-      funnelId,
-      name,
-      position,
-      isFinal: Boolean(input.isFinal),
-    },
-  });
+        return tx.leadFunnelStage.create({
+          data: { funnelId, name, position, isFinal: Boolean(input.isFinal) },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
+
+  let row;
+  try {
+    row = await attempt();
+  } catch (err) {
+    if (isPrismaUniqueViolation(err)) {
+      // DB-enforced single-final-stage constraint — the application-level
+      // check above raced with a concurrent request and lost.
+      throw new Error('Final board already exists');
+    }
+    if (isPrismaWriteConflict(err)) {
+      row = await attempt();
+    } else {
+      throw err;
+    }
+  }
   return toPublicStage(row);
 }
 
@@ -270,20 +302,32 @@ export async function updateFunnelStage(
     throw new Error('Board name is required');
   }
 
-  if (patch.isFinal === true) {
-    await prisma.leadFunnelStage.updateMany({
-      where: { funnelId, isFinal: true, NOT: { id: stageId } },
-      data: { isFinal: false },
-    });
-  }
+  let row;
+  try {
+    row = await prisma.$transaction(async (tx) => {
+      if (patch.isFinal === true) {
+        await tx.leadFunnelStage.updateMany({
+          where: { funnelId, isFinal: true, NOT: { id: stageId } },
+          data: { isFinal: false },
+        });
+      }
 
-  const row = await prisma.leadFunnelStage.update({
-    where: { id: stageId },
-    data: {
-      ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
-      ...(patch.isFinal !== undefined ? { isFinal: Boolean(patch.isFinal) } : {}),
-    },
-  });
+      return tx.leadFunnelStage.update({
+        where: { id: stageId },
+        data: {
+          ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+          ...(patch.isFinal !== undefined ? { isFinal: Boolean(patch.isFinal) } : {}),
+        },
+      });
+    });
+  } catch (err) {
+    if (isPrismaUniqueViolation(err)) {
+      // A concurrent request set a different stage final between our unset
+      // above and this write — DB-enforced single-final-stage constraint.
+      throw new Error('Another board was just marked final — try again');
+    }
+    throw err;
+  }
 
   if (patch.name !== undefined) {
     await prisma.lead.updateMany({
@@ -311,11 +355,15 @@ export async function deleteFunnelStage(
   if (!target) throw new Error('Board not found');
 
   const fallback = stages.find((s) => s.id !== stageId)!;
-  await prisma.lead.updateMany({
-    where: { stageId },
-    data: { stageId: fallback.id, stage: fallback.name },
-  });
-  await prisma.leadFunnelStage.delete({ where: { id: stageId } });
+  // Transactional so a failure between the two doesn't leave leads
+  // reassigned off a stage that was never actually deleted (or vice versa).
+  await prisma.$transaction([
+    prisma.lead.updateMany({
+      where: { stageId },
+      data: { stageId: fallback.id, stage: fallback.name },
+    }),
+    prisma.leadFunnelStage.delete({ where: { id: stageId } }),
+  ]);
 }
 
 export async function assertStageInFunnel(

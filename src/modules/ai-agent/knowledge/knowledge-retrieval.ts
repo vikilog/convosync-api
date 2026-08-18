@@ -11,17 +11,21 @@ export type RetrievedKnowledgeChunk = {
 };
 
 const LEXICAL_STOP = new Set(
-  'a an the is are was were be been being to of in on for with and or but if then so it this that these those i you we they he she my your our their me us him her what which who how when where why can could should would will just please hi hello thanks thank ok yeah yes no not hai hun hu kya ke ki ka ko se me mein kii'.split(
+  'a an the is are was were be been being to of in on for with and or but if then so it this that these those i you we they he she my your our their me us him her what which who how when where why can could should would will just please hi hello hey heyy thanks thank ok yeah yes no not hai hun hu kya ke ki ka ko se me mein kii'.split(
     ' '
   )
 );
 
-function queryTokens(query: string): string[] {
-  return query
+function tokenize(text: string): string[] {
+  return text
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
-    .filter((t) => t.length >= 3 && !LEXICAL_STOP.has(t));
+    .filter(Boolean);
+}
+
+function queryTokens(query: string): string[] {
+  return tokenize(query).filter((t) => t.length >= 3 && !LEXICAL_STOP.has(t));
 }
 
 /**
@@ -43,10 +47,15 @@ export function lexicalMatchKnowledgeItems(
     .map((item) => {
       const body = (item.content ?? '').trim();
       if (!body) return { item, hits: 0 };
-      const hay = `${item.title}\n${body}`.toLowerCase();
+      // Word-prefix match, not raw substring — still lets "service" hit
+      // "services" (inflection-tolerant, relied on by existing queries), but
+      // "hey" no longer matches mid-word inside "they"/"monkey"/"hockey"
+      // (a real false-positive we hit in practice; no doc word happens to
+      // start with "hey" the way plenty contain it as a substring).
+      const hayWords = tokenize(`${item.title}\n${body}`);
       let hits = 0;
       for (const t of tokens) {
-        if (hay.includes(t)) hits += 1;
+        if (hayWords.some((w) => w.startsWith(t))) hits += 1;
       }
       return { item, hits };
     })

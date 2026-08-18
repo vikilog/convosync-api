@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
-import { KB_NO_MATCH_SYSTEM_PREFIX } from './hybrid/kb-bound.js';
+import { isConversationalTurn, KB_NO_MATCH_SYSTEM_PREFIX } from './hybrid/kb-bound.js';
+import { extractDirectAnswer } from './hybrid/extract-answer.js';
 import { Intent, INTENT_TO_KB_TAGS, INTENT_TO_SKILLS } from './intent.service.js';
 import { retrieveKnowledgeChunks } from './knowledge/knowledge-retrieval.js';
 
@@ -134,13 +135,25 @@ export class ContextBuilderService {
       if (scoped.length > 0) relevantKB = scoped;
     }
 
-    const { chunks: kbChunks } = await retrieveKnowledgeChunks({
-      workspaceId: params.workspaceId,
-      agentId: params.agentId,
-      query: params.currentMessage,
-      fallbackItems: relevantKB,
-      knowledgeItemIds: skillKbIds,
-    });
+    // greeting/farewell/human_request/media_request get a fixed prompt below
+    // that never includes a KB section — skip retrieval entirely instead of
+    // letting a spurious lexical-fallback match set kbChunksLoaded > 0 for a
+    // prompt that has nowhere to put it (mirrors graph/nodes/retrieve-kb.ts's
+    // isConversationalTurn guard, which this hybrid path lacked).
+    const conversational = isConversationalTurn(
+      params.intent,
+      params.stage,
+      params.currentMessage
+    );
+    const { chunks: kbChunks } = conversational
+      ? { chunks: [] }
+      : await retrieveKnowledgeChunks({
+          workspaceId: params.workspaceId,
+          agentId: params.agentId,
+          query: params.currentMessage,
+          fallbackItems: relevantKB,
+          knowledgeItemIds: skillKbIds,
+        });
 
     const systemPrompt = this.buildSystemPrompt({
       agent,
@@ -148,6 +161,7 @@ export class ContextBuilderService {
       stage: params.stage,
       relevantSkills,
       kbChunks,
+      currentMessage: params.currentMessage,
     });
 
     const trimmedHistory = this.trimHistory(params.conversationHistory, params.stage);
@@ -178,8 +192,9 @@ export class ContextBuilderService {
     stage: string;
     relevantSkills: { title: string; instructions: string }[];
     kbChunks: { title: string; content: string | null }[];
+    currentMessage: string;
   }): string {
-    const { agent, intent, stage, relevantSkills, kbChunks } = params;
+    const { agent, intent, stage, relevantSkills, kbChunks, currentMessage } = params;
 
     if (stage === 'greeting' || intent === 'greeting') {
       return `You are ${agent.name}, a helpful assistant for ${agent.brandBackground || 'our company'}.
@@ -245,7 +260,7 @@ LANGUAGE: ${agent.fallbackLanguage || 'english'}
     if (kbChunks.length > 0) {
       prompt += `\nKNOWLEDGE BASE:\n`;
       kbChunks.forEach((chunk) => {
-        const content = chunk.content?.substring(0, 500) || '';
+        const content = extractDirectAnswer(chunk.content ?? '', currentMessage).substring(0, 500);
         prompt += `${chunk.title}:\n${content}\n\n`;
       });
     }

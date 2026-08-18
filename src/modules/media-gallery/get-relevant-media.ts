@@ -4,7 +4,6 @@ import { AiProviderConfigService } from '../ai-agent/services/ai-provider-config
 import { LlmClient } from '../ai-agent/services/llm-client.service.js';
 import {
   buildMediaSelectPrompt,
-  filterByAudienceScope,
   keywordMediaFallback,
   parseMediaPickJson,
   type MediaCatalogItem,
@@ -42,17 +41,24 @@ export async function getRelevantMedia(
   usageFilter: string = 'agent'
 ): Promise<GetRelevantMediaResult> {
   try {
-    const active = await prisma.mediaAsset.findMany({
+    // Scope has to be part of the query itself, not a post-fetch filter —
+    // filtering in application code after the `take: 40` recency cap meant
+    // 40 assets in the WRONG scope (e.g. a batch of partner-only collateral
+    // updated more recently than any customer-facing media) could crowd out
+    // perfectly valid, older customer-scoped media entirely, silently
+    // returning "no media" even though real matches exist further down the
+    // table.
+    const scoped = await prisma.mediaAsset.findMany({
       where: {
         workspaceId,
         isActive: true,
         usage: { has: usageFilter },
+        scope: { in: [scope, 'both'] },
       },
       orderBy: { updatedAt: 'desc' },
       take: 40,
     });
 
-    const scoped = filterByAudienceScope(active, scope);
     if (scoped.length === 0) return { match: null, reason: 'no_assets' };
 
     const catalog = scoped.map(toCatalog);

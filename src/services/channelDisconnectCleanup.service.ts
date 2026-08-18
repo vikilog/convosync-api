@@ -10,7 +10,7 @@ export type ChannelDisconnectCleanupResult = {
   campaigns: number;
 };
 
-export type DisconnectChannel = 'whatsapp' | 'instagram' | 'messenger';
+export type DisconnectChannel = 'whatsapp' | 'instagram' | 'messenger' | 'telegram';
 
 function emptyCleanupResult(): ChannelDisconnectCleanupResult {
   return {
@@ -68,6 +68,14 @@ async function countRemainingChannelAccounts(
       where: {
         workspaceId,
         ...(excludeAccountId ? { pageId: { not: excludeAccountId } } : {}),
+      },
+    });
+  }
+  if (channel === 'telegram') {
+    return prisma.telegramAccount.count({
+      where: {
+        workspaceId,
+        ...(excludeAccountId ? { botId: { not: excludeAccountId } } : {}),
       },
     });
   }
@@ -302,6 +310,42 @@ export async function disconnectMessengerAccounts(
     where: {
       workspaceId,
       ...(filter?.pageId ? { pageId: filter.pageId } : {}),
+    },
+  });
+
+  return cleanup;
+}
+
+export async function disconnectTelegramAccounts(
+  workspaceId: string,
+  filter?: { botId?: string }
+): Promise<ChannelDisconnectCleanupResult> {
+  const accounts = await prisma.telegramAccount.findMany({
+    where: {
+      workspaceId,
+      ...(filter?.botId ? { botId: filter.botId } : {}),
+    },
+    select: { botId: true },
+  });
+
+  if (accounts.length === 0) return emptyCleanupResult();
+
+  let cleanup = emptyCleanupResult();
+  for (const account of accounts) {
+    cleanup = mergeCleanup(
+      cleanup,
+      await purgeChannelAccountData(workspaceId, {
+        channel: 'telegram',
+        channelAccountId: account.botId,
+        orphanContactSource: 'Telegram',
+      })
+    );
+  }
+
+  await prisma.telegramAccount.deleteMany({
+    where: {
+      workspaceId,
+      ...(filter?.botId ? { botId: filter.botId } : {}),
     },
   });
 

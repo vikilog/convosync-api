@@ -7,6 +7,15 @@ export type SendWhatsAppResult = {
   waId?: string;
 };
 
+/** HTTP 429 (or Meta's app-level throttling codes) — the number is being rate-limited. */
+export function isMetaRateLimitError(err: unknown): boolean {
+  if (!axios.isAxiosError(err)) return false;
+  if (err.response?.status === 429) return true;
+  const code = (err.response?.data as { error?: { code?: number } } | undefined)?.error?.code;
+  // 4 = app rate limit, 80007 = WhatsApp Business API rate limit, 130429 = message throughput limit.
+  return code === 4 || code === 80007 || code === 130429;
+}
+
 export function formatMetaSendError(err: unknown): string {
   if (axios.isAxiosError(err)) {
     const data = err.response?.data as {

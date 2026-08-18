@@ -1,5 +1,6 @@
 import { readTemplateHeaderMedia } from './templateMedia.js';
 import { uploadWhatsAppMedia } from './whatsappMedia.js';
+import { isHeaderMediaStorageKeyOwnedByWorkspace } from './campaignHeaderMedia.js';
 
 export type TemplateMediaHeaderFormat = 'IMAGE' | 'VIDEO' | 'DOCUMENT';
 
@@ -24,6 +25,7 @@ type UploadedHeaderMedia = {
 };
 
 export async function resolveTemplateHeaderMediaBuffer(
+  workspaceId: string,
   template: TemplateHeaderMediaRecord,
   uploaded?: UploadedHeaderMedia | null
 ): Promise<{
@@ -47,6 +49,13 @@ export async function resolveTemplateHeaderMediaBuffer(
   }
 
   if (template.headerMediaStorageKey) {
+    // headerMediaStorageKey is a free-form string field on the template row —
+    // a write-time bug (or a row written before this check existed) could
+    // have it pointing at another workspace's stored file. Verify ownership
+    // here too, at the point this actually gets read and sent to Meta.
+    if (!isHeaderMediaStorageKeyOwnedByWorkspace(template.headerMediaStorageKey, workspaceId)) {
+      throw new Error('Template header media is invalid for this workspace');
+    }
     const { buffer, mimeType } = await readTemplateHeaderMedia(template.headerMediaStorageKey);
     return {
       buffer,
@@ -64,6 +73,7 @@ export async function resolveTemplateHeaderMediaBuffer(
 export async function uploadTemplateHeaderMediaForSend(
   accessToken: string,
   phoneNumberId: string,
+  workspaceId: string,
   template: TemplateHeaderMediaRecord,
   uploaded?: UploadedHeaderMedia | null
 ): Promise<{
@@ -72,6 +82,7 @@ export async function uploadTemplateHeaderMediaForSend(
   fileName?: string;
 }> {
   const { buffer, mimeType, fileName, format } = await resolveTemplateHeaderMediaBuffer(
+    workspaceId,
     template,
     uploaded
   );

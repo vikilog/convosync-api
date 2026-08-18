@@ -25,7 +25,17 @@ assert.equal(isScheduledCampaignEditable('scheduled', new Date(now + SCHEDULED_C
 assert.equal(isScheduledCampaignEditable('Scheduled', new Date(now + SCHEDULED_CAMPAIGN_EDIT_LEAD_MS + 1_000), now), true);
 assert.equal(isScheduledCampaignEditable('scheduled', new Date(now + SCHEDULED_CAMPAIGN_EDIT_LEAD_MS), now), false);
 assert.equal(isScheduledCampaignEditable('scheduled', new Date(now + 5 * 60 * 1000), now), false);
-assert.equal(isScheduledCampaignEditable('draft', new Date(now + 60 * 60 * 1000), now), false);
+// Draft is always editable — never sent, no in-flight job to race against.
+assert.equal(isScheduledCampaignEditable('draft', new Date(now + 60 * 60 * 1000), now), true);
+assert.equal(isScheduledCampaignEditable('draft', null, now), true);
+assert.equal(isScheduledCampaignEditable('Draft', null, now), true);
 assert.equal(isScheduledCampaignEditable('scheduled', null, now), false);
+for (const status of ['running', 'completed', 'failed', 'cancelled']) {
+  assert.equal(
+    isScheduledCampaignEditable(status, new Date(now + 60 * 60 * 1000), now),
+    false,
+    `${status} must not be editable`
+  );
+}
 
 console.log('campaign-broadcast.queue.check: ok');

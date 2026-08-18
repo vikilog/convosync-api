@@ -28,9 +28,15 @@ export async function deleteContactInWorkspace(
     await deleteConversationThread(workspaceId, conv.id);
     getIo().to(workspaceId).emit('conversation_deleted', { conversationId: conv.id });
   }
-  await prisma.agentFlowSession.deleteMany({ where: { workspaceId, contactId } });
-  await prisma.journeyExecution.deleteMany({ where: { contactId } });
-  await prisma.contact.delete({ where: { id: contactId } });
+  // Transactional so a crash between these three doesn't leave the contact
+  // row lingering with some children already gone — either the whole
+  // remaining cascade lands or none of it does (retry is still idempotent
+  // either way, this just narrows the inconsistent-partial-state window).
+  await prisma.$transaction([
+    prisma.agentFlowSession.deleteMany({ where: { workspaceId, contactId } }),
+    prisma.journeyExecution.deleteMany({ where: { contactId } }),
+    prisma.contact.delete({ where: { id: contactId } }),
+  ]);
   getIo().to(workspaceId).emit('contact_deleted', { contactId });
 
   return { deleted: true, deletedConversations: conversations.length };
@@ -48,16 +54,24 @@ export async function countContactsWithTag(
 export async function deleteContactsByTag(
   workspaceId: string,
   tag: string
-): Promise<{ deleted: number }> {
+): Promise<{ deleted: number; failed: number; errors: { contactId: string; error: string }[] }> {
   // ponytail: sequential per-contact cascade; ceiling ~few k contacts/tag — upgrade = batched deletes
   const contacts = await prisma.contact.findMany({
     where: { workspaceId, tags: { has: tag } },
     select: { id: true },
   });
   let deleted = 0;
+  // Per-contact try/catch so one failure doesn't lose track of how many
+  // contacts before it were already permanently deleted — the caller sees
+  // exactly what succeeded and what didn't instead of a bare 500.
+  const errors: { contactId: string; error: string }[] = [];
   for (const c of contacts) {
-    const result = await deleteContactInWorkspace(workspaceId, c.id);
-    if (result.deleted) deleted += 1;
+    try {
+      const result = await deleteContactInWorkspace(workspaceId, c.id);
+      if (result.deleted) deleted += 1;
+    } catch (err) {
+      errors.push({ contactId: c.id, error: err instanceof Error ? err.message : String(err) });
+    }
   }
-  return { deleted };
+  return { deleted, failed: errors.length, errors };
 }

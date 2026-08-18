@@ -8,6 +8,7 @@ import {
 import { createLeadFromSocialComment } from './lead.service.js';
 import {
   shouldCreateLeadForIntent,
+  startOfDayInTz,
   type ReplyTone,
 } from './socialListeningSettings.service.js';
 import {
@@ -133,6 +134,22 @@ export type ApproveDmResult = {
  * 3) private reply DM (isolated failure)
  * 4) audit fields + lead creation per leadCreationRule
  */
+/** Release a reserved maxAutoDmsPerDay slot when the attempt didn't end in an actual send. */
+async function releaseAutoDmReservation(
+  workspaceId: string,
+  postId: string,
+  since: Date
+): Promise<void> {
+  await prisma
+    .$executeRaw`
+      UPDATE "SocialListeningPostSetting"
+      SET "autoDmsCounterCount" = GREATEST("autoDmsCounterCount" - 1, 0)
+      WHERE "workspaceId" = ${workspaceId} AND "postId" = ${postId}
+        AND "autoDmsCounterDate" = ${since}
+    `
+    .catch(() => {});
+}
+
 export async function executeApproveAndSendDm(input: {
   workspaceId: string;
   socialCommentId: string;
@@ -148,102 +165,204 @@ export async function executeApproveAndSendDm(input: {
   });
   if (!row) throw new Error('Comment not found');
 
-  const settings = await getEffectivePostSettings(input.workspaceId, row.postId);
+  const isAuto = input.source === 'auto';
+  let reservedDmSlot = false;
+  let reservationSince: Date | null = null;
 
-  let skillInstructions: string | null = null;
-  if (settings.dmAgentSkillId) {
-    const skill = await prisma.aiSkill.findFirst({
-      where: {
-        id: settings.dmAgentSkillId,
-        agent: { workspaceId: input.workspaceId },
-      },
-      select: { title: true, instructions: true, trigger: true },
+  if (isAuto) {
+    // Atomic reservation for maxAutoDmsPerDay — this used to be a separate
+    // read (count of already-sent DMs today) compared against the limit in
+    // decideAutomationAction, before this function was even called. Two
+    // comments on the same post classified moments apart could both read
+    // the same "sent today" count — neither had sent yet — both pass the
+    // check, and both send, overshooting the cap. Reserving via a
+    // conditional UPDATE against the post's own settings row forces
+    // Postgres to serialize concurrent reservations through that row's lock
+    // instead of racing on a stale read.
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: input.workspaceId },
+      select: { timezone: true },
     });
-    if (skill) {
-      skillInstructions = [
-        `Skill: ${skill.title}`,
-        skill.trigger ? `Trigger: ${skill.trigger}` : null,
-        skill.instructions,
-      ]
-        .filter(Boolean)
-        .join('\n');
+    const since = startOfDayInTz(workspace?.timezone || 'Asia/Kolkata');
+    reservationSince = since;
+    const reserved = await prisma.$executeRaw`
+      UPDATE "SocialListeningPostSetting"
+      SET
+        "autoDmsCounterCount" = CASE
+          WHEN "autoDmsCounterDate" = ${since} THEN "autoDmsCounterCount" + 1
+          ELSE 1
+        END,
+        "autoDmsCounterDate" = ${since}
+      WHERE "workspaceId" = ${input.workspaceId} AND "postId" = ${row.postId}
+        AND "maxAutoDmsPerDay" > 0
+        AND (
+          "autoDmsCounterDate" IS DISTINCT FROM ${since}
+          OR "autoDmsCounterCount" < "maxAutoDmsPerDay"
+        )
+    `;
+    if (reserved === 0) {
+      throw new Error('Daily auto-DM cap reached for this post');
     }
+    reservedDmSlot = true;
   }
 
-  const texts = await generateApproveDmTexts({
-    workspaceId: input.workspaceId,
-    commentText: row.commentText,
-    postCaption: row.postCaption,
-    username: row.commenterUsername,
-    suggestedReply: input.messageOverride || row.suggestedReply,
-    publicReplyTone: settings.publicReplyTone,
-    skillInstructions,
-    fallbackMessage: settings.fallbackMessage,
-  });
-
-  const igUserId = input.instagramUserId || row.socialAccount.instagramUserId;
-  const publicReplyText = texts.publicReply;
-  const dmReplyText = input.messageOverride?.trim() || texts.dmReply;
-
-  await prisma.socialComment.update({
-    where: { id: row.id },
-    data: {
-      dmStatus: 'pending',
-      dmError: null,
-      publicReplyText,
-      dmReplyText,
-    },
-  });
+  try {
+    // Atomic claim — only one concurrent call for this comment may proceed
+    // past this point. Closes both the double-click/manual-retry race AND
+    // the Meta webhook-redelivery race, where two independent classify runs
+    // for the same comment can both decide auto_dm with no user interaction
+    // at all. 'pending'/'sent' are not claimable — already in flight or done.
+    const claim = await prisma.socialComment.updateMany({
+      where: {
+        id: row.id,
+        workspaceId: input.workspaceId,
+        dmStatus: { in: ['none', 'failed', 'skipped'] },
+      },
+      data: { dmStatus: 'pending', dmError: null },
+    });
+    if (claim.count === 0) {
+      throw new Error('This comment is already being processed or was already sent');
+    }
+  } catch (err) {
+    if (reservedDmSlot) await releaseAutoDmReservation(input.workspaceId, row.postId, reservationSince!);
+    throw err;
+  }
 
   let publicReplyId: string | null = null;
-  publicReplyId = (
-    await replyToListeningComment(input.workspaceId, row.commentId, publicReplyText, igUserId)
-  ).id;
-
-  console.info('[social.approve_dm] public reply ok', {
-    socialCommentId: row.id,
-    commentId: row.commentId,
-    publicReplyId,
-    source: input.source || 'manual',
-  });
-
+  let publicReplyText: string;
+  let dmReplyText: string;
   let dmStatus: 'sent' | 'failed' | 'skipped' = 'skipped';
   let dmError: string | null = null;
   let dmMessageId: string | null = null;
   let dmSentAt: Date | null = null;
+  let settings: Awaited<ReturnType<typeof getEffectivePostSettings>>;
 
   try {
-    const dm = await sendPrivateReplyToComment(
-      input.workspaceId,
-      row.commentId,
-      dmReplyText,
-      igUserId
-    );
-    dmStatus = 'sent';
-    dmMessageId = dm.messageId;
-    dmSentAt = new Date();
-  } catch (err) {
-    dmStatus = 'failed';
-    dmError = (err instanceof Error ? err.message : 'Private reply failed').slice(0, 500);
-    console.warn('[social.approve_dm] private reply failed (public kept)', {
-      socialCommentId: row.id,
-      commentId: row.commentId,
-      dmError,
-      source: input.source || 'manual',
-    });
-  }
+    settings = await getEffectivePostSettings(input.workspaceId, row.postId);
+    const igUserId = input.instagramUserId || row.socialAccount.instagramUserId;
 
-  await prisma.socialComment.update({
-    where: { id: row.id },
-    data: {
-      status: 'replied',
-      publicReplyText,
-      dmReplyText,
-      dmStatus,
-      dmError,
-      dmSentAt,
-    },
-  });
+    // A prior claim on this comment may have already posted the public
+    // reply and durably checkpointed it below, then failed before finishing
+    // (e.g. a DB write blip on the closing update, after Instagram already
+    // has the public reply live). row.publicReplyText being set is exactly
+    // that checkpoint — resume from the DM step instead of re-running
+    // generation and posting a SECOND public reply to the same comment.
+    if (row.publicReplyText) {
+      publicReplyText = row.publicReplyText;
+      dmReplyText = row.dmReplyText || '';
+      console.info('[social.approve_dm] resuming after partial failure — public reply already posted', {
+        socialCommentId: row.id,
+        commentId: row.commentId,
+      });
+    } else {
+      let skillInstructions: string | null = null;
+      if (settings.dmAgentSkillId) {
+        const skill = await prisma.aiSkill.findFirst({
+          where: {
+            id: settings.dmAgentSkillId,
+            agent: { workspaceId: input.workspaceId },
+          },
+          select: { title: true, instructions: true, trigger: true },
+        });
+        if (skill) {
+          skillInstructions = [
+            `Skill: ${skill.title}`,
+            skill.trigger ? `Trigger: ${skill.trigger}` : null,
+            skill.instructions,
+          ]
+            .filter(Boolean)
+            .join('\n');
+        }
+      }
+
+      const texts = await generateApproveDmTexts({
+        workspaceId: input.workspaceId,
+        commentText: row.commentText,
+        postCaption: row.postCaption,
+        username: row.commenterUsername,
+        suggestedReply: input.messageOverride || row.suggestedReply,
+        publicReplyTone: settings.publicReplyTone,
+        skillInstructions,
+        fallbackMessage: settings.fallbackMessage,
+      });
+
+      publicReplyText = texts.publicReply;
+      dmReplyText = input.messageOverride?.trim() || texts.dmReply;
+
+      publicReplyId = (
+        await replyToListeningComment(input.workspaceId, row.commentId, publicReplyText, igUserId)
+      ).id;
+
+      // Durable checkpoint, committed BEFORE attempting the DM — a failure
+      // after this point resumes here on retry instead of reposting.
+      await prisma.socialComment.update({
+        where: { id: row.id },
+        data: { publicReplyText, dmReplyText },
+      });
+
+      console.info('[social.approve_dm] public reply ok', {
+        socialCommentId: row.id,
+        commentId: row.commentId,
+        publicReplyId,
+        source: input.source || 'manual',
+      });
+    }
+
+    try {
+      const dm = await sendPrivateReplyToComment(
+        input.workspaceId,
+        row.commentId,
+        dmReplyText,
+        igUserId
+      );
+      dmStatus = 'sent';
+      dmMessageId = dm.messageId;
+      dmSentAt = new Date();
+    } catch (err) {
+      dmStatus = 'failed';
+      dmError = (err instanceof Error ? err.message : 'Private reply failed').slice(0, 500);
+      console.warn('[social.approve_dm] private reply failed (public kept)', {
+        socialCommentId: row.id,
+        commentId: row.commentId,
+        dmError,
+        source: input.source || 'manual',
+      });
+    }
+
+    await prisma.socialComment.update({
+      where: { id: row.id },
+      data: {
+        status: 'replied',
+        publicReplyText,
+        dmReplyText,
+        dmStatus,
+        dmError,
+        dmSentAt,
+      },
+    });
+  } catch (err) {
+    // Release the claim on any unexpected failure (settings load, LLM
+    // error, public-reply send error) so a retry isn't blocked forever by
+    // a dangling 'pending' dmStatus.
+    await prisma.socialComment
+      .update({
+        where: { id: row.id },
+        data: {
+          dmStatus: 'failed',
+          dmError: (err instanceof Error ? err.message : 'Approve & send DM failed').slice(0, 500),
+        },
+      })
+      .catch(() => {});
+    throw err;
+  } finally {
+    // The reservation counts every attempt, not just sends — release it
+    // whenever this attempt didn't end in an actual send, so a failed
+    // auto-DM (or the settings/generation error above) doesn't permanently
+    // eat into the day's quota.
+    if (reservedDmSlot && dmStatus !== 'sent') {
+      await releaseAutoDmReservation(input.workspaceId, row.postId, reservationSince!);
+    }
+  }
 
   const handle = row.commenterUsername ? `@${row.commenterUsername}` : 'a commenter';
   const intentLabel = mapIntentToReviewLabel(row.intent);
@@ -346,45 +465,60 @@ export async function retryPrivateReplyDm(input: {
   });
   if (!row) throw new Error('Comment not found');
 
-  const settings = await getEffectivePostSettings(input.workspaceId, row.postId);
-
-  let dmReplyText = row.dmReplyText?.trim() || '';
-  if (!dmReplyText) {
-    let skillInstructions: string | null = null;
-    if (settings.dmAgentSkillId) {
-      const skill = await prisma.aiSkill.findFirst({
-        where: {
-          id: settings.dmAgentSkillId,
-          agent: { workspaceId: input.workspaceId },
-        },
-        select: { title: true, instructions: true, trigger: true },
-      });
-      if (skill) {
-        skillInstructions = [
-          `Skill: ${skill.title}`,
-          skill.trigger ? `Trigger: ${skill.trigger}` : null,
-          skill.instructions,
-        ]
-          .filter(Boolean)
-          .join('\n');
-      }
-    }
-    const texts = await generateApproveDmTexts({
-      workspaceId: input.workspaceId,
-      commentText: row.commentText,
-      postCaption: row.postCaption,
-      username: row.commenterUsername,
-      suggestedReply: row.suggestedReply,
-      publicReplyTone: settings.publicReplyTone,
-      skillInstructions,
-      fallbackMessage: settings.fallbackMessage,
-    });
-    dmReplyText = texts.dmReply;
+  // Atomic claim — only a comment currently in 'failed' is retry-eligible.
+  // Without this, two rapid "Retry DM" clicks (or a UI auto-retry racing a
+  // manual one) both pass a plain read and both send the DM again.
+  const claim = await prisma.socialComment.updateMany({
+    where: { id: row.id, workspaceId: input.workspaceId, dmStatus: 'failed' },
+    data: { dmStatus: 'pending' },
+  });
+  if (claim.count === 0) {
+    throw new Error('This DM is already being sent or was already sent');
   }
 
-  const igUserId = input.instagramUserId || row.socialAccount.instagramUserId;
-
+  // Everything below runs against a row already claimed into 'pending' above.
+  // Any throw here — settings lookup, skill lookup, text generation, or the
+  // send itself — must land in 'failed' so the row stays retryable instead
+  // of getting stuck at 'pending' forever.
+  let dmReplyText = row.dmReplyText?.trim() || '';
   try {
+    const settings = await getEffectivePostSettings(input.workspaceId, row.postId);
+
+    if (!dmReplyText) {
+      let skillInstructions: string | null = null;
+      if (settings.dmAgentSkillId) {
+        const skill = await prisma.aiSkill.findFirst({
+          where: {
+            id: settings.dmAgentSkillId,
+            agent: { workspaceId: input.workspaceId },
+          },
+          select: { title: true, instructions: true, trigger: true },
+        });
+        if (skill) {
+          skillInstructions = [
+            `Skill: ${skill.title}`,
+            skill.trigger ? `Trigger: ${skill.trigger}` : null,
+            skill.instructions,
+          ]
+            .filter(Boolean)
+            .join('\n');
+        }
+      }
+      const texts = await generateApproveDmTexts({
+        workspaceId: input.workspaceId,
+        commentText: row.commentText,
+        postCaption: row.postCaption,
+        username: row.commenterUsername,
+        suggestedReply: row.suggestedReply,
+        publicReplyTone: settings.publicReplyTone,
+        skillInstructions,
+        fallbackMessage: settings.fallbackMessage,
+      });
+      dmReplyText = texts.dmReply;
+    }
+
+    const igUserId = input.instagramUserId || row.socialAccount.instagramUserId;
+
     const dm = await sendPrivateReplyToComment(
       input.workspaceId,
       row.commentId,

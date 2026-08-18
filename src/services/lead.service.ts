@@ -1,5 +1,5 @@
 import { prisma } from '../index.js';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { logSocialListeningActivity } from './socialListeningActivity.service.js';
 import {
   assertFunnelInWorkspace,
@@ -13,6 +13,12 @@ import {
   parseLeadJourneyFromCustomFields,
 } from './leadJourney.js';
 import { resolveContactIdentityFields } from './leadIdentity.js';
+import { findOrCreateInstagramContact } from '../lib/instagramContact.js';
+import { eventBus } from '../modules/journey/events/event-bus.js';
+
+function isPrismaUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+}
 
 export { phoneForLeadContact } from './leadContactPhone.js';
 export { resolveContactIdentityFields } from './leadIdentity.js';
@@ -104,28 +110,57 @@ export async function createLeadFromSocialComment(input: {
     return { leadId: comment.leadId, created: false };
   }
 
-  // Same IG user already a lead → attach this comment (and siblings) instead of duplicating.
-  if (comment.commenterUsername?.trim()) {
-    const existing = await prisma.lead.findFirst({
-      where: {
-        workspaceId: input.workspaceId,
-        originUsername: { equals: comment.commenterUsername.trim(), mode: 'insensitive' },
-      },
-      orderBy: { createdAt: 'desc' },
-      select: { id: true },
+  // Resolve the SAME Contact identity the inbound webhook handler already
+  // creates for this commenter (ensureInstagramCommentContact /
+  // findOrCreateInstagramContact) so the lead is linked to a real contact
+  // from creation — not left to fall back to a synthetic ig:lead:{id}
+  // phone at conversion time that can never match the real one.
+  let contactId: string | null = null;
+  if (comment.commenterId?.trim()) {
+    const contact = await findOrCreateInstagramContact({
+      db: prisma,
+      workspaceId: input.workspaceId,
+      scopedUserId: comment.commenterId.trim(),
+      name: comment.commenterUsername?.trim()
+        ? `@${comment.commenterUsername.replace(/^@/, '')}`
+        : undefined,
     });
-    if (existing) {
-      await prisma.socialComment.update({
-        where: { id: comment.id },
-        data: { leadId: existing.id },
-      });
-      await linkCommenterCommentsToLead(
-        input.workspaceId,
-        comment.commenterUsername,
-        existing.id
-      );
-      return { leadId: existing.id, created: false };
-    }
+    contactId = contact.id;
+  }
+
+  // Same-person dedup: contactId is the reliable identity — the same key
+  // upsertLeadForContact (the "Add to Funnel" journey action) already
+  // dedupes on, so a lead created via either path is found by the other.
+  // Username is only a fallback for comments captured before commenterId
+  // was tracked.
+  const existing = contactId
+    ? await prisma.lead.findFirst({
+        where: { workspaceId: input.workspaceId, contactId, funnelId: input.funnelId },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      })
+    : comment.commenterUsername?.trim()
+      ? await prisma.lead.findFirst({
+          where: {
+            workspaceId: input.workspaceId,
+            originUsername: { equals: comment.commenterUsername.trim(), mode: 'insensitive' },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true },
+        })
+      : null;
+
+  if (existing) {
+    await prisma.socialComment.update({
+      where: { id: comment.id },
+      data: { leadId: existing.id },
+    });
+    await linkCommenterCommentsToLead(
+      input.workspaceId,
+      comment.commenterUsername,
+      existing.id
+    );
+    return { leadId: existing.id, created: false };
   }
 
   const defaultStage = await getDefaultStageForFunnel(input.funnelId);
@@ -148,29 +183,68 @@ export async function createLeadFromSocialComment(input: {
     });
   }
 
-  const lead = await prisma.lead.create({
-    data: {
-      workspaceId: input.workspaceId,
-      funnelId: input.funnelId,
-      stageId: defaultStage.id,
-      stage: defaultStage.name,
-      name: comment.commenterUsername ? `@${comment.commenterUsername}` : null,
-      source: 'instagram',
-      requirement: comment.commentText.slice(0, 500),
-      notes: '',
-      originUsername: comment.commenterUsername,
-      originCommentText: comment.commentText,
-      originPostThumbnailUrl: comment.postThumbnailUrl,
-      originPostCaption: comment.postCaption,
-      originCommentedAt: comment.commentedAt,
-      activity: activity as unknown as Prisma.InputJsonValue,
-    },
-  });
+  const leadData: Prisma.LeadUncheckedCreateInput = {
+    workspaceId: input.workspaceId,
+    funnelId: input.funnelId,
+    stageId: defaultStage.id,
+    stage: defaultStage.name,
+    contactId,
+    name: comment.commenterUsername ? `@${comment.commenterUsername}` : null,
+    source: 'instagram',
+    requirement: comment.commentText.slice(0, 500),
+    notes: '',
+    originUsername: comment.commenterUsername,
+    originCommentText: comment.commentText,
+    originPostThumbnailUrl: comment.postThumbnailUrl,
+    originPostCaption: comment.postCaption,
+    originCommentedAt: comment.commentedAt,
+    activity: activity as unknown as Prisma.InputJsonValue,
+  };
 
-  await prisma.socialComment.update({
-    where: { id: comment.id },
+  let lead: { id: string };
+  try {
+    lead = await prisma.lead.create({ data: leadData });
+  } catch (err) {
+    if (!isPrismaUniqueViolation(err) || !contactId) throw err;
+    // A concurrent request for the same commenter (e.g. two comments
+    // arriving as separate webhook deliveries seconds apart) already
+    // created the lead for this (workspace, contact, funnel) — attach this
+    // comment to that lead instead of crashing.
+    const winner = await prisma.lead.findFirst({
+      where: { workspaceId: input.workspaceId, contactId, funnelId: input.funnelId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (!winner) throw err;
+    await prisma.socialComment.update({
+      where: { id: comment.id },
+      data: { leadId: winner.id },
+    });
+    await linkCommenterCommentsToLead(input.workspaceId, comment.commenterUsername, winner.id);
+    return { leadId: winner.id, created: false };
+  }
+
+  // Atomic claim — the comment.leadId read at the top of this function is a
+  // plain read, racy against a fast double-click on "Add to lead" (no
+  // ref-guard on the frontend) or two independent requests for the same
+  // comment. Without this, both calls could pass that check, both create a
+  // separate Lead row here, and this plain update would just silently
+  // overwrite whichever one wrote last — leaving an orphaned duplicate lead.
+  const claim = await prisma.socialComment.updateMany({
+    where: { id: comment.id, workspaceId: input.workspaceId, leadId: null },
     data: { leadId: lead.id },
   });
+  if (claim.count === 0) {
+    const winnerComment = await prisma.socialComment.findUnique({
+      where: { id: comment.id },
+      select: { leadId: true },
+    });
+    await prisma.lead.delete({ where: { id: lead.id } }).catch(() => {});
+    if (winnerComment?.leadId) {
+      return { leadId: winnerComment.leadId, created: false };
+    }
+    throw new Error('Failed to link lead to comment');
+  }
   await linkCommenterCommentsToLead(
     input.workspaceId,
     comment.commenterUsername,
@@ -301,24 +375,38 @@ export async function upsertLeadForContact(input: {
     },
   ];
 
-  const lead = await prisma.lead.create({
-    data: {
-      workspaceId: input.workspaceId,
-      funnelId: input.funnelId,
-      stageId: stage.id,
-      stage: stage.name,
-      contactId: contact.id,
-      name: identity.name ?? contact.name ?? null,
-      email: identity.email ?? null,
-      phone: identity.phone ?? null,
-      source,
-      requirement: '',
-      notes: '',
-      activity: activity as unknown as Prisma.InputJsonValue,
-    },
-  });
-
-  return { leadId: lead.id, created: true };
+  try {
+    const lead = await prisma.lead.create({
+      data: {
+        workspaceId: input.workspaceId,
+        funnelId: input.funnelId,
+        stageId: stage.id,
+        stage: stage.name,
+        contactId: contact.id,
+        name: identity.name ?? contact.name ?? null,
+        email: identity.email ?? null,
+        phone: identity.phone ?? null,
+        source,
+        requirement: '',
+        notes: '',
+        activity: activity as unknown as Prisma.InputJsonValue,
+      },
+    });
+    return { leadId: lead.id, created: true };
+  } catch (err) {
+    if (!isPrismaUniqueViolation(err)) throw err;
+    // Two overlapping journey executions (or a race with a manual/social
+    // lead capture) for the same contact both passed the findFirst check
+    // above — the partial unique index on (workspaceId, contactId,
+    // funnelId) caught the second create; use the winner's row instead of
+    // duplicating the lead.
+    const winner = await prisma.lead.findFirst({
+      where: { workspaceId: input.workspaceId, contactId: input.contactId, funnelId: input.funnelId },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!winner) throw err;
+    return { leadId: winner.id, created: false };
+  }
 }
 
 /** Copy contact name/email/phone onto every lead linked to this contact. */
@@ -368,16 +456,16 @@ export async function updateLead(
   });
   if (!existing) throw new Error('Lead not found');
 
-  const activity = asActivity(existing.activity);
   let nextStageId = existing.stageId;
   let nextStageName = existing.stage;
+  let newActivityEntry: LeadActivityItem | null = null;
 
   const requestedStageId = patch.stageId ?? patch.stage;
   if (requestedStageId && existing.funnelId) {
     const stage = await assertStageInFunnel(existing.funnelId, requestedStageId);
     if (!stage) throw new Error('Board not found in this funnel');
     if (stage.id !== existing.stageId) {
-      activity.unshift({
+      newActivityEntry = {
         id: `act-${Date.now()}-stage`,
         type: 'stage_change',
         text: `Moved from ${existing.stage} → ${stage.name}`,
@@ -385,26 +473,45 @@ export async function updateLead(
         fromStage: existing.stage,
         toStage: stage.name,
         stageId: stage.id,
-      });
+      };
       nextStageId = stage.id;
       nextStageName = stage.name;
     }
   }
 
-  const updated = await prisma.lead.update({
-    where: { id: leadId },
-    data: {
-      ...(requestedStageId
-        ? { stageId: nextStageId, stage: nextStageName }
-        : {}),
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.phone !== undefined ? { phone: patch.phone } : {}),
-      ...(patch.email !== undefined ? { email: patch.email } : {}),
-      ...(patch.requirement !== undefined ? { requirement: patch.requirement } : {}),
-      ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
-      activity: activity as unknown as Prisma.InputJsonValue,
-    },
-  });
+  // The activity log is prepended atomically at the DB level (JSONB
+  // concatenation), not via read-modify-write of the whole array — two
+  // concurrent stage moves on the same lead each reading the same starting
+  // `activity` would otherwise have the second write's full-array overwrite
+  // silently discard the first mover's log entry.
+  const statements: Prisma.PrismaPromise<unknown>[] = [];
+  if (newActivityEntry) {
+    statements.push(
+      prisma.$executeRaw`
+        UPDATE "Lead"
+        SET activity = ${JSON.stringify([newActivityEntry])}::jsonb || activity
+        WHERE id = ${leadId} AND "workspaceId" = ${workspaceId}
+      `
+    );
+  }
+  statements.push(
+    prisma.lead.update({
+      where: { id: leadId },
+      data: {
+        ...(requestedStageId
+          ? { stageId: nextStageId, stage: nextStageName }
+          : {}),
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.phone !== undefined ? { phone: patch.phone } : {}),
+        ...(patch.email !== undefined ? { email: patch.email } : {}),
+        ...(patch.requirement !== undefined ? { requirement: patch.requirement } : {}),
+        ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
+      },
+    })
+  );
+
+  const results = await prisma.$transaction(statements);
+  const updated = results[results.length - 1] as Awaited<ReturnType<typeof prisma.lead.update>>;
 
   return toPublicLead(updated);
 }
@@ -453,19 +560,33 @@ export async function convertLeadToContact(workspaceId: string, leadId: string) 
   });
   let created = false;
   if (!contact) {
-    contact = await prisma.contact.create({
-      data: {
-        workspaceId,
-        name,
-        phone,
-        email: lead.email?.trim() || null,
-        source,
-        tags: ['lead'],
-      },
-    });
-    created = true;
+    try {
+      contact = await prisma.contact.create({
+        data: {
+          workspaceId,
+          name,
+          phone,
+          email: lead.email?.trim() || null,
+          source,
+          tags: ['lead'],
+        },
+      });
+      created = true;
+    } catch (err) {
+      if (!isPrismaUniqueViolation(err)) throw err;
+      // Same race already fixed for WhatsApp/IG/Messenger contact creation
+      // — a concurrent convert (or an inbound message for the same phone)
+      // won the create; use their row instead of crashing.
+      contact = await prisma.contact.findFirst({ where: { workspaceId, phone } });
+      if (!contact) throw err;
+    }
   }
 
+  // Atomic claim: only the FIRST of two concurrent convert calls for this
+  // lead gets to write contactId + append the "Converted" activity entry.
+  // A losing call (double-click, or two requests racing) returns the
+  // winner's already-committed result instead of duplicating the activity
+  // entry or redundantly re-writing the contact.
   const convertedAt = new Date().toISOString();
   const activity = asActivity(lead.activity);
   activity.unshift({
@@ -485,6 +606,28 @@ export async function convertLeadToContact(workspaceId: string, leadId: string) 
     activity,
   });
 
+  const claim = await prisma.lead.updateMany({
+    where: { id: lead.id, contactId: null },
+    data: { contactId: contact.id, activity: activity as unknown as Prisma.InputJsonValue },
+  });
+
+  if (claim.count === 0) {
+    const winnerLead = await prisma.lead.findFirst({ where: { id: lead.id, workspaceId } });
+    const winnerContact = winnerLead?.contactId
+      ? await prisma.contact.findFirst({ where: { id: winnerLead.contactId, workspaceId } })
+      : null;
+    if (winnerLead && winnerContact) {
+      return {
+        lead: toPublicLead(winnerLead),
+        contactId: winnerContact.id,
+        created: false,
+        journey: parseLeadJourneyFromCustomFields(winnerContact.customFields),
+      };
+    }
+    throw new Error('Lead was converted by another request');
+  }
+
+  const hadLeadTag = contact.tags.includes('lead');
   const updatedContact = await prisma.contact.update({
     where: { id: contact.id },
     data: {
@@ -493,20 +636,36 @@ export async function convertLeadToContact(workspaceId: string, leadId: string) 
         journey
       ) as Prisma.InputJsonValue,
       ...(!contact.source || contact.source === 'Manual' ? { source } : {}),
-      tags: contact.tags.includes('lead') ? contact.tags : [...contact.tags, 'lead'],
+      tags: hadLeadTag ? contact.tags : [...contact.tags, 'lead'],
     },
   });
 
-  const updated = await prisma.lead.update({
-    where: { id: lead.id },
-    data: {
+  // Same events routes/contacts.ts emits on its own create/tag paths —
+  // without these, a journey on "Contact created" or a developer webhook on
+  // new contacts got zero runs for the primary way Instagram/WhatsApp leads
+  // enter the CRM. Only the CAS winner (this point is unreached by a loser)
+  // emits, so a losing concurrent request can't double-fire either event.
+  if (created) {
+    void eventBus.emit('contact.created', {
+      workspaceId,
+      event: 'contact.created',
       contactId: updatedContact.id,
-      activity: activity as unknown as Prisma.InputJsonValue,
-    },
-  });
+      payload: { source: updatedContact.source ?? undefined },
+    });
+  }
+  if (!hadLeadTag) {
+    void eventBus.emit('contact.tag_added', {
+      workspaceId,
+      event: 'contact.tag_added',
+      contactId: updatedContact.id,
+      payload: { tags: ['lead'] },
+    });
+  }
+
+  const updatedLead = await prisma.lead.findFirst({ where: { id: lead.id, workspaceId } });
 
   return {
-    lead: toPublicLead(updated),
+    lead: toPublicLead(updatedLead ?? lead),
     contactId: updatedContact.id,
     created,
     journey,

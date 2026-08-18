@@ -1,6 +1,7 @@
 import { prisma } from '../index.js';
 import { getEmailService } from '../modules/email/container.js';
 import {
+  alreadyMessagedContactIdsForCampaign,
   audienceTagFromIds,
   getCampaignAudienceContacts,
   resolveSegmentIdsFromFilter,
@@ -20,6 +21,7 @@ import {
 } from './walletUsage.js';
 import {
   hasCampaignHeaderMediaSource,
+  isHeaderMediaStorageKeyOwnedByWorkspace,
   parseCampaignHeaderMediaOverride,
 } from './campaignHeaderMedia.js';
 import { readMediaGalleryFile } from '../modules/media-gallery/media-storage.js';
@@ -27,6 +29,21 @@ import {
   isTemplateMediaHeaderFormat,
   uploadTemplateHeaderMediaForSend,
 } from './templateSendHeader.js';
+import { isMetaRateLimitError } from './whatsapp.js';
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Conservative pacing between WhatsApp sends — well under any Meta messaging
+// tier's per-second cap, to avoid tripping quality/rate throttling on a large
+// campaign. On an actual 429/throttle response, back off much longer.
+const CAMPAIGN_SEND_PACING_MS = 100;
+const CAMPAIGN_RATE_LIMIT_BACKOFF_MS = 8_000;
+// How often (in contacts) the send loop re-checks for cancellation and
+// persists partial progress — also doubles as the reaper's "still alive"
+// heartbeat via Campaign.updatedAt.
+const CAMPAIGN_PROGRESS_CHECK_INTERVAL = 20;
 
 type CampaignAudienceFilter = {
   channel?: CampaignAudienceChannel;
@@ -106,7 +123,21 @@ async function executeWhatsAppCampaignBroadcast(
 
   const segmentIds = resolveSegmentIdsFromFilter(campaign.audienceType, filter);
   const audienceTag = audienceTagFromIds(segmentIds);
-  const contacts = await getCampaignAudienceContacts(workspaceId, 'whatsapp', segmentIds);
+  const allContacts = await getCampaignAudienceContacts(workspaceId, 'whatsapp', segmentIds);
+  if (allContacts.length === 0) {
+    // Route-level validation rejects this at create/edit time now, but a
+    // legacy campaign or an audience that emptied out between scheduling and
+    // send (contacts deleted/unsubscribed) could still reach this. Without
+    // this throw, the loop below just runs 0 iterations with 0 errors, which
+    // doesn't satisfy the "sentCount===0 && errors.length>0" failure check —
+    // the campaign silently completes as 'failed' while /send still returns
+    // HTTP 200 "Campaign broadcast completed".
+    throw new Error('No contacts match the selected audience');
+  }
+  // Resuming a campaign (stuck-'running' reset, retried request) must not
+  // re-message contacts this campaign already successfully reached.
+  const alreadySent = await alreadyMessagedContactIdsForCampaign(campaignId, 'whatsapp');
+  const contacts = allContacts.filter((c) => !alreadySent.has(c.id));
   const mappings = filter.variableMappings ?? {};
 
   // Preflight: every variable must have a mapping expression (resolved per contact at send).
@@ -159,6 +190,9 @@ async function executeWhatsAppCampaignBroadcast(
         fileName: mediaOverride.headerMediaFileName || asset.filename || undefined,
       };
     } else if (mediaOverride.headerMediaStorageKey) {
+      if (!isHeaderMediaStorageKeyOwnedByWorkspace(mediaOverride.headerMediaStorageKey, workspaceId)) {
+        throw new Error('Header media does not belong to this workspace');
+      }
       mediaRecord = {
         ...template,
         headerMediaStorageKey: mediaOverride.headerMediaStorageKey,
@@ -170,20 +204,41 @@ async function executeWhatsAppCampaignBroadcast(
     headerMedia = await uploadTemplateHeaderMediaForSend(
       credentials.accessToken,
       credentials.phoneNumberId,
+      workspaceId,
       mediaRecord,
       uploaded
     );
   }
 
+  // status: 'running' is already set by executeCampaignBroadcast's atomic
+  // claim before this function runs — only totalRecipients needs writing here.
   await prisma.campaign.update({
     where: { id: campaignId },
-    data: { totalRecipients: contacts.length, status: 'running' },
+    data: { totalRecipients: allContacts.length },
   });
 
   let sentCount = 0;
+  let cancelled = false;
   const errors: string[] = [];
 
-  for (const contact of contacts) {
+  for (const [i, contact] of contacts.entries()) {
+    // Pace every send, not just the periodic check below — otherwise a large
+    // campaign bursts CAMPAIGN_PROGRESS_CHECK_INTERVAL sends unthrottled and
+    // only pauses once every N contacts, which barely rate-limits anything.
+    if (i > 0) {
+      await sleep(CAMPAIGN_SEND_PACING_MS);
+    }
+    if (i > 0 && i % CAMPAIGN_PROGRESS_CHECK_INTERVAL === 0) {
+      const stillRunning = await prisma.campaign.updateMany({
+        where: { id: campaignId, status: 'running' },
+        data: { sentCount: alreadySent.size + sentCount },
+      });
+      if (stillRunning.count === 0) {
+        cancelled = true;
+        break;
+      }
+    }
+
     const bodyParams = buildCampaignBodyParams(template.variables, mappings, contact);
     if (bodyParams.some((v) => !v.trim())) {
       const msg = 'missing resolved template variable values';
@@ -287,6 +342,13 @@ async function executeWhatsAppCampaignBroadcast(
       const msg = formatMetaSendError(err);
       errors.push(`${contact.phone}: ${msg}`);
       console.error('[Campaign] send failed', { campaignId, contactId: contact.id, msg });
+      if (isMetaRateLimitError(err)) {
+        // The whole number is being throttled, not just this contact —
+        // pause the batch before continuing rather than hammering the same
+        // limit on every remaining recipient.
+        console.warn('[Campaign] rate limited by Meta, backing off', { campaignId });
+        await sleep(CAMPAIGN_RATE_LIMIT_BACKOFF_MS);
+      }
       try {
         const { conversation } = await findOrReopenConversationForInbound({
           workspaceId,
@@ -319,31 +381,36 @@ async function executeWhatsAppCampaignBroadcast(
     }
   }
 
-  const finalStatus = sentCount > 0 ? 'completed' : 'failed';
+  // Cumulative across resumes — alreadySent was captured before this run, so
+  // it doesn't include this run's own sends yet.
+  const cumulativeSent = alreadySent.size + sentCount;
+  const finalStatus = cancelled ? 'cancelled' : cumulativeSent > 0 ? 'completed' : 'failed';
   await prisma.campaign.update({
     where: { id: campaignId },
     data: {
-      sentCount,
-      deliveredCount: sentCount,
+      sentCount: cumulativeSent,
+      deliveredCount: cumulativeSent,
       status: finalStatus,
-      sentAt: new Date(),
+      ...(cancelled ? {} : { sentAt: new Date() }),
     },
   });
 
-  void emitCampaignFinishedNotification({
-    workspaceId,
-    campaignId,
-    campaignName: campaign.name,
-    status: finalStatus,
-    sentCount,
-    totalRecipients: contacts.length,
-  });
+  if (finalStatus !== 'cancelled') {
+    void emitCampaignFinishedNotification({
+      workspaceId,
+      campaignId,
+      campaignName: campaign.name,
+      status: finalStatus,
+      sentCount: cumulativeSent,
+      totalRecipients: allContacts.length,
+    });
+  }
 
-  if (sentCount === 0 && errors.length > 0) {
+  if (!cancelled && cumulativeSent === 0 && errors.length > 0) {
     throw new Error(errors[0] ?? 'Campaign failed to send to any contact');
   }
 
-  return { sentCount, totalRecipients: contacts.length, errors };
+  return { sentCount: cumulativeSent, totalRecipients: allContacts.length, errors };
 }
 
 async function executeEmailCampaignBroadcast(
@@ -379,22 +446,40 @@ async function executeEmailCampaignBroadcast(
   }
 
   const segmentIds = resolveSegmentIdsFromFilter(campaign.audienceType, filter);
-  const contacts = await getCampaignAudienceContacts(workspaceId, 'email', segmentIds);
-  if (contacts.length === 0) {
+  const allContacts = await getCampaignAudienceContacts(workspaceId, 'email', segmentIds);
+  if (allContacts.length === 0) {
     throw new Error('No contacts with email addresses in the selected audience');
   }
+  // Resuming a campaign (stuck-'running' reset, retried request) must not
+  // re-email contacts this campaign already successfully reached.
+  const alreadySent = await alreadyMessagedContactIdsForCampaign(campaignId, 'email');
+  const contacts = allContacts.filter((c) => !alreadySent.has(c.id));
 
   const emailService = getEmailService();
 
+  // status: 'running' is already set by executeCampaignBroadcast's atomic
+  // claim before this function runs — only totalRecipients needs writing here.
   await prisma.campaign.update({
     where: { id: campaignId },
-    data: { totalRecipients: contacts.length, status: 'running' },
+    data: { totalRecipients: allContacts.length },
   });
 
   let sentCount = 0;
+  let cancelled = false;
   const errors: string[] = [];
 
-  for (const contact of contacts) {
+  for (const [i, contact] of contacts.entries()) {
+    if (i > 0 && i % CAMPAIGN_PROGRESS_CHECK_INTERVAL === 0) {
+      const stillRunning = await prisma.campaign.updateMany({
+        where: { id: campaignId, status: 'running' },
+        data: { sentCount: alreadySent.size + sentCount },
+      });
+      if (stillRunning.count === 0) {
+        cancelled = true;
+        break;
+      }
+    }
+
     const recipient = contact.email?.trim();
     if (!recipient) continue;
 
@@ -425,40 +510,42 @@ async function executeEmailCampaignBroadcast(
     }
   }
 
-  const finalStatus = sentCount > 0 ? 'completed' : 'failed';
+  // Cumulative across resumes — alreadySent was captured before this run, so
+  // it doesn't include this run's own sends yet.
+  const cumulativeSent = alreadySent.size + sentCount;
+  const finalStatus = cancelled ? 'cancelled' : cumulativeSent > 0 ? 'completed' : 'failed';
   await prisma.campaign.update({
     where: { id: campaignId },
     data: {
-      sentCount,
-      deliveredCount: sentCount,
+      sentCount: cumulativeSent,
+      deliveredCount: cumulativeSent,
       status: finalStatus,
-      sentAt: new Date(),
+      ...(cancelled ? {} : { sentAt: new Date() }),
     },
   });
 
-  void emitCampaignFinishedNotification({
-    workspaceId,
-    campaignId,
-    campaignName: campaign.name,
-    status: finalStatus,
-    sentCount,
-    totalRecipients: contacts.length,
-  });
+  if (finalStatus !== 'cancelled') {
+    void emitCampaignFinishedNotification({
+      workspaceId,
+      campaignId,
+      campaignName: campaign.name,
+      status: finalStatus,
+      sentCount: cumulativeSent,
+      totalRecipients: allContacts.length,
+    });
+  }
 
-  if (sentCount === 0 && errors.length > 0) {
+  if (!cancelled && cumulativeSent === 0 && errors.length > 0) {
     throw new Error(errors[0] ?? 'Campaign failed to send to any contact');
   }
 
-  return { sentCount, totalRecipients: contacts.length, errors };
+  return { sentCount: cumulativeSent, totalRecipients: allContacts.length, errors };
 }
 
 export async function executeCampaignBroadcast(campaignId: string, workspaceId: string) {
   const campaign = await prisma.campaign.findFirst({ where: { id: campaignId, workspaceId } });
   if (!campaign) {
     throw new Error('Campaign not found');
-  }
-  if (campaign.status === 'running') {
-    throw new Error('Campaign is already running');
   }
   if (campaign.status === 'completed') {
     return {
@@ -468,15 +555,59 @@ export async function executeCampaignBroadcast(campaignId: string, workspaceId: 
     };
   }
 
-  const filter = parseAudienceFilter(campaign.audienceFilter);
-  const channel = filter.channel ?? 'whatsapp';
-
-  if (channel === 'whatsapp') {
-    return executeWhatsAppCampaignBroadcast(campaignId, workspaceId, campaign);
+  // Atomic claim: only one concurrent caller can flip status → 'running'.
+  // This has to happen here, before any audience fetch / media upload / send
+  // work — not deep inside the per-channel functions, which left a wide
+  // window where a double-click, a retried request, or a scheduled job
+  // racing a manual send could all pass a plain status read and each blast
+  // the full audience.
+  const claim = await prisma.campaign.updateMany({
+    where: {
+      id: campaignId,
+      workspaceId,
+      // 'cancelled' is resumable too — per-contact idempotency makes it safe
+      // to pick back up where a stop left off instead of starting over.
+      status: { in: ['draft', 'scheduled', 'failed', 'cancelled'] },
+    },
+    data: { status: 'running' },
+  });
+  if (claim.count === 0) {
+    throw new Error('Campaign is already running or has already completed');
   }
-  if (channel === 'email') {
-    return executeEmailCampaignBroadcast(campaignId, workspaceId, campaign);
-  }
 
-  throw new Error(`Campaign channel "${channel}" is not supported for sending yet`);
+  try {
+    const filter = parseAudienceFilter(campaign.audienceFilter);
+    const channel = filter.channel ?? 'whatsapp';
+
+    if (channel === 'whatsapp') {
+      return await executeWhatsAppCampaignBroadcast(campaignId, workspaceId, campaign);
+    }
+    if (channel === 'email') {
+      return await executeEmailCampaignBroadcast(campaignId, workspaceId, campaign);
+    }
+
+    throw new Error(`Campaign channel "${channel}" is not supported for sending yet`);
+  } catch (err) {
+    // Claimed but never reached (or threw before) the per-channel function's
+    // own final-status write — e.g. template/credentials validation failed.
+    // Without this the campaign is left stuck in 'running' forever, and
+    // (for the scheduled/worker path, which has no HTTP response to return
+    // the error over) the operator had no way to see why it failed at all.
+    const message = err instanceof Error ? err.message : 'Campaign failed';
+    await prisma.campaign
+      .updateMany({
+        where: { id: campaignId, status: 'running' },
+        data: { status: 'failed', lastError: message.slice(0, 500) },
+      })
+      .catch(() => {});
+    await emitCampaignFinishedNotification({
+      workspaceId,
+      campaignId,
+      campaignName: campaign.name,
+      status: 'failed',
+      sentCount: campaign.sentCount,
+      totalRecipients: campaign.totalRecipients,
+    }).catch(() => {});
+    throw err;
+  }
 }

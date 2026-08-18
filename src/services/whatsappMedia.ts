@@ -3,6 +3,7 @@ import path from 'node:path';
 import { normalizeWhatsAppRecipient } from '../lib/phone.js';
 import type { SendWhatsAppResult } from './whatsapp.js';
 import { getObject, mimeTypeFromStorageKey, putObject } from './objectStorage.js';
+import { ssrfSafeRequestAgents } from '../utils/ssrfGuard.js';
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
@@ -27,6 +28,10 @@ export type MessageMediaMetadata = {
   longitude?: number;
   locationName?: string;
   locationAddress?: string;
+  /** Telegram album (sendMediaGroup) — one Message row holds all items; shared caption above. */
+  items?: Array<{ storageKey?: string; mimeType?: string; fileName?: string }>;
+  /** Per-item Telegram message_ids from sendMediaGroup, for reference/debugging. */
+  telegramMessageIds?: string[];
 };
 
 type InboundMediaPart = {
@@ -400,14 +405,24 @@ export async function downloadWhatsAppMedia(
   };
 }
 
-/** Download media from a direct HTTPS link (no Graph media id). */
+/**
+ * Download media from a direct HTTPS link taken from webhook payload content
+ * (no Graph media id) — the URL is attacker-suppliable in principle, so it's
+ * fetched through the same pinned-DNS/private-IP SSRF guard used for outbound
+ * journey webhooks, with redirects disabled so a redirect can't hop to an
+ * internal address after the initial host check passes.
+ */
 export async function downloadWhatsAppMediaUrl(
   mediaUrl: string,
   waToken?: string
 ): Promise<{ buffer: Buffer; mimeType: string }> {
+  const { httpAgent, httpsAgent } = await ssrfSafeRequestAgents(mediaUrl);
   const fileRes = await axios.get(mediaUrl, {
     headers: waToken ? { Authorization: `Bearer ${waToken}` } : undefined,
     responseType: 'arraybuffer',
+    maxRedirects: 0,
+    httpAgent,
+    httpsAgent,
   });
   const mimeType =
     (typeof fileRes.headers['content-type'] === 'string'

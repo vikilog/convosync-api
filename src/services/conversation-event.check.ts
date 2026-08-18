@@ -31,7 +31,7 @@ assert.match(assignee, /isAiAssigneeType/);
 assert.match(aiAgent, /ensureAiHandlingStarted/);
 assert.match(aiFaq, /ensureAiHandlingStarted/);
 
-assert.match(router, /case 'user':/);
+assert.match(router, /conversation\.assigneeType === 'user'/);
 assert.match(router, /skip — assigned to human agent/);
 
 assert.equal(isAiAssigneeType('ai'), true);

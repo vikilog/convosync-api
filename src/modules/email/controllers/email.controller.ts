@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getJwtUser } from '../../../middleware/auth.js';
 import { prisma } from '../../../lib/prisma.js';
+import { getRedis } from '../../../lib/redis.js';
 import type { EmailContainer } from '../container.js';
 import {
   createDomainSchema,
@@ -421,6 +422,22 @@ export class EmailController {
     if (!parsed.success) {
       return reply.code(400).send({
         error: parsed.error.issues[0]?.message ?? 'Invalid AI request',
+      });
+    }
+    const { workspaceId } = getJwtUser(request);
+    // Reachable directly via the API regardless of whether the "Generate
+    // with AI" UI is currently wired up — cap it per workspace so a script
+    // (or a re-enabled UI with no client-side guard) can't fire unbounded
+    // concurrent LLM calls.
+    const redis = getRedis();
+    const rateKey = `email_ai_generate:${workspaceId}`;
+    const count = await redis.incr(rateKey);
+    if (count === 1) {
+      await redis.expire(rateKey, 600);
+    }
+    if (count > 10) {
+      return reply.code(429).send({
+        error: 'Too many AI generation requests — try again in a few minutes.',
       });
     }
     try {

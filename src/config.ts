@@ -33,7 +33,7 @@ export const config = {
   meta: {
     appId: process.env.META_APP_ID || '',
     appSecret: process.env.META_APP_SECRET || '',
-    webhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN || 'convosync_verify_token',
+    webhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN || 'dev-verify-token-change-in-production',
     configId: process.env.META_CONFIG_ID || '',
     /** Embedded Signup config for WhatsApp Business App coexistence onboarding */
     whatsappConfigId: process.env.META_WHATSAPP_CONFIG || '',

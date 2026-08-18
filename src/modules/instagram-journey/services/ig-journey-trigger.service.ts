@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../../lib/prisma.js';
 import { isWorkspaceAutomationsPaused } from '../../../services/workspaceAutomationSettings.service.js';
 import type { InstagramJourneyRepository } from '../repositories/ig-journey.repository.js';
@@ -137,16 +138,28 @@ export class InstagramJourneyTriggerService {
     if (InstagramJourneyTriggerService.starting.has(startKey)) return;
     InstagramJourneyTriggerService.starting.add(startKey);
     try {
-      const execution = await this.executionRepo.create({
-        journeyId,
-        contactId,
-        currentNodeId: triggerNode.id,
-        context: {
-          triggerEvent: restart ? 'manual.assigned' : 'dm.received',
-          triggerPayload: { source: restart ? 'inbox_assignment' : 'assigned_inbound' },
-          triggerText: '',
-        },
-      });
+      let execution: Awaited<ReturnType<InstagramJourneyExecutionRepository['create']>>;
+      try {
+        execution = await this.executionRepo.create({
+          journeyId,
+          contactId,
+          currentNodeId: triggerNode.id,
+          context: {
+            triggerEvent: restart ? 'manual.assigned' : 'dm.received',
+            triggerPayload: { source: restart ? 'inbox_assignment' : 'assigned_inbound' },
+            triggerText: '',
+          },
+        });
+      } catch (err) {
+        // The in-memory Set above only guards same-process races; the DB's
+        // partial unique index (journeyId, contactId) WHERE status IN
+        // ('running','waiting') is the real cross-process/cross-replica
+        // backstop against double-enrolling this contact.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          return;
+        }
+        throw err;
+      }
       await this.engine.executeNode(execution.id, triggerNode.id);
     } finally {
       InstagramJourneyTriggerService.starting.delete(startKey);
@@ -249,16 +262,26 @@ export class InstagramJourneyTriggerService {
 
       InstagramJourneyTriggerService.starting.add(startKey);
       try {
-        const execution = await this.executionRepo.create({
-          journeyId: journey.id,
-          contactId: input.contactId,
-          currentNodeId: triggerNode.id,
-          context: {
-            triggerEvent: input.event,
-            triggerPayload: input.payload ?? {},
-            triggerText: input.text,
-          },
-        });
+        let execution: Awaited<ReturnType<InstagramJourneyExecutionRepository['create']>>;
+        try {
+          execution = await this.executionRepo.create({
+            journeyId: journey.id,
+            contactId: input.contactId,
+            currentNodeId: triggerNode.id,
+            context: {
+              triggerEvent: input.event,
+              triggerPayload: input.payload ?? {},
+              triggerText: input.text,
+            },
+          });
+        } catch (err) {
+          // Same-process races are caught by the Set above; the DB's partial
+          // unique index is the cross-process/cross-replica backstop.
+          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+            continue;
+          }
+          throw err;
+        }
         await this.engine.executeNode(execution.id, triggerNode.id);
       } finally {
         InstagramJourneyTriggerService.starting.delete(startKey);

@@ -6,6 +6,7 @@ import {
   canResendStatus,
   finishResend,
   mergeSendErrorMetadata,
+  RESENDABLE_STATUSES,
 } from '../lib/messageResendStatus.js';
 import {
   isInstagramPhone,
@@ -63,15 +64,62 @@ function emitStatus(workspaceId: string, messageId: string, status: string, send
   });
 }
 
+export class MessageResendConflictError extends Error {
+  statusCode = 409;
+  constructor(message: string) {
+    super(message);
+    this.name = 'MessageResendConflictError';
+  }
+}
+
+/**
+ * Atomically claims the message for resend — the WHERE clause requires the
+ * row to still be in a resendable status at write time, not just at the
+ * initial read. Two concurrent resend requests both reading "failed" must
+ * not both win this claim and both dispatch a real send to the customer.
+ */
 async function markPending(message: Message): Promise<Message> {
   const next = beginResend(message.retryCount);
-  return prisma.message.update({
-    where: { id: message.id },
+  const claim = await prisma.message.updateMany({
+    where: { id: message.id, status: { in: Array.from(RESENDABLE_STATUSES) } },
     data: {
       status: next.status,
       retryCount: next.retryCount,
     },
   });
+  if (claim.count === 0) {
+    throw new MessageResendConflictError(
+      'Message is already being resent or is no longer resendable'
+    );
+  }
+  return { ...message, status: next.status, retryCount: next.retryCount };
+}
+
+export class MessageSentButPersistFailedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MessageSentButPersistFailedError';
+  }
+}
+
+/**
+ * Persists a successful send's result. If this write itself fails, the
+ * channel has already accepted/delivered the message — the caller's catch
+ * block must not mark it "failed" (that would invite a real second send on
+ * retry), so failures here are tagged distinctly from a genuine send error.
+ */
+async function markResultAfterSuccessfulSend(
+  message: Message,
+  workspaceId: string,
+  opts: { waMessageId?: string }
+): Promise<Message> {
+  try {
+    return await markResult(message, workspaceId, true, opts);
+  } catch (err) {
+    throw new MessageSentButPersistFailedError(
+      `Message was sent but recording the result failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }
 
 async function markResult(
@@ -131,7 +179,7 @@ async function resendText(
         instagramUserId: credentials.instagramUserId,
       }
     );
-    const updated = await markResult(message, workspaceId, true, { waMessageId: sent.messageId });
+    const updated = await markResultAfterSuccessfulSend(message, workspaceId, { waMessageId: sent.messageId });
     try {
       await chargeInstagramMessageUsage({ workspaceId, referenceId: `${message.id}:retry:${updated.retryCount}` });
     } catch (err) {
@@ -150,7 +198,7 @@ async function resendText(
       psid,
       message.content
     );
-    return markResult(message, workspaceId, true, { waMessageId: sent.messageId });
+    return markResultAfterSuccessfulSend(message, workspaceId, { waMessageId: sent.messageId });
   }
 
   const credentials = await getWorkspaceWhatsAppCredentials(workspaceId, channelAccountId);
@@ -163,7 +211,7 @@ async function resendText(
     phone,
     message.content
   );
-  return markResult(message, workspaceId, true, { waMessageId: sent.waMessageId });
+  return markResultAfterSuccessfulSend(message, workspaceId, { waMessageId: sent.waMessageId });
 }
 
 async function resendTemplate(
@@ -200,6 +248,7 @@ async function resendTemplate(
     headerMedia = await uploadTemplateHeaderMediaForSend(
       credentials.accessToken,
       credentials.phoneNumberId,
+      workspaceId,
       template
     );
   }
@@ -219,7 +268,7 @@ async function resendTemplate(
     headerMedia ? { headerMedia } : undefined
   );
 
-  const updated = await markResult(message, workspaceId, true, { waMessageId: sent.waMessageId });
+  const updated = await markResultAfterSuccessfulSend(message, workspaceId, { waMessageId: sent.waMessageId });
   try {
     await chargeWhatsAppTemplateUsage({
       workspaceId,
@@ -263,7 +312,7 @@ async function resendMedia(
       igKind,
       staged.publicUrl
     );
-    const updated = await markResult(message, workspaceId, true, { waMessageId: sent.messageId });
+    const updated = await markResultAfterSuccessfulSend(message, workspaceId, { waMessageId: sent.messageId });
     try {
       await chargeInstagramMessageUsage({
         workspaceId,
@@ -288,7 +337,7 @@ async function resendMedia(
       metaKind,
       staged.publicUrl
     );
-    return markResult(message, workspaceId, true, { waMessageId: sent.messageId });
+    return markResultAfterSuccessfulSend(message, workspaceId, { waMessageId: sent.messageId });
   }
 
   const credentials = await getWorkspaceWhatsAppCredentials(workspaceId, channelAccountId);
@@ -312,7 +361,7 @@ async function resendMedia(
     caption,
     fileName
   );
-  return markResult(message, workspaceId, true, { waMessageId: sent.waMessageId });
+  return markResultAfterSuccessfulSend(message, workspaceId, { waMessageId: sent.waMessageId });
 }
 
 function formatSendErr(err: unknown, channel: string): string {
@@ -387,6 +436,18 @@ export async function resendFailedMessage(
       phone
     );
   } catch (err) {
+    if (err instanceof MessageSentButPersistFailedError) {
+      // The channel already accepted/delivered this message — leave status
+      // as resend_pending (not in RESENDABLE_STATUSES) rather than flipping
+      // it back to "failed", which would invite a real duplicate send on
+      // the next resend click.
+      console.error('[resend] Message sent but status persist failed', {
+        messageId: pending.id,
+        workspaceId,
+        error: err.message,
+      });
+      throw Object.assign(new Error(err.message), { statusCode: 500 });
+    }
     const sendError = formatSendErr(err, channel);
     await markResult(pending, workspaceId, false, { sendError });
     if (err instanceof InsufficientWalletBalanceError) {

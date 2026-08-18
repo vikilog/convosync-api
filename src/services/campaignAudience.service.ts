@@ -67,6 +67,16 @@ export async function getCampaignAudienceSegments(workspaceId: string, channel: 
     select: { tags: true },
   });
 
+  // Businesses had no visibility into how many contacts a send silently
+  // skips for being unsubscribed/blocked — surfaced here for the UI.
+  const excludedCount = await prisma.contact.count({
+    where: {
+      workspaceId,
+      ...channelWhere(channel),
+      tags: { hasSome: EXCLUDED_TAGS },
+    },
+  });
+
   const tagCounts = new Map<string, number>();
   for (const contact of contacts) {
     const seen = new Set<string>();
@@ -90,6 +100,7 @@ export async function getCampaignAudienceSegments(workspaceId: string, channel: 
   return {
     channel,
     total: allCount,
+    excludedCount,
     tags,
     segments: [{ id: 'all', name: 'All Contacts', icon: 'users', count: allCount }, ...tagSegments],
   };
@@ -106,6 +117,48 @@ export async function getCampaignAudienceContacts(
     ...segmentsWhere(segmentIdOrIds),
   };
   return prisma.contact.findMany({ where, orderBy: { updatedAt: 'desc' } });
+}
+
+/**
+ * Contact ids that already have a non-failed WhatsApp Message recorded for
+ * this campaign. Re-running/resuming a campaign (a stuck 'running' status
+ * reset, a retried request, an operator re-hitting send) must not re-message
+ * contacts already successfully reached — only genuinely new/failed ones.
+ */
+export async function alreadyMessagedContactIdsForCampaign(
+  campaignId: string,
+  channel: 'whatsapp'
+): Promise<Set<string>>;
+export async function alreadyMessagedContactIdsForCampaign(
+  campaignId: string,
+  channel: 'email'
+): Promise<Set<string>>;
+export async function alreadyMessagedContactIdsForCampaign(
+  campaignId: string,
+  channel: 'whatsapp' | 'email'
+): Promise<Set<string>> {
+  if (channel === 'whatsapp') {
+    const sent = await prisma.message.findMany({
+      where: {
+        status: { not: 'failed' },
+        metadata: { path: ['campaignId'], equals: campaignId },
+      },
+      select: { conversation: { select: { contactId: true } } },
+    });
+    return new Set(sent.map((m) => m.conversation.contactId));
+  }
+
+  const sent = await prisma.emailLog.findMany({
+    where: {
+      status: { not: 'failed' },
+      metadata: { path: ['campaignId'], equals: campaignId },
+    },
+    select: { metadata: true },
+  });
+  const ids = sent
+    .map((log) => (log.metadata as Record<string, unknown> | null)?.contactId)
+    .filter((id): id is string => typeof id === 'string');
+  return new Set(ids);
 }
 
 const AUDIENCE_CONTACT_LIST_LIMIT = 200;

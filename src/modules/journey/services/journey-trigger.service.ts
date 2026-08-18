@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import type { JourneyRepository } from '../repositories/journey.repository.js';
 import type { JourneyExecutionRepository } from '../repositories/journey-execution.repository.js';
 import type { JourneyEngine } from './journey-engine.service.js';
@@ -69,6 +70,8 @@ export class JourneyTriggerService {
       typeof input.payload?.buttonPayload === 'string'
         ? input.payload.buttonPayload.trim()
         : '';
+    const messageId =
+      typeof input.payload?.messageId === 'string' ? input.payload.messageId : undefined;
 
     if (!replyText.trim() && !buttonPayload) return;
 
@@ -104,14 +107,15 @@ export class JourneyTriggerService {
         await this.engine.resumeAfterReply(
           execution.id,
           replyText.trim() || buttonPayload,
-          edge.targetNodeId
+          edge.targetNodeId,
+          messageId
         );
         break;
       }
 
       if (ctx.waitKind !== 'reply' || !ctx.nextNodeId) continue;
 
-      await this.engine.resumeAfterReply(execution.id, replyText.trim(), ctx.nextNodeId);
+      await this.engine.resumeAfterReply(execution.id, replyText.trim(), ctx.nextNodeId, messageId);
       break;
     }
   }
@@ -211,15 +215,27 @@ export class JourneyTriggerService {
         throw err;
       }
 
-      const execution = await this.executionRepo.create({
-        journeyId: journey.id,
-        contactId: input.contactId,
-        currentNodeId: triggerNode.id,
-        context: {
-          triggerEvent: input.event,
-          triggerPayload: input.payload ?? {},
-        },
-      });
+      let execution: Awaited<ReturnType<JourneyExecutionRepository['create']>>;
+      try {
+        execution = await this.executionRepo.create({
+          journeyId: journey.id,
+          contactId: input.contactId,
+          currentNodeId: triggerNode.id,
+          context: {
+            triggerEvent: input.event,
+            triggerPayload: input.payload ?? {},
+          },
+        });
+      } catch (err) {
+        // The in-memory Set above only guards same-process races; the DB's
+        // partial unique index (journeyId, contactId) WHERE status IN
+        // ('running','waiting') is the real cross-process/cross-replica
+        // backstop against double-enrolling this contact.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          return;
+        }
+        throw err;
+      }
 
       try {
         await chargeJourneyTriggerUsage({

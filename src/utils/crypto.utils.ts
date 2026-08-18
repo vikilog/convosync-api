@@ -32,6 +32,25 @@ export function verifyRazorpayWebhookSignature(
   return safeCompare(expected, signature);
 }
 
+/** Verify Meta's `X-Hub-Signature-256` header on inbound WhatsApp/Instagram webhook deliveries. */
+export function verifyMetaWebhookSignature(
+  rawBody: string,
+  signatureHeader: string | undefined,
+  appSecret: string
+): boolean {
+  if (!appSecret || !signatureHeader) return false;
+  const prefix = 'sha256=';
+  if (!signatureHeader.startsWith(prefix)) return false;
+  const expected = createHmac('sha256', appSecret).update(rawBody).digest('hex');
+  return safeCompare(expected, signatureHeader.slice(prefix.length));
+}
+
+/** Constant-time comparison for the GET webhook-verification handshake token. */
+export function safeStringEquals(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  return safeCompare(a, b);
+}
+
 function safeCompare(a: string, b: string): boolean {
   try {
     const bufA = Buffer.from(a, 'utf8');

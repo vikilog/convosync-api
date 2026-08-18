@@ -36,7 +36,15 @@ const SYSTEM_CATEGORY_TO_META: Record<TemplateCategory, string> = {
 
 export function metaStatusToSystem(status: string): TemplateStatus {
   const key = status.trim().toUpperCase();
-  return META_STATUS_TO_SYSTEM[key] ?? 'pending';
+  const mapped = META_STATUS_TO_SYSTEM[key];
+  if (!mapped) {
+    // Meta has added new template lifecycle states before — falling back to
+    // 'pending' is a safe default, but do it loudly so an unmapped status
+    // shows up in logs instead of silently masquerading as a known one.
+    console.warn('[templates] unmapped Meta template status', { status });
+    return 'pending';
+  }
+  return mapped;
 }
 
 export function metaCategoryToSystem(category: string): TemplateCategory {

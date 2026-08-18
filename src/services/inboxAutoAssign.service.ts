@@ -62,7 +62,8 @@ async function assignAndBump(
       workspaceId,
       conversationId,
       { assigneeType: 'user', assigneeId: userId },
-      { actorType: 'SYSTEM', actorName: 'Auto-assign' }
+      { actorType: 'SYSTEM', actorName: 'Auto-assign' },
+      { requireCurrentlyUnassigned: true }
     );
   } catch (err) {
     console.warn('[InboxAutoAssign] assign failed', err instanceof Error ? err.message : err);

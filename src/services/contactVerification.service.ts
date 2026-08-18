@@ -239,15 +239,13 @@ export async function sendVerificationOtp(input: {
       select: { email: true, emailVerifiedAt: true },
     });
     if (!current) throw new Error('Company not found');
+    let needsUpdate = false;
     if (email) {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         throw new Error('Enter a valid company email');
       }
       if (current.email?.toLowerCase() !== email) {
-        await prisma.workspace.update({
-          where: { id: workspaceId },
-          data: { email, emailVerifiedAt: null },
-        });
+        needsUpdate = true;
       } else if (current.emailVerifiedAt) {
         return { sent: false, alreadyVerified: true };
       }
@@ -258,7 +256,17 @@ export async function sendVerificationOtp(input: {
       }
       email = current.email.trim().toLowerCase();
     }
+    // Rate-limit check BEFORE the destructive write below — otherwise a
+    // caller can keep resetting the workspace's on-file email and verified
+    // status by supplying a new address each call, even while every actual
+    // OTP send is being throttled.
     await assertSendAllowed(workspaceId, target);
+    if (needsUpdate) {
+      await prisma.workspace.update({
+        where: { id: workspaceId },
+        data: { email, emailVerifiedAt: null },
+      });
+    }
     const code = generateOtpCode();
     await storeOtp(workspaceId, target, code, email);
     await sendOtpEmail(workspaceId, email, code);
@@ -277,13 +285,11 @@ export async function sendVerificationOtp(input: {
     select: { phone: true, phoneVerifiedAt: true },
   });
   if (!current) throw new Error('Company not found');
+  let phoneNeedsUpdate = false;
   if (input.phone?.trim()) {
     phoneDigits = normalizeVerificationPhone(input.phone);
     if (current.phone !== phoneDigits) {
-      await prisma.workspace.update({
-        where: { id: workspaceId },
-        data: { phone: phoneDigits, phoneVerifiedAt: null },
-      });
+      phoneNeedsUpdate = true;
     } else if (current.phoneVerifiedAt) {
       return { sent: false, alreadyVerified: true };
     }
@@ -294,7 +300,15 @@ export async function sendVerificationOtp(input: {
     }
     phoneDigits = normalizeVerificationPhone(current.phone);
   }
+  // Rate-limit check BEFORE the destructive write below — see the
+  // company_email branch above for why.
   await assertSendAllowed(workspaceId, target);
+  if (phoneNeedsUpdate) {
+    await prisma.workspace.update({
+      where: { id: workspaceId },
+      data: { phone: phoneDigits, phoneVerifiedAt: null },
+    });
+  }
   const code = generateOtpCode();
   await storeOtp(workspaceId, target, code, phoneDigits);
   await sendOtpWhatsApp(phoneDigits, code);

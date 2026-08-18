@@ -35,6 +35,7 @@ import socialListeningRoutes from './routes/socialListening.js';
 import leadsRoutes from './routes/leads.js';
 import leadFunnelsRoutes from './routes/leadFunnels.js';
 import messengerRoutes from './routes/messenger.js';
+import telegramRoutes from './routes/telegram.js';
 import metaRoutes from './routes/meta.js';
 import facebookRoutes from './routes/facebook.js';
 import metaAdsRoutes from './routes/metaAds.js';
@@ -60,6 +61,7 @@ import aiKnowledgeRoutes from './modules/ai-knowledge/routes/ai-knowledge.routes
 import aiChatRoutes from './modules/ai-chat/routes/ai-chat.routes.js';
 import developersRoutes from './modules/developers/routes/developers.routes.js';
 import emailRoutes from './modules/email/routes/email.routes.js';
+import emailUnsubscribeRoutes from './routes/emailUnsubscribe.js';
 import googleRoutes from './modules/google/routes/google.routes.js';
 import mediaRoutes from './routes/media.js';
 import { startCampaignWorker } from './workers/campaign.worker.js';
@@ -82,6 +84,7 @@ import workspaceEmailConfigRoutes from './modules/email/routes/workspace-email-c
 import callingRoutes from './modules/calling/calling.routes.js';
 import internalRoutes from './routes/internal.js';
 import { startCallingSweeper } from './modules/calling/calling.sweeper.js';
+import { startCampaignReaperSweeper } from './services/campaignReaper.sweeper.js';
 import { startCallTranscriptWorker } from './workers/call-transcript.worker.js';
 import { startContactInsightWorker } from './workers/contact-insight.worker.js';
 import { startContactInsightScheduler } from './workers/contact-insight.scheduler.js';
@@ -146,6 +149,7 @@ async function start() {
   await fastify.register(leadsRoutes, { prefix: '/api/leads' });
   await fastify.register(leadFunnelsRoutes, { prefix: '/api/lead-funnels' });
   await fastify.register(messengerRoutes, { prefix: '/api/messenger' });
+  await fastify.register(telegramRoutes, { prefix: '/api/telegram' });
   await fastify.register(metaRoutes, { prefix: '/api/meta' });
   await fastify.register(facebookRoutes, { prefix: '/api/facebook' });
   await fastify.register(metaAdsRoutes, { prefix: '/api/meta-ads' });
@@ -173,6 +177,8 @@ async function start() {
   await fastify.register(aiChatRoutes, { prefix: '/api/ai-chat' });
   await fastify.register(developersRoutes, { prefix: '/api/developers' });
   await fastify.register(emailRoutes, { prefix: '/api/email' });
+  // Public, no auth — reached by recipients clicking the unsubscribe link in an email.
+  await fastify.register(emailUnsubscribeRoutes, { prefix: '/api/email' });
   await fastify.register(googleRoutes, { prefix: '/api/google' });
   await fastify.register(mediaRoutes, { prefix: '/api/media' });
   await fastify.register(import('./modules/billing/billing.routes.js'), { prefix: '/api' });
@@ -199,6 +205,7 @@ async function start() {
   initEmailModule(prisma);
   initGoogleModule(prisma);
   startCampaignWorker();
+  startCampaignReaperSweeper();
   startJourneyWorker();
   startIgJourneyWorker();
   startDeveloperSyncWorker();

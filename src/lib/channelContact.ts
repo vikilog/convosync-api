@@ -56,12 +56,31 @@ export function isMessengerSource(source: string | null | undefined): boolean {
   return source === 'Messenger';
 }
 
-export type ContactChannelFilter = 'whatsapp' | 'instagram' | 'messenger';
+export function formatTelegramContactPhone(chatId: string): string {
+  return `tg:${chatId.trim()}`;
+}
+
+export function parseTelegramChatId(phone: string): string | null {
+  if (!phone.startsWith('tg:')) return null;
+  const id = phone.slice(3).trim();
+  return id || null;
+}
+
+export function isTelegramPhone(phone: string): boolean {
+  return phone.startsWith('tg:');
+}
+
+export function isTelegramSource(source: string | null | undefined): boolean {
+  return source === 'Telegram';
+}
+
+export type ContactChannelFilter = 'whatsapp' | 'instagram' | 'messenger' | 'telegram';
 
 /** Channel implied by how the contact's `phone` identity column is encoded. */
 export function resolveContactChannel(contact: { phone: string }): ContactChannelFilter {
   if (isInstagramPhone(contact.phone)) return 'instagram';
   if (isMessengerPhone(contact.phone)) return 'messenger';
+  if (isTelegramPhone(contact.phone)) return 'telegram';
   return 'whatsapp';
 }
 
@@ -78,11 +97,16 @@ export function contactChannelWhere(channel: ContactChannelFilter): {
       return {
         OR: [{ phone: { startsWith: 'fb:' } }, { source: 'Messenger' }],
       };
+    case 'telegram':
+      return {
+        OR: [{ phone: { startsWith: 'tg:' } }, { source: 'Telegram' }],
+      };
     case 'whatsapp':
       return {
         AND: [
           { NOT: { phone: { startsWith: 'ig:' } } },
           { NOT: { phone: { startsWith: 'fb:' } } },
+          { NOT: { phone: { startsWith: 'tg:' } } },
         ],
       };
   }

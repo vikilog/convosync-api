@@ -10,6 +10,7 @@ import {
   chargeEmailSendUsage,
 } from '../../../services/walletUsage.js';
 import { InsufficientWalletBalanceError } from '../../../services/wallet.service.js';
+import { buildUnsubscribeUrl } from '../../../services/unsubscribeToken.service.js';
 import { WorkspaceEmailConfigService } from './workspace-email-config.service.js';
 import { prisma } from '../../../lib/prisma.js';
 import {
@@ -488,6 +489,19 @@ export class EmailService {
     }
     if (!html && !text && !input.template) {
       throw new Error('Provide html, text, or template');
+    }
+
+    // Commercial/bulk sends (campaignId + a known recipient contact) must
+    // carry a working unsubscribe mechanism — transactional sends (no
+    // campaignId) are left untouched since recipients can't opt out of those.
+    if (input.campaignId && input.contactId) {
+      const unsubscribeUrl = buildUnsubscribeUrl(input.contactId, workspaceId);
+      if (html) {
+        html += `<p style="margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;font-size:12px;color:#94a3b8;font-family:-apple-system,sans-serif;">If you no longer wish to receive these emails, <a href="${unsubscribeUrl}" style="color:#94a3b8;">unsubscribe here</a>.</p>`;
+      }
+      if (text) {
+        text += `\n\n---\nUnsubscribe: ${unsubscribeUrl}`;
+      }
     }
 
     const fromEmail = input.from ?? (await this.resolveDefaultSender(workspaceId));

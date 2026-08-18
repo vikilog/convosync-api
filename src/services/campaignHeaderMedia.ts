@@ -25,6 +25,21 @@ export function parseCampaignHeaderMediaOverride(raw: unknown): CampaignHeaderMe
   };
 }
 
+/**
+ * headerMediaStorageKey arrives via the client-controlled audienceFilter blob
+ * and isn't backed by a workspace-scoped DB row like headerMediaAssetId is —
+ * verify it against the workspace-prefixed layout saveTemplateHeaderMedia
+ * writes (`${workspaceId}/template-headers/...`) before it's ever fetched.
+ * Without this, one workspace could read another's stored file by supplying
+ * its key.
+ */
+export function isHeaderMediaStorageKeyOwnedByWorkspace(
+  storageKey: string,
+  workspaceId: string
+): boolean {
+  return storageKey.startsWith(`${workspaceId}/`);
+}
+
 export function hasCampaignHeaderMediaSource(
   override: CampaignHeaderMediaOverride,
   templateStorageKey: string | null | undefined

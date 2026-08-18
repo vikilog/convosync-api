@@ -2,6 +2,7 @@ import { Webhook } from 'svix';
 import { config } from '../../../config.js';
 import type { EmailLogStatus } from '../types/email.types.js';
 import { applyEmailLogProviderEvent } from './email-log-events.service.js';
+import { markContactUnsubscribed } from '../../../services/contactOptOut.service.js';
 
 type ResendWebhookEvent = {
   type: string;
@@ -86,11 +87,22 @@ export async function handleResendEmailWebhook(
     return { ok: true, updated: false, eventType: event.type };
   }
 
-  return applyEmailLogProviderEvent({
+  const result = await applyEmailLogProviderEvent({
     messageId: emailId,
     status: nextStatus,
     eventType: event.type,
     detail: extractErrorMessage(event),
     metaKey: 'lastResendEvent',
   });
+
+  // A complaint is an explicit "stop emailing me" signal that previously
+  // never touched the Contact row, leaving the address eligible for every
+  // future campaign indefinitely. (Resend's webhook payload here doesn't
+  // expose a hard/soft bounce distinction the way SES's does, so — unlike
+  // the SES handler — bounces aren't auto-blocked from this provider.)
+  if (nextStatus === 'complained' && result.contactId && result.workspaceId) {
+    await markContactUnsubscribed(result.contactId, result.workspaceId);
+  }
+
+  return result;
 }

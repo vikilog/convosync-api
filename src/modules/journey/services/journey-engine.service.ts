@@ -44,7 +44,7 @@ import type {
   WebhookNodeData,
   ExecutionWaitContext,
 } from '../types/journey.types.js';
-import { GOTO_STEP_MAX_HOPS } from '../types/journey.types.js';
+import { GOTO_STEP_MAX_HOPS, MAX_SYNC_EXECUTION_STEPS } from '../types/journey.types.js';
 
 export class JourneyEngine {
   constructor(
@@ -58,16 +58,28 @@ export class JourneyEngine {
     if (!execution || execution.status === 'completed' || execution.status === 'cancelled') {
       return;
     }
-    await this.executionRepo.updateProgress(executionId, {
-      status: 'running',
-      currentNodeId: nextNodeId,
-    });
+    // A reply can arrive at almost the exact moment this WAIT timer fires —
+    // version-check so only whichever trigger gets here first advances the
+    // execution; the loser backs off instead of double-executing.
+    const advanced = await this.executionRepo.updateProgressIfVersion(
+      executionId,
+      execution.version,
+      {
+        status: 'running',
+        currentNodeId: nextNodeId,
+        // A real WAIT elapsed — this is a fresh burst, not a continuation of a loop.
+        context: { ...((execution.context as Record<string, unknown>) ?? {}), syncSteps: 0 },
+      }
+    );
+    if (!advanced) return;
     await this.executeNode(executionId, nextNodeId);
   }
 
-  async resumeExecution(executionId: string): Promise<void> {
+  async resumeExecution(workspaceId: string, executionId: string): Promise<void> {
     const execution = await this.executionRepo.findById(executionId);
-    if (!execution) {
+    if (!execution || execution.journey.workspaceId !== workspaceId) {
+      // Same error for "not found" and "belongs to another workspace" — don't
+      // let the response distinguish a cross-tenant id from a bad one.
       throw new Error('Execution not found');
     }
     if (execution.status === 'completed' || execution.status === 'cancelled') {
@@ -89,6 +101,14 @@ export class JourneyEngine {
     if (!execution.currentNodeId) {
       throw new Error('Execution has no current node');
     }
+    // Manual resume of a stalled/failed execution — a fresh burst. Version-check
+    // in case some other trigger is concurrently advancing the same execution.
+    const advanced = await this.executionRepo.updateProgressIfVersion(
+      executionId,
+      execution.version,
+      { context: { ...((execution.context as Record<string, unknown>) ?? {}), syncSteps: 0 } }
+    );
+    if (!advanced) return;
     await this.executeNode(executionId, execution.currentNodeId);
   }
 
@@ -107,9 +127,26 @@ export class JourneyEngine {
       return;
     }
 
+    // CONDITION/RANDOMIZER/linear nodes recurse into executeNode in-process with
+    // no per-node hop counter of their own (only GOTO_STEP has one) — a flow with
+    // a cycle and no WAIT in it would otherwise recurse unbounded. syncSteps is
+    // reset to 0 on every real pause (see continueAfterDelay/resumeAfterReply/
+    // resumeExecution), so this only bounds a single uninterrupted burst.
+    const ctx = (execution.context ?? {}) as Record<string, unknown>;
+    const syncSteps = Number(ctx.syncSteps ?? 0) + 1;
+    if (syncSteps > MAX_SYNC_EXECUTION_STEPS) {
+      await this.failExecution(
+        executionId,
+        nodeId,
+        `Execution step limit (${MAX_SYNC_EXECUTION_STEPS}) exceeded — check for a loop with no WAIT step`
+      );
+      return;
+    }
+
     await this.executionRepo.updateProgress(executionId, {
       currentNodeId: nodeId,
       status: 'running',
+      context: { ...ctx, syncSteps },
     });
 
     try {
@@ -408,14 +445,20 @@ export class JourneyEngine {
   async resumeAfterReply(
     executionId: string,
     replyText: string,
-    nextNodeId: string
+    nextNodeId: string,
+    messageId?: string
   ): Promise<void> {
     const execution = await this.executionRepo.findById(executionId);
     if (!execution || execution.status !== 'waiting') return;
 
     const ctx = (execution.context ?? {}) as ExecutionWaitContext & {
       saveReplyTo?: string;
+      resumeMessageId?: string;
     };
+    // A redelivered inbound webhook (common on slow/5xx responses) must not
+    // advance the same waiting execution twice.
+    if (messageId && ctx.resumeMessageId === messageId) return;
+
     if (ctx.saveReplyTo?.trim()) {
       await mergeContactCustomFields(execution.contactId, {
         [ctx.saveReplyTo.trim()]: replyText,
@@ -426,17 +469,27 @@ export class JourneyEngine {
       executionId,
       nodeId: execution.currentNodeId ?? undefined,
       status: 'success',
-      payload: { action: 'reply_received', replyText: replyText.slice(0, 500) },
+      payload: { action: 'reply_received', replyText: replyText.slice(0, 500), messageId },
     });
 
-    await this.executionRepo.updateProgress(executionId, {
-      status: 'running',
-      context: {
-        ...(execution.context as Record<string, unknown>),
-        waitKind: undefined,
-        lastReply: replyText,
-      },
-    });
+    // A WAIT timer can fire at almost the exact moment this reply arrives —
+    // version-check so only whichever trigger gets here first advances the
+    // execution; the loser backs off instead of double-executing.
+    const advanced = await this.executionRepo.updateProgressIfVersion(
+      executionId,
+      execution.version,
+      {
+        status: 'running',
+        context: {
+          ...(execution.context as Record<string, unknown>),
+          waitKind: undefined,
+          lastReply: replyText,
+          syncSteps: 0,
+          ...(messageId ? { resumeMessageId: messageId } : {}),
+        },
+      }
+    );
+    if (!advanced) return;
 
     await this.executeNode(executionId, nextNodeId);
   }

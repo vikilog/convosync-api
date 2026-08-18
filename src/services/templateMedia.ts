@@ -37,6 +37,49 @@ export function isAllowedTemplateHeaderMime(mimeType: string): boolean {
   return headerFormatForMime(mimeType) !== null;
 }
 
+/**
+ * The client's declared Content-Type is trusted nowhere near enough on its
+ * own — a file with a spoofed mimetype (e.g. an HTML/script payload
+ * declared as image/png) would otherwise be accepted, stored, and later
+ * served back to whoever opens the header-media URL. Sniff the actual file
+ * signature and require it to match one of the formats we allow at all;
+ * this doesn't have to match the claimed mimeType exactly (browsers are
+ * inconsistent about e.g. video/mp4 vs video/quicktime for MP4-family
+ * containers), it just has to be a real file of an allowed kind.
+ */
+export function sniffAllowedHeaderMediaType(buffer: Buffer): boolean {
+  if (buffer.length < 12) return false;
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return true;
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return true;
+  }
+  // PDF: "%PDF"
+  if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+    return true;
+  }
+  // MP4/ISO-BMFF family: bytes 4-7 spell "ftyp"
+  if (
+    buffer[4] === 0x66 &&
+    buffer[5] === 0x74 &&
+    buffer[6] === 0x79 &&
+    buffer[7] === 0x70
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export async function saveTemplateHeaderMedia(
   workspaceId: string,
   buffer: Buffer,

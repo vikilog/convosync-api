@@ -60,9 +60,42 @@ export class JourneyExecutionRepository {
         ...(data.context !== undefined
           ? { context: data.context as Prisma.InputJsonValue }
           : {}),
+        version: { increment: 1 },
         lastExecutedAt: data.lastExecutedAt ?? new Date(),
       },
     });
+  }
+
+  /**
+   * Version-checked variant for the few entry points where two independent
+   * external triggers can race to wake the SAME waiting execution — a reply
+   * arriving at almost the exact moment its WAIT timer fires. Returns false
+   * (no row touched) when `expectedVersion` is stale, meaning the other
+   * trigger already won the race; the caller should stop rather than also
+   * advance the execution.
+   */
+  async updateProgressIfVersion(
+    id: string,
+    expectedVersion: number,
+    data: {
+      currentNodeId?: string | null;
+      status?: string;
+      context?: Record<string, unknown>;
+    }
+  ): Promise<boolean> {
+    const result = await this.db.journeyExecution.updateMany({
+      where: { id, version: expectedVersion },
+      data: {
+        ...(data.currentNodeId !== undefined ? { currentNodeId: data.currentNodeId } : {}),
+        ...(data.status !== undefined ? { status: data.status } : {}),
+        ...(data.context !== undefined
+          ? { context: data.context as Prisma.InputJsonValue }
+          : {}),
+        version: { increment: 1 },
+        lastExecutedAt: new Date(),
+      },
+    });
+    return result.count > 0;
   }
 
   appendLog(input: {

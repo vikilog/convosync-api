@@ -14,6 +14,10 @@ function toJsonInput(value: Record<string, unknown> | null | undefined) {
   return value as Prisma.InputJsonValue;
 }
 
+function isPrismaUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+}
+
 export class EmailTemplateService {
   constructor(private readonly repo: EmailRepository) {}
 
@@ -33,16 +37,27 @@ export class EmailTemplateService {
     const variables = extractTemplateVariables(input.subject, input.htmlBody);
     const textBody = input.textBody?.trim() || stripHtmlToText(input.htmlBody);
 
-    return this.repo.createEmailTemplate({
-      name,
-      subject: input.subject.trim(),
-      htmlBody: input.htmlBody,
-      textBody,
-      variables,
-      status: input.status ?? 'draft',
-      ...(input.designJson !== undefined ? { designJson: toJsonInput(input.designJson) } : {}),
-      workspace: { connect: { id: workspaceId } },
-    });
+    try {
+      return await this.repo.createEmailTemplate({
+        name,
+        subject: input.subject.trim(),
+        htmlBody: input.htmlBody,
+        textBody,
+        variables,
+        status: input.status ?? 'draft',
+        ...(input.designJson !== undefined ? { designJson: toJsonInput(input.designJson) } : {}),
+        workspace: { connect: { id: workspaceId } },
+      });
+    } catch (err) {
+      // The findEmailTemplateByName check above is a plain read — two
+      // concurrent creates for the same name can both pass it and race the
+      // DB's own unique constraint; without this the loser surfaces a raw
+      // Prisma error instead of the same clean message the read-check gives.
+      if (isPrismaUniqueViolation(err)) {
+        throw new Error('Email template name already exists');
+      }
+      throw err;
+    }
   }
 
   async updateTemplate(workspaceId: string, id: string, input: UpdateEmailTemplateDto) {
@@ -61,15 +76,22 @@ export class EmailTemplateService {
         ? input.textBody.trim() || stripHtmlToText(htmlBody)
         : row.textBody ?? stripHtmlToText(htmlBody);
 
-    return this.repo.updateEmailTemplate(id, {
-      ...(input.name ? { name: input.name.toLowerCase().trim() } : {}),
-      ...(input.subject !== undefined ? { subject } : {}),
-      ...(input.htmlBody !== undefined ? { htmlBody } : {}),
-      textBody,
-      variables: extractTemplateVariables(subject, htmlBody),
-      ...(input.status !== undefined ? { status: input.status } : {}),
-      ...(input.designJson !== undefined ? { designJson: toJsonInput(input.designJson) } : {}),
-    });
+    try {
+      return await this.repo.updateEmailTemplate(id, {
+        ...(input.name ? { name: input.name.toLowerCase().trim() } : {}),
+        ...(input.subject !== undefined ? { subject } : {}),
+        ...(input.htmlBody !== undefined ? { htmlBody } : {}),
+        textBody,
+        variables: extractTemplateVariables(subject, htmlBody),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.designJson !== undefined ? { designJson: toJsonInput(input.designJson) } : {}),
+      });
+    } catch (err) {
+      if (isPrismaUniqueViolation(err)) {
+        throw new Error('Email template name already exists');
+      }
+      throw err;
+    }
   }
 
   async deleteTemplate(workspaceId: string, id: string) {

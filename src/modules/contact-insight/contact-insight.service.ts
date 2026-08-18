@@ -5,6 +5,7 @@ import { config } from '../../config.js';
 import { buildInsightContext } from './contact-insight.context.js';
 import { runContactInsightLlm } from './contact-insight.llm.js';
 import { applyInsightTags } from './contact-insight.tags.js';
+import { isOptedOutOrBlocked } from '../../services/contactOptOut.service.js';
 import type { ContactInsightJobData } from './contact-insight.types.js';
 
 export type ComputeInsightResult =
@@ -53,13 +54,18 @@ export async function computeContactInsight(
 
   const contactMeta = await prisma.contact.findFirst({
     where: { id: data.contactId, workspaceId: data.workspaceId },
-    select: { id: true, excludeFromInsights: true },
+    select: { id: true, excludeFromInsights: true, tags: true },
   });
   if (!contactMeta) {
     return { status: 'skipped', reason: 'contact_not_found' };
   }
   if (contactMeta.excludeFromInsights) {
     return { status: 'skipped', reason: 'excluded' };
+  }
+  // A contact can opt out (STOP keyword, email bounce/complaint) after a job
+  // was already queued — re-check here, not just at enqueue time.
+  if (isOptedOutOrBlocked(contactMeta.tags)) {
+    return { status: 'skipped', reason: 'opted_out' };
   }
 
   const gap = await canComputeInsightNow(data.contactId);

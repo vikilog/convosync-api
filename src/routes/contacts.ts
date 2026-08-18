@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth, companyScopedData, scopedUpdateData } from '../middleware/workspaceScope.js';
@@ -26,6 +27,7 @@ import {
   normalizeContactTag,
 } from '../services/contact-delete.service.js';
 import { listWorkspaceTags, registerWorkspaceTags } from '../services/workspaceTags.service.js';
+import { normalizeWhatsAppContactPhone } from '../lib/whatsappContact.js';
 
 import {
   buildGrowthBuckets,
@@ -326,13 +328,21 @@ export default async function contactRoutes(fastify: FastifyInstance) {
       ...(rest.customFields ?? {}),
       ...(ownerId ? { ownerId } : {}),
     };
-    const contact = await prisma.contact.create({
-      data: companyScopedData(workspaceId, {
-        ...rest,
-        email: email && email.length > 0 ? email : undefined,
-        customFields: Object.keys(customFields).length ? customFields : undefined,
-      }),
-    });
+    let contact;
+    try {
+      contact = await prisma.contact.create({
+        data: companyScopedData(workspaceId, {
+          ...rest,
+          email: email && email.length > 0 ? email : undefined,
+          customFields: Object.keys(customFields).length ? customFields : undefined,
+        }),
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        return reply.code(409).send({ error: 'A contact with this phone number already exists' });
+      }
+      throw err;
+    }
 
     if (rest.tags?.length) void registerWorkspaceTags(workspaceId, rest.tags);
 
@@ -369,7 +379,16 @@ export default async function contactRoutes(fastify: FastifyInstance) {
 
     for (let i = 0; i < body.contacts.length; i++) {
       const row = body.contacts[i];
-      const phone = row.phone.trim();
+      const rawPhone = row.phone.trim();
+      // Normalize to digits-only — same form upsertWhatsAppContact stores —
+      // both to reject garbage phone values up front and so an imported
+      // contact actually matches a later inbound WhatsApp message instead
+      // of creating a duplicate because the formats differ.
+      const phone = normalizeWhatsAppContactPhone(rawPhone);
+      if (phone.length < 10 || phone.length > 15) {
+        errors.push({ row: i + 1, phone: rawPhone, error: 'Invalid phone number' });
+        continue;
+      }
       const emailRaw = row.email?.trim() ?? '';
       if (emailRaw && !z.string().email().safeParse(emailRaw).success) {
         errors.push({ row: i + 1, phone, error: 'Invalid email' });
@@ -396,6 +415,15 @@ export default async function contactRoutes(fastify: FastifyInstance) {
             },
           });
           updated += 1;
+          const addedTags = mergedTags.filter((t) => !existing.tags.includes(t));
+          if (addedTags.length) {
+            void eventBus.emit('contact.tag_added', {
+              workspaceId,
+              event: 'contact.tag_added',
+              contactId: existing.id,
+              payload: { tags: addedTags },
+            });
+          }
         } else {
           const contact = await prisma.contact.create({
             data: companyScopedData(workspaceId, {
@@ -459,8 +487,8 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     if (!body.success) return reply.code(400).send({ error: 'tag is required' });
     const tag = normalizeContactTag(body.data.tag);
     if (!tag) return reply.code(400).send({ error: 'tag is required' });
-    const { deleted } = await deleteContactsByTag(workspaceId, tag);
-    return { success: true, tag, deleted };
+    const { deleted, failed, errors } = await deleteContactsByTag(workspaceId, tag);
+    return { success: failed === 0, tag, deleted, failed, errors };
   });
 
   fastify.get('/:id', auth, async (request, reply) => {
@@ -592,10 +620,31 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.put('/:id', auth, async (request) => {
+  fastify.put('/:id', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const data = scopedUpdateData((request.body ?? {}) as Record<string, unknown>);
+    const schema = z.object({
+      name: z.string().min(1).optional(),
+      phone: z.string().min(5).optional(),
+      email: z.union([z.string().email(), z.null(), z.literal('')]).optional(),
+      tags: z.array(z.string()).optional(),
+      excludeFromInsights: z.boolean().optional(),
+      customFields: z.record(z.string()).optional(),
+    });
+    // Whitelisted, not just deny-listed: linkGroupId in particular must go
+    // through linkContacts/unlinkContact, which enforce the
+    // one-contact-per-channel-per-group invariant — a raw PUT here would
+    // silently corrupt it.
+    const parsed = schema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
+    }
+    const data: Record<string, unknown> = { ...parsed.data };
+    if ('email' in data && data.email === '') data.email = null;
+
+    const before = await prisma.contact.findFirst({ where: { id, workspaceId }, select: { tags: true } });
+    if (!before) return reply.code(404).send({ error: 'Not found' });
+
     await prisma.contact.updateMany({ where: { id, workspaceId }, data });
     if (Array.isArray(data.tags) && data.tags.length) {
       void registerWorkspaceTags(workspaceId, data.tags as string[]);
@@ -607,6 +656,15 @@ export default async function contactRoutes(fastify: FastifyInstance) {
         tags: contact.tags,
         name: contact.name,
       });
+      const addedTags = contact.tags.filter((t) => !before.tags.includes(t));
+      if (addedTags.length) {
+        void eventBus.emit('contact.tag_added', {
+          workspaceId,
+          event: 'contact.tag_added',
+          contactId: id,
+          payload: { tags: addedTags },
+        });
+      }
     }
     return contact;
   });

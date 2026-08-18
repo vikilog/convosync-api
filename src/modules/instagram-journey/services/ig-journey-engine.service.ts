@@ -26,6 +26,7 @@ import { checkInstagramFollowsBusiness } from '../../../services/instagramFollow
 import { getContactActivity, getWorkspaceTimezone } from '../../journey/services/contact-activity.service.js';
 import {
   GOTO_STEP_MAX_HOPS,
+  MAX_SYNC_EXECUTION_STEPS,
   type ConditionNodeData,
   type WebhookNodeData,
 } from '../../journey/types/journey.types.js';
@@ -82,9 +83,25 @@ export class InstagramJourneyEngine {
       return;
     }
 
+    // CONDITION/RANDOMIZER/linear nodes recurse into executeNode in-process with
+    // no per-node hop counter of their own (only GOTO_STEP has one) — a flow with
+    // a cycle and no WAIT in it would otherwise recurse unbounded. syncSteps is
+    // reset to 0 on every real pause (WAIT delay, resumeAfterReply).
+    const stepCtx = (execution.context ?? {}) as Record<string, unknown>;
+    const syncSteps = Number(stepCtx.syncSteps ?? 0) + 1;
+    if (syncSteps > MAX_SYNC_EXECUTION_STEPS) {
+      await this.failExecution(
+        executionId,
+        nodeId,
+        `Execution step limit (${MAX_SYNC_EXECUTION_STEPS}) exceeded — check for a loop with no WAIT step`
+      );
+      return;
+    }
+
     await this.executionRepo.updateProgress(executionId, {
       currentNodeId: nodeId,
       status: 'running',
+      context: { ...stepCtx, syncSteps },
     });
 
     const edges = node.outgoingEdges.map((e) => ({
@@ -182,16 +199,25 @@ export class InstagramJourneyEngine {
       });
     }
 
-    await this.executionRepo.updateProgress(executionId, {
-      status: 'running',
-      context: {
-        ...ctx,
-        last_reply: replyText,
-        waitKind: undefined,
-        nextNodeId: undefined,
-        ...(messageId ? { resumeMessageId: messageId } : {}),
-      },
-    });
+    // A WAIT timer can fire at almost the exact moment this reply arrives —
+    // version-check so only whichever trigger gets here first advances the
+    // execution; the loser backs off instead of double-executing.
+    const advanced = await this.executionRepo.updateProgressIfVersion(
+      executionId,
+      execution.version,
+      {
+        status: 'running',
+        context: {
+          ...ctx,
+          last_reply: replyText,
+          waitKind: undefined,
+          nextNodeId: undefined,
+          syncSteps: 0,
+          ...(messageId ? { resumeMessageId: messageId } : {}),
+        },
+      }
+    );
+    if (!advanced) return;
     await this.executionRepo.appendLog({
       executionId,
       nodeId: execution.currentNodeId,
@@ -205,14 +231,24 @@ export class InstagramJourneyEngine {
     const execution = await this.executionRepo.findById(executionId);
     if (!execution || execution.status !== 'waiting') return;
 
-    await this.executionRepo.updateProgress(executionId, {
-      status: 'running',
-      context: {
-        ...((execution.context as Record<string, unknown>) ?? {}),
-        waitKind: undefined,
-        nextNodeId: undefined,
-      },
-    });
+    // A reply can arrive at almost the exact moment this WAIT timer fires —
+    // version-check so only whichever trigger gets here first advances the
+    // execution; the loser backs off instead of double-executing.
+    const advanced = await this.executionRepo.updateProgressIfVersion(
+      executionId,
+      execution.version,
+      {
+        status: 'running',
+        context: {
+          ...((execution.context as Record<string, unknown>) ?? {}),
+          waitKind: undefined,
+          nextNodeId: undefined,
+          // A real WAIT elapsed — this is a fresh burst, not a continuation of a loop.
+          syncSteps: 0,
+        },
+      }
+    );
+    if (!advanced) return;
     await this.executionRepo.appendLog({
       executionId,
       nodeId: execution.currentNodeId,
@@ -220,6 +256,38 @@ export class InstagramJourneyEngine {
       payload: { action: 'delay_complete' },
     });
     await this.executeNode(executionId, nextNodeId);
+  }
+
+  /** Manual/admin recovery for a stalled execution — e.g. a webhook step that exhausted retries. */
+  async resumeExecution(workspaceId: string, executionId: string): Promise<void> {
+    const execution = await this.executionRepo.findById(executionId);
+    if (!execution || execution.journey.workspaceId !== workspaceId) {
+      // Same error for "not found" and "belongs to another workspace" — don't
+      // let the response distinguish a cross-tenant id from a bad one.
+      throw new Error('Execution not found');
+    }
+    if (execution.status === 'completed' || execution.status === 'cancelled') {
+      return;
+    }
+
+    const ctx = (execution.context ?? {}) as Record<string, unknown>;
+    if (execution.status === 'waiting' && typeof ctx.nextNodeId === 'string') {
+      await this.continueAfterDelay(executionId, ctx.nextNodeId);
+      return;
+    }
+
+    if (!execution.currentNodeId) {
+      throw new Error('Execution has no current node');
+    }
+    // Manual resume of a stalled/failed execution — a fresh burst. Version-check
+    // in case some other trigger is concurrently advancing the same execution.
+    const advanced = await this.executionRepo.updateProgressIfVersion(
+      executionId,
+      execution.version,
+      { context: { ...ctx, syncSteps: 0 } }
+    );
+    if (!advanced) return;
+    await this.executeNode(executionId, execution.currentNodeId);
   }
 
   private async passThrough(executionId: string, nodeId: string, edges: Edge[]) {

@@ -143,7 +143,15 @@ export async function recordWebhookEventLog(input: {
   }
 }
 
-/** Best-effort: describe + resolve workspace + insert. Never throws. */
+/**
+ * Best-effort: describe + resolve workspace + insert. Never throws.
+ *
+ * This is an admin-visible AUDIT LOG only — it does not gate or dedupe
+ * anything. Real inbound-message dedup happens per-handler via a
+ * findFirst-by-waMessageId check backed by Message.waMessageId's DB-level
+ * @unique constraint (see routes/webhooks.ts, instagramWebhookHandler.ts,
+ * messengerWebhookHandler.ts, whatsappCoexistenceWebhook.ts).
+ */
 export async function recordInboundMetaWebhook(
   body: MetaWebhookBody,
   opts?: { error?: string | null }

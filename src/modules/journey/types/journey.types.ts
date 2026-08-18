@@ -170,6 +170,14 @@ export type GotoStepNodeData = {
 /** Max same-flow GOTO_STEP hops per execution (infinite-loop guard). */
 export const GOTO_STEP_MAX_HOPS = 25;
 
+/**
+ * Max synchronous node hops per uninterrupted execution burst (resets on every
+ * real pause — WAIT delay, ASK_QUESTION/BUTTONS reply-wait, manual resume).
+ * Guards CONDITION/RANDOMIZER cycles, which — unlike GOTO_STEP — have no
+ * per-node hop counter of their own and can recurse unbounded in-process.
+ */
+export const MAX_SYNC_EXECUTION_STEPS = 100;
+
 export type ConditionNodeData = {
   /** Legacy single condition — still written for older clients/back-compat. */
   field?: string;

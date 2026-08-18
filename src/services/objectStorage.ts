@@ -12,6 +12,25 @@ import { config } from '../config.js';
 
 const UPLOADS_ROOT = path.join(process.cwd(), 'uploads');
 
+/**
+ * storageKey values often come from client-controlled data (a template's
+ * headerMediaStorageKey, a media-gallery request body, etc.) with only a
+ * workspace-prefix `startsWith` check upstream — that check alone doesn't
+ * reject `..` segments, so `${workspaceId}/../other-workspace/x.jpg` would
+ * still pass it. Resolve and verify the path stays inside UPLOADS_ROOT
+ * before any local-disk read/write/delete, closing that traversal off at
+ * the one place all callers funnel through.
+ */
+function resolveLocalPath(storageKey: string): string {
+  const fullPath = path.join(UPLOADS_ROOT, storageKey);
+  const resolvedRoot = path.resolve(UPLOADS_ROOT) + path.sep;
+  const resolvedPath = path.resolve(fullPath);
+  if (!resolvedPath.startsWith(resolvedRoot)) {
+    throw new Error('Invalid storage key');
+  }
+  return resolvedPath;
+}
+
 let s3Client: S3Client | null = null;
 
 function getS3Client(): S3Client {
@@ -69,7 +88,7 @@ export async function putObject(
     return;
   }
 
-  const fullPath = path.join(UPLOADS_ROOT, storageKey);
+  const fullPath = resolveLocalPath(storageKey);
   await fs.mkdir(path.dirname(fullPath), { recursive: true });
   await fs.writeFile(fullPath, buffer);
 }
@@ -92,10 +111,22 @@ export async function getObject(storageKey: string): Promise<Buffer> {
     }
   }
 
-  return fs.readFile(path.join(UPLOADS_ROOT, storageKey));
+  return fs.readFile(resolveLocalPath(storageKey));
 }
 
-export async function deleteObject(storageKey: string): Promise<void> {
+/**
+ * Returns true if the object is confirmed gone (deleted now, or already
+ * absent), false if deletion genuinely failed (permission error, network
+ * failure, throttling, ...). Callers that need to know whether it's safe to
+ * drop their own reference to this key (e.g. deleting a DB row that's the
+ * only pointer to it) should check the return value instead of assuming
+ * success — S3's DeleteObject is idempotent and rarely errors for a
+ * missing key, so a caught error here is almost always a real failure, not
+ * a harmless "already deleted."
+ */
+export async function deleteObject(storageKey: string): Promise<boolean> {
+  let ok = true;
+
   if (isObjectStorageEnabled()) {
     try {
       await getS3Client().send(
@@ -104,16 +135,23 @@ export async function deleteObject(storageKey: string): Promise<void> {
           Key: objectKey(storageKey),
         })
       );
-    } catch {
-      // ignore missing objects
+    } catch (err) {
+      console.error('[objectStorage] S3 delete failed', { storageKey, err });
+      ok = false;
     }
   }
 
   try {
-    await fs.unlink(path.join(UPLOADS_ROOT, storageKey));
-  } catch {
-    // ignore missing files
+    await fs.unlink(resolveLocalPath(storageKey));
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== 'ENOENT') {
+      console.error('[objectStorage] local delete failed', { storageKey, err });
+      ok = false;
+    }
   }
+
+  return ok;
 }
 
 export async function getPresignedGetUrl(
