@@ -153,6 +153,34 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
+  fastify.post('/:id/whatsapp-flow/enable', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const admin = getJwtUser(request);
+    const ip = getRequestIp(request);
+
+    try {
+      const workspace = await prisma.workspace.update({
+        where: { id },
+        data: { whatsappFlowsEnabled: true },
+        select: { id: true, name: true, whatsappFlowsEnabled: true },
+      });
+      recordAuditEvent({
+        action: PLATFORM_AUDIT_ACTIONS.ORG_WHATSAPP_FLOW_ENABLE,
+        actor: { id: admin.platformAdminId, role: admin.role },
+        entityType: 'workspace',
+        entityId: id,
+        category: 'organization',
+        severity: 'info',
+        ipAddress: ip,
+        metadata: { targetLabel: workspace.name },
+      });
+      return { ok: true, workspaceId: workspace.id, whatsappFlowsEnabled: workspace.whatsappFlowsEnabled };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to enable WhatsApp Flow';
+      return reply.code(400).send({ error: message });
+    }
+  });
+
   fastify.post('/:id/impersonate', async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = z.object({ userId: z.string().min(1).optional() }).parse(request.body ?? {});

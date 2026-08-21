@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyReply } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import multipart from '@fastify/multipart';
 import { prisma } from '../index.js';
 import { getIo } from '../socket.js';
@@ -59,6 +60,7 @@ import {
   isTemplateMediaHeaderFormat,
   uploadTemplateHeaderMediaForSend,
 } from '../services/templateSendHeader.js';
+import { templateMessagePresentationMetadata } from '../services/templateMessageMetadata.js';
 import {
   resolveOutboundInstagramKind,
   sendInstagramMediaMessage,
@@ -988,7 +990,10 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         template.name,
         template.language,
         bodyParams,
-        headerMedia ? { headerMedia } : undefined
+        {
+          ...(headerMedia ? { headerMedia } : {}),
+          ...(template.buttonType === 'FLOW' ? { flowToken: randomUUID() } : {}),
+        }
       );
       waMessageId = sent.waMessageId;
     } catch (err) {
@@ -1007,12 +1012,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
           templateId: template.id,
           templateName: template.name,
           variables: bodyParams,
-          ...(headerMedia
-            ? {
-                headerFormat: headerMedia.format,
-                headerMediaFileName: headerMedia.fileName ?? null,
-              }
-            : {}),
+          ...templateMessagePresentationMetadata(template),
         },
         sendError,
       });
@@ -1032,12 +1032,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
           templateId: template.id,
           templateName: template.name,
           variables: bodyParams,
-          ...(headerMedia
-            ? {
-                headerFormat: headerMedia.format,
-                headerMediaFileName: headerMedia.fileName ?? null,
-              }
-            : {}),
+          ...templateMessagePresentationMetadata(template),
         },
       },
     });

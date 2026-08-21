@@ -58,6 +58,9 @@ export type InboundWhatsAppContext = {
   contactPhone: string;
   text: string;
   buttonPayload?: string;
+  /** WhatsApp Flow submission (interactive.nfm_reply) — the completed form's answers. */
+  flowResponseName?: string;
+  flowResponseFields?: Record<string, unknown>;
   phoneNumberId?: string;
   /** When set, run this rule-based agent (inbox assignment) without keyword matching. */
   forcedAgentId?: string;

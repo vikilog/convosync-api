@@ -122,6 +122,8 @@ export async function routeInboundConversation(ctx: InboundMessagingContext): Pr
         payload: {
           text: ctx.text,
           buttonPayload: ctx.buttonPayload,
+          flowResponseName: ctx.flowResponseName,
+          flowResponseFields: ctx.flowResponseFields,
           conversationId: ctx.conversationId,
           channel,
           messageId: ctx.messageId,

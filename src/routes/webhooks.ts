@@ -232,6 +232,8 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
               let metadata: MessageMediaMetadata | undefined;
               if (parsed.location) {
                 metadata = { ...parsed.location };
+              } else if (parsed.flowResponse) {
+                metadata = { ...parsed.flowResponse } as unknown as MessageMediaMetadata;
               } else if (parsed.media) {
                 metadata = {
                   mimeType: parsed.media.mimeType,
@@ -362,6 +364,8 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
                     contactPhone: contact.phone,
                     text: displayContent,
                     buttonPayload,
+                    flowResponseName: parsed.flowResponse?.flowName,
+                    flowResponseFields: parsed.flowResponse?.fields,
                     phoneNumberId: waNumberId,
                     messageId: message.id,
                   });

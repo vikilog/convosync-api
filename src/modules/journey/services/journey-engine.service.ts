@@ -26,6 +26,7 @@ import {
 } from './journey-contact-actions.service.js';
 import { upsertLeadForContact } from '../../../services/lead.service.js';
 import { registerWorkspaceTags } from '../../../services/workspaceTags.service.js';
+import { randomUUID } from 'node:crypto';
 import type {
   AddToFunnelNodeData,
   AskQuestionNodeData,
@@ -35,6 +36,7 @@ import type {
   ConditionNodeData,
   GotoStepNodeData,
   RandomizerNodeData,
+  SendFlowNodeData,
   SendMessageNodeData,
   TriggerJourneyNodeData,
   UpdateFieldNodeData,
@@ -162,6 +164,9 @@ export class JourneyEngine {
           break;
         case 'BUTTONS':
           await this.handleButtons(execution, node.id, node.data as ButtonsNodeData, node.outgoingEdges);
+          break;
+        case 'SEND_FLOW':
+          await this.handleSendFlow(execution, node.id, node.data as SendFlowNodeData, node.outgoingEdges);
           break;
         case 'ASSIGN_TO':
           await this.handleAssignTo(execution, node.id, node.data as AssignToNodeData, node.outgoingEdges);
@@ -365,6 +370,78 @@ export class JourneyEngine {
     });
   }
 
+  private async handleSendFlow(
+    execution: NonNullable<Awaited<ReturnType<JourneyExecutionRepository['findById']>>>,
+    nodeId: string,
+    data: SendFlowNodeData,
+    edges: Array<{ targetNodeId: string; conditionValue: string | null }>
+  ) {
+    if (!execution.contact) throw new Error('Contact missing on execution');
+    const flowId = data.flowId?.trim();
+    if (!flowId) throw new Error('Send Flow node needs a flow selected');
+
+    const flow = await prisma.whatsAppFlow.findFirst({
+      where: { id: flowId, workspaceId: execution.journey.workspaceId },
+    });
+    if (!flow) throw new Error('Selected flow no longer exists');
+    if (flow.status !== 'published' || !flow.metaFlowId) {
+      throw new Error(`Flow "${flow.name}" must be published before a journey can send it`);
+    }
+    const screens = (flow.flowJson as { screens?: Array<{ id?: string }> })?.screens ?? [];
+    const firstScreenId = screens[0]?.id;
+    if (!firstScreenId) throw new Error(`Flow "${flow.name}" has no screens`);
+
+    const next = this.pickDefaultEdge(edges);
+    if (!next) {
+      await this.failExecution(execution.id, nodeId, 'Send Flow node has no outgoing edge');
+      return;
+    }
+
+    const text = data.text?.trim() || `Please complete: ${flow.name}`;
+
+    const result = await this.messagingProvider.send({
+      workspaceId: execution.journey.workspaceId,
+      contactId: execution.contactId,
+      phone: execution.contact.phone,
+      text: renderTemplateVariables(text, execution.contact),
+      flow: {
+        metaFlowId: flow.metaFlowId,
+        flowToken: randomUUID(),
+        ctaLabel: data.ctaLabel || 'Open',
+        firstScreenId,
+        headerText: data.headerText,
+      },
+      metadata: { executionId: execution.id, nodeId, action: 'send_flow', flowId: flow.id },
+    });
+
+    const context: ExecutionWaitContext = {
+      waitKind: 'flow',
+      nextNodeId: next.targetNodeId,
+      flowNodeId: nodeId,
+    };
+
+    await this.executionRepo.updateProgress(execution.id, {
+      status: 'waiting',
+      currentNodeId: nodeId,
+      context: {
+        ...(execution.context as Record<string, unknown>),
+        ...context,
+        ...(data.saveFieldsPrefix ? { flowSaveFieldsPrefix: data.saveFieldsPrefix } : {}),
+        ...(data.mapNameField ? { flowMapNameField: data.mapNameField } : {}),
+        ...(data.mapPhoneField ? { flowMapPhoneField: data.mapPhoneField } : {}),
+        ...(data.mapEmailField ? { flowMapEmailField: data.mapEmailField } : {}),
+        ...(data.funnelId ? { flowFunnelId: data.funnelId, flowStageId: data.stageId } : {}),
+      },
+    });
+
+    await this.executionRepo.appendLog({
+      executionId: execution.id,
+      nodeId,
+      status: 'pending',
+      payload: { action: 'send_flow', messageId: result.messageId, flowId: flow.id },
+    });
+  }
+
   private async handleButtons(
     execution: NonNullable<Awaited<ReturnType<JourneyExecutionRepository['findById']>>>,
     nodeId: string,
@@ -446,7 +523,8 @@ export class JourneyEngine {
     executionId: string,
     replyText: string,
     nextNodeId: string,
-    messageId?: string
+    messageId?: string,
+    extra?: { flowFields?: Record<string, unknown> }
   ): Promise<void> {
     const execution = await this.executionRepo.findById(executionId);
     if (!execution || execution.status !== 'waiting') return;
@@ -454,10 +532,58 @@ export class JourneyEngine {
     const ctx = (execution.context ?? {}) as ExecutionWaitContext & {
       saveReplyTo?: string;
       resumeMessageId?: string;
+      flowSaveFieldsPrefix?: string;
+      flowMapNameField?: string;
+      flowMapPhoneField?: string;
+      flowMapEmailField?: string;
+      flowFunnelId?: string;
+      flowStageId?: string;
     };
     // A redelivered inbound webhook (common on slow/5xx responses) must not
     // advance the same waiting execution twice.
     if (messageId && ctx.resumeMessageId === messageId) return;
+
+    if (ctx.waitKind === 'flow' && extra?.flowFields) {
+      const fields = extra.flowFields;
+      const fieldAsString = (key?: string) => {
+        if (!key) return undefined;
+        const v = fields[key];
+        return v == null ? undefined : String(v);
+      };
+
+      if (ctx.flowSaveFieldsPrefix?.trim()) {
+        const prefix = ctx.flowSaveFieldsPrefix.trim();
+        const prefixed: Record<string, string> = {};
+        for (const [key, value] of Object.entries(fields)) {
+          if (key === 'flow_token') continue;
+          prefixed[`${prefix}${key}`] = String(value);
+        }
+        if (Object.keys(prefixed).length > 0) {
+          await mergeContactCustomFields(execution.contactId, prefixed);
+        }
+      }
+
+      const mappedName = fieldAsString(ctx.flowMapNameField);
+      const mappedPhone = fieldAsString(ctx.flowMapPhoneField);
+      const mappedEmail = fieldAsString(ctx.flowMapEmailField);
+      if (mappedName) await updateContactField(execution.contactId, 'name', mappedName);
+      if (mappedPhone) await updateContactField(execution.contactId, 'phone', mappedPhone);
+      if (mappedEmail) await updateContactField(execution.contactId, 'email', mappedEmail);
+
+      if (ctx.flowFunnelId) {
+        try {
+          await upsertLeadForContact({
+            workspaceId: execution.journey.workspaceId,
+            contactId: execution.contactId,
+            funnelId: ctx.flowFunnelId,
+            stageId: ctx.flowStageId,
+            source: 'whatsapp',
+          });
+        } catch (err) {
+          console.error('[journey] Send Flow → funnel upsert failed', err);
+        }
+      }
+    }
 
     if (ctx.saveReplyTo?.trim()) {
       await mergeContactCustomFields(execution.contactId, {

@@ -6,6 +6,7 @@ export const JOURNEY_NODE_TYPES = [
   'SEND_MESSAGE',
   'ASK_QUESTION',
   'BUTTONS',
+  'SEND_FLOW',
   'ASSIGN_TO',
   'WAIT',
   'CONDITION',
@@ -140,6 +141,24 @@ export type ButtonsNodeData = {
   /** Max 3 on WhatsApp interactive; each id matches an outgoing edge conditionValue */
   buttons: Array<{ id: string; title: string }>;
   simulateTyping?: boolean;
+};
+
+export type SendFlowNodeData = {
+  flowId: string;
+  /** Message body shown alongside the flow's "Open" button. */
+  text: string;
+  /** Button label (Meta limit: 30 chars). */
+  ctaLabel: string;
+  headerText?: string;
+  /** Contact custom attribute prefix to save submitted fields under, e.g. "flow_" → flow_full_name. Blank = don't save. */
+  saveFieldsPrefix?: string;
+  /** Submitted field name whose value updates contact.name (real column, not a custom attribute). */
+  mapNameField?: string;
+  mapPhoneField?: string;
+  mapEmailField?: string;
+  /** When set, upsert a Lead in this funnel (+ optional stage) after submission — using the mapped identity above. */
+  funnelId?: string;
+  stageId?: string;
 };
 
 export type RandomizerNodeData = {
@@ -302,9 +321,11 @@ export type DelayJobData = {
 };
 
 export type ExecutionWaitContext = {
-  waitKind?: 'delay' | 'reply' | 'button';
+  waitKind?: 'delay' | 'reply' | 'button' | 'flow';
   nextNodeId?: string;
   replyText?: string;
   /** BUTTONS node: match inbound payload/text to edge conditionValue */
   buttonNodeId?: string;
+  /** SEND_FLOW node: which node is waiting, so resume can apply saveFieldsPrefix */
+  flowNodeId?: string;
 };

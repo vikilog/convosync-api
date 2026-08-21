@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { prisma } from '../index.js';
 import { getEmailService } from '../modules/email/container.js';
 import {
@@ -25,6 +26,7 @@ import {
   parseCampaignHeaderMediaOverride,
 } from './campaignHeaderMedia.js';
 import { readMediaGalleryFile } from '../modules/media-gallery/media-storage.js';
+import { templateMessagePresentationMetadata } from './templateMessageMetadata.js';
 import {
   isTemplateMediaHeaderFormat,
   uploadTemplateHeaderMediaForSend,
@@ -266,6 +268,7 @@ async function executeWhatsAppCampaignBroadcast(
               audienceTag,
               sendError: msg,
               events: [{ type: 'failed', at: new Date().toISOString(), detail: msg }],
+              ...templateMessagePresentationMetadata(template),
             },
           },
         });
@@ -291,7 +294,10 @@ async function executeWhatsAppCampaignBroadcast(
         template.name,
         template.language,
         bodyParams,
-        headerMedia ? { headerMedia } : undefined
+        {
+          ...(headerMedia ? { headerMedia } : {}),
+          ...(template.buttonType === 'FLOW' ? { flowToken: randomUUID() } : {}),
+        }
       );
 
       const { conversation } = await findOrReopenConversationForInbound({
@@ -317,6 +323,7 @@ async function executeWhatsAppCampaignBroadcast(
             variables: bodyParams,
             audienceTag,
             events: [{ type: 'sent', at: new Date().toISOString() }],
+            ...templateMessagePresentationMetadata(template),
           },
         },
       });
@@ -372,6 +379,7 @@ async function executeWhatsAppCampaignBroadcast(
               audienceTag,
               sendError: msg,
               events: [{ type: 'failed', at: new Date().toISOString(), detail: msg }],
+              ...templateMessagePresentationMetadata(template),
             },
           },
         });

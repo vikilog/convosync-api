@@ -14,6 +14,7 @@ function serialize(row: {
   message: string;
   status: string;
   source: string;
+  workspaceId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -26,6 +27,7 @@ function serialize(row: {
     message: row.message,
     status: row.status,
     source: row.source,
+    workspaceId: row.workspaceId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

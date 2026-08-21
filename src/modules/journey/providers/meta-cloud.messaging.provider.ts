@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { prisma } from '../../../index.js';
 import { getIo } from '../../../socket.js';
 import { findOrReopenConversationForInbound } from '../../../services/conversationThread.service.js';
@@ -6,6 +7,7 @@ import {
   formatMetaSendError,
   renderTemplateBody,
   sendWhatsAppCtaUrlMessage,
+  sendWhatsAppFlowMessage,
   sendWhatsAppMessage,
   sendWhatsAppReplyButtons,
   sendWhatsAppTemplateMessage,
@@ -20,6 +22,7 @@ import {
   isTemplateMediaHeaderFormat,
   uploadTemplateHeaderMediaForSend,
 } from '../../../services/templateSendHeader.js';
+import { templateMessagePresentationMetadata } from '../../../services/templateMessageMetadata.js';
 import type { MessagingProvider, SendMessageInput, SendMessageResult } from './messaging.provider.js';
 
 export class MetaCloudMessagingProvider implements MessagingProvider {
@@ -48,20 +51,26 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
     let waMessageId: string | undefined;
     let templateCategory: string | null | undefined;
     let templateNameForCharge: string | undefined;
+    let templateRecord: {
+      id: string;
+      category: string;
+      header: string | null;
+      headerFormat: string | null;
+      headerMediaStorageKey: string | null;
+      headerMediaMimeType: string | null;
+      headerMediaFileName: string | null;
+      footer: string | null;
+      buttonType: string | null;
+      buttonText: string | null;
+      buttonUrl: string | null;
+      buttonPhoneNumber: string | null;
+    } | null = null;
 
     if (input.templateName || input.templateId) {
       let templateName = input.templateName;
       let language = input.language ?? 'en';
       let bodyPattern = '';
       let variables: string[] = input.variables ?? [];
-      let templateRecord: {
-        id: string;
-        category: string;
-        headerFormat: string | null;
-        headerMediaStorageKey: string | null;
-        headerMediaMimeType: string | null;
-        headerMediaFileName: string | null;
-      } | null = null;
 
       if (input.templateId) {
         const template = await prisma.template.findFirst({
@@ -120,7 +129,10 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
         templateName,
         language,
         variables,
-        headerMedia ? { headerMedia } : undefined
+        {
+          ...(headerMedia ? { headerMedia } : {}),
+          ...(templateRecord?.buttonType === 'FLOW' ? { flowToken: randomUUID() } : {}),
+        }
       );
       waMessageId = result.waMessageId;
     } else {
@@ -137,7 +149,22 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
         );
       }
 
-      if (input.ctaUrl) {
+      if (input.flow) {
+        const result = await sendWhatsAppFlowMessage(
+          credentials.accessToken,
+          credentials.phoneNumberId,
+          contact.phone,
+          {
+            bodyText: renderedBody,
+            metaFlowId: input.flow.metaFlowId,
+            flowToken: input.flow.flowToken,
+            ctaLabel: input.flow.ctaLabel,
+            firstScreenId: input.flow.firstScreenId,
+            headerText: input.flow.headerText,
+          }
+        );
+        waMessageId = result.waMessageId;
+      } else if (input.ctaUrl) {
         const result = await sendWhatsAppCtaUrlMessage(
           credentials.accessToken,
           credentials.phoneNumberId,
@@ -176,13 +203,14 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
         type:
           input.templateName || input.templateId
             ? 'template'
-            : input.ctaUrl || input.buttons?.length
+            : input.flow || input.ctaUrl || input.buttons?.length
               ? 'interactive'
               : 'text',
         status: 'sent',
         waMessageId,
         metadata: {
           source: 'journey',
+          ...(templateRecord ? templateMessagePresentationMetadata(templateRecord) : {}),
           ...input.metadata,
         },
       },

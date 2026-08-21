@@ -62,6 +62,8 @@ type InboundWebhookMessage = {
     type?: string;
     button_reply?: { id?: string; title?: string };
     list_reply?: { id?: string; title?: string; description?: string };
+    /** WhatsApp Flow submission — response_json is a JSON-encoded string of the submitted fields. */
+    nfm_reply?: { name?: string; body?: string; response_json?: string };
   };
   /** Present on Meta `type: "unsupported"` — explains why (code / title / message). */
   errors?: Array<{
@@ -105,6 +107,8 @@ export type ParsedInboundWhatsApp = {
     caption?: string;
   };
   location?: MessageMediaMetadata;
+  /** Set when the inbound message is a WhatsApp Flow submission (interactive.nfm_reply). */
+  flowResponse?: { flowName?: string; fields: Record<string, unknown> };
 };
 
 /** Skip DB persist (still ACK Meta with 200). Only used for genuine `type: "unsupported"`. */
@@ -214,6 +218,25 @@ function formatContactsContent(
 export function parseInboundWhatsAppMessage(
   msg: InboundWebhookMessage
 ): ParseInboundWhatsAppResult {
+  const flowReply = msg.interactive?.nfm_reply;
+  if ((msg.type === 'interactive' || msg.interactive) && flowReply) {
+    let fields: Record<string, unknown> = {};
+    try {
+      fields = flowReply.response_json ? JSON.parse(flowReply.response_json) : {};
+    } catch {
+      // Meta sends malformed/empty response_json on rare edge cases — fall back to empty.
+    }
+    const summary =
+      Object.entries(fields)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join(', ') || 'submitted';
+    return {
+      kind: 'text',
+      content: `📋 ${flowReply.name || 'Flow'} completed — ${summary}`,
+      flowResponse: { flowName: flowReply.name, fields },
+    };
+  }
+
   const buttonReply = msg.interactive?.button_reply;
   if ((msg.type === 'interactive' || msg.interactive) && buttonReply) {
     const buttonPayload = buttonReply.id || buttonReply.title || undefined;

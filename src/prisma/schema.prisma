@@ -63,6 +63,10 @@ model Workspace {
   metaUserToken   String?
   /// When true, workspace may send email via shared or custom domains.
   emailIntegrationEnabled Boolean @default(false)
+  /// Manually flipped by us after reviewing a request — no self-serve toggle.
+  whatsappFlowsEnabled Boolean @default(false)
+  /// Set when the workspace clicks "Request Access" on the WhatsApp Flow card.
+  whatsappFlowsRequestedAt DateTime?
   /// Kill switch — skips journeys, AgentFlow, AI agent/copilot auto-replies.
   automationsPaused Boolean @default(false)
   /// Last-resort reply when inbound is unassigned and nothing else matched.
@@ -99,6 +103,7 @@ model Workspace {
   agentFlowSessions AgentFlowSession[]
   mediaAssets       MediaAsset[]
   templates         Template[]
+  whatsAppFlows     WhatsAppFlow[]
   aiKnowledgeConfigs AiKnowledgeConfig[]
   aiKnowledgeRecords AiKnowledge[]
   developerIncomingWebhook DeveloperIncomingWebhook?
@@ -1200,6 +1205,11 @@ model Template {
   buttonText       String?
   buttonUrl        String?
   buttonPhoneNumber String?
+  /// WhatsAppFlow.id — set when buttonType is FLOW. Meta stores its own copy on the
+  /// approved template (metaFlowId baked into the submitted components); this is only
+  /// so ConvoSync can show which flow a template's button opens and regenerate a
+  /// flow_token per send.
+  buttonFlowId     String?
   rejectionReason  String?
   waTemplateId     String?
   workspaceId      String
@@ -1213,6 +1223,25 @@ model Template {
   /// rollout of the same template name impossible, and made syncTemplatesFromMeta's
   /// upsert key collide two different-language templates that share a name.
   @@unique([workspaceId, name, language])
+  @@index([workspaceId])
+}
+
+/// WhatsApp Flow (navigate-only, MVP): authored as raw Meta Flow JSON.
+/// Gated behind Workspace.whatsappFlowsEnabled — see whatsappFlowIntegration.ts.
+model WhatsAppFlow {
+  id          String    @id @default(cuid())
+  name        String
+  status      String    @default("draft") // draft | published
+  flowJson    Json
+  categories  String[]  @default([])
+  /// Set once published to Meta — not used yet (publish is a later phase).
+  metaFlowId  String?
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([workspaceId, name])
   @@index([workspaceId])
 }
 
@@ -2218,6 +2247,8 @@ model SupportRequest {
   message   String
   status    String   @default("new")
   source    String   @default("landing")
+  /// Set only for in-app requests (e.g. whatsapp_flow_request) so admins can act on the workspace directly.
+  workspaceId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
@@ -6,6 +7,22 @@ import pino from 'pino';
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 dotenv.config({ path: path.join(backendRoot, '.env') });
+
+// Diagnostic only — Node still crashes the process on unhandled rejections
+// (default since Node 15); this just captures the reason to a file first so
+// it survives even when the terminal that printed it isn't readable.
+const crashLogPath = path.join(backendRoot, 'crash.log');
+function logCrash(label: string, err: unknown) {
+  const entry = `\n[${new Date().toISOString()}] ${label}\n${err instanceof Error ? err.stack || err.message : String(err)}\n`;
+  try {
+    fs.appendFileSync(crashLogPath, entry);
+  } catch {
+    // best-effort — do not let logging itself throw
+  }
+}
+process.on('unhandledRejection', (reason) => logCrash('unhandledRejection', reason));
+process.on('uncaughtException', (err) => logCrash('uncaughtException', err));
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
@@ -62,6 +79,8 @@ import aiChatRoutes from './modules/ai-chat/routes/ai-chat.routes.js';
 import developersRoutes from './modules/developers/routes/developers.routes.js';
 import emailRoutes from './modules/email/routes/email.routes.js';
 import emailUnsubscribeRoutes from './routes/emailUnsubscribe.js';
+import whatsappFlowIntegrationRoutes from './routes/whatsappFlowIntegration.js';
+import whatsappFlowRoutes from './routes/whatsappFlows.js';
 import googleRoutes from './modules/google/routes/google.routes.js';
 import mediaRoutes from './routes/media.js';
 import { startCampaignWorker } from './workers/campaign.worker.js';
@@ -177,6 +196,8 @@ async function start() {
   await fastify.register(aiChatRoutes, { prefix: '/api/ai-chat' });
   await fastify.register(developersRoutes, { prefix: '/api/developers' });
   await fastify.register(emailRoutes, { prefix: '/api/email' });
+  await fastify.register(whatsappFlowIntegrationRoutes, { prefix: '/api/integrations/whatsapp-flow' });
+  await fastify.register(whatsappFlowRoutes, { prefix: '/api/whatsapp-flows' });
   // Public, no auth — reached by recipients clicking the unsubscribe link in an email.
   await fastify.register(emailUnsubscribeRoutes, { prefix: '/api/email' });
   await fastify.register(googleRoutes, { prefix: '/api/google' });

@@ -12,7 +12,16 @@ export type MetaTemplateComponent = {
   type: string;
   text?: string;
   format?: string;
-  buttons?: Array<{ type: string; text: string; url?: string; phone_number?: string }>;
+  buttons?: Array<{
+    type: string;
+    text: string;
+    url?: string;
+    phone_number?: string;
+    /** Meta returns this as a JSON number on GET, despite sending it as a string on POST. */
+    flow_id?: string | number;
+    flow_action?: string;
+    navigate_screen?: string;
+  }>;
   example?: {
     body_text?: string[][];
     header_text?: string[];
@@ -118,6 +127,7 @@ export function parseMetaComponents(components: MetaTemplateComponent[] | undefi
   let buttonText: string | null = null;
   let buttonUrl: string | null = null;
   let buttonPhoneNumber: string | null = null;
+  let buttonFlowMetaId: string | null = null;
 
   for (const c of components || []) {
     if (c.type === 'BODY' && c.text) bodyPattern = c.text;
@@ -132,6 +142,7 @@ export function parseMetaComponents(components: MetaTemplateComponent[] | undefi
       buttonText = b.text;
       buttonUrl = b.url ?? null;
       buttonPhoneNumber = b.phone_number ?? null;
+      buttonFlowMetaId = b.flow_id != null ? String(b.flow_id) : null;
       buttons.push(b.text);
     }
   }
@@ -149,6 +160,7 @@ export function parseMetaComponents(components: MetaTemplateComponent[] | undefi
     buttonText,
     buttonUrl,
     buttonPhoneNumber,
+    buttonFlowMetaId,
     variables,
   };
 }
@@ -164,6 +176,9 @@ export function buildMetaComponents(input: {
   buttonUrl?: string | null;
   buttonPhoneNumber?: string | null;
   buttonUrlSample?: string | null;
+  /** FLOW button only — Meta's flow id (not ConvoSync's WhatsAppFlow.id) and its first screen. */
+  buttonFlowMetaId?: string | null;
+  buttonFlowFirstScreenId?: string | null;
   variableSamples?: string[];
 }): MetaTemplateComponent[] {
   const components: MetaTemplateComponent[] = [];
@@ -203,12 +218,21 @@ export function buildMetaComponents(input: {
   if (input.buttonText?.trim() && input.buttonType) {
     const rawType = input.buttonType.toUpperCase();
     const btnType =
-      rawType === 'URL' ? 'URL' : rawType === 'PHONE_NUMBER' ? 'PHONE_NUMBER' : 'QUICK_REPLY';
+      rawType === 'URL'
+        ? 'URL'
+        : rawType === 'PHONE_NUMBER'
+          ? 'PHONE_NUMBER'
+          : rawType === 'FLOW'
+            ? 'FLOW'
+            : 'QUICK_REPLY';
     const btn: {
       type: string;
       text: string;
       url?: string;
       phone_number?: string;
+      flow_id?: string;
+      flow_action?: string;
+      navigate_screen?: string;
       example?: string[];
     } = {
       type: btnType,
@@ -229,6 +253,16 @@ export function buildMetaComponents(input: {
       const phone = input.buttonPhoneNumber?.trim();
       if (!phone) throw new Error('Phone number is required for call buttons.');
       btn.phone_number = phone;
+    }
+    if (btnType === 'FLOW') {
+      const flowMetaId = input.buttonFlowMetaId?.trim();
+      const firstScreenId = input.buttonFlowFirstScreenId?.trim();
+      if (!flowMetaId || !firstScreenId) {
+        throw new Error('Select a published flow for the Flow button.');
+      }
+      btn.flow_id = flowMetaId;
+      btn.flow_action = 'navigate';
+      btn.navigate_screen = firstScreenId;
     }
     components.push({ type: 'BUTTONS', buttons: [btn] });
   }

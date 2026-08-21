@@ -41,11 +41,12 @@ const templateBodySchema = z.object({
   headerMediaFileName: z.string().optional().nullable(),
   footer: z.string().optional().nullable(),
   variables: z.array(z.string()).optional(),
-  buttonType: z.enum(['QUICK_REPLY', 'URL', 'PHONE_NUMBER']).optional().nullable(),
+  buttonType: z.enum(['QUICK_REPLY', 'URL', 'PHONE_NUMBER', 'FLOW']).optional().nullable(),
   buttonText: z.string().optional().nullable(),
   buttonUrl: z.string().optional().nullable(),
   buttonPhoneNumber: z.string().optional().nullable(),
   buttonUrlSample: z.string().optional().nullable(),
+  buttonFlowId: z.string().optional().nullable(),
   variableSamples: z.array(z.string()).optional(),
   submitToMeta: z.boolean().optional(),
 });
@@ -147,6 +148,23 @@ async function resolveHeaderMediaHandle(
   return uploadMetaResumableMedia(creds.accessToken, buffer, mimeType);
 }
 
+/** Resolves a ConvoSync WhatsAppFlow.id into what Meta's FLOW button component needs. */
+async function resolveButtonFlowRefs(
+  workspaceId: string,
+  buttonType: string | null,
+  buttonFlowId: string | null
+): Promise<{ metaFlowId: string | null; firstScreenId: string | null }> {
+  if (buttonType !== 'FLOW' || !buttonFlowId) return { metaFlowId: null, firstScreenId: null };
+  const flow = await prisma.whatsAppFlow.findFirst({ where: { id: buttonFlowId, workspaceId } });
+  if (!flow || flow.status !== 'published' || !flow.metaFlowId) {
+    throw new Error('Selected flow must be published before it can be used on a template button.');
+  }
+  const screens = (flow.flowJson as { screens?: Array<{ id?: string }> })?.screens ?? [];
+  const firstScreenId = screens[0]?.id ?? null;
+  if (!firstScreenId) throw new Error('Selected flow has no screens.');
+  return { metaFlowId: flow.metaFlowId, firstScreenId };
+}
+
 async function buildComponentsForSubmit(
   workspaceId: string,
   record: {
@@ -160,10 +178,13 @@ async function buildComponentsForSubmit(
     buttonText: string | null;
     buttonUrl: string | null;
     buttonPhoneNumber: string | null;
+    buttonFlowId: string | null;
     variables: string[];
   }
 ) {
   const headerMediaHandle = await resolveHeaderMediaHandle(workspaceId, record);
+  const flowRefs = await resolveButtonFlowRefs(workspaceId, record.buttonType, record.buttonFlowId);
+
   return buildMetaComponents({
     bodyPattern: record.bodyPattern,
     header: record.header,
@@ -175,6 +196,8 @@ async function buildComponentsForSubmit(
     buttonUrl: record.buttonUrl,
     buttonPhoneNumber: record.buttonPhoneNumber,
     buttonUrlSample: record.buttonUrl?.includes('{{') ? 'sample_link_id' : undefined,
+    buttonFlowMetaId: flowRefs.metaFlowId,
+    buttonFlowFirstScreenId: flowRefs.firstScreenId,
     variableSamples: record.variables,
   });
 }
@@ -186,6 +209,14 @@ async function syncTemplatesFromMeta(workspaceId: string) {
   for (const mt of metaList) {
     const parsed = parseMetaComponents(mt.components);
     const status = metaStatusToSystem(mt.status);
+    const buttonFlowId = parsed.buttonFlowMetaId
+      ? (
+          await prisma.whatsAppFlow.findFirst({
+            where: { metaFlowId: parsed.buttonFlowMetaId, workspaceId },
+            select: { id: true },
+          })
+        )?.id ?? null
+      : null;
     await prisma.template.upsert({
       where: {
         workspaceId_name_language: { workspaceId, name: mt.name, language: mt.language || 'en' },
@@ -206,6 +237,7 @@ async function syncTemplatesFromMeta(workspaceId: string) {
         buttonText: parsed.buttonText,
         buttonUrl: parsed.buttonUrl,
         buttonPhoneNumber: parsed.buttonPhoneNumber,
+        buttonFlowId,
         rejectionReason: mt.rejected_reason ?? null,
         waTemplateId: mt.id ?? null,
       },
@@ -223,6 +255,7 @@ async function syncTemplatesFromMeta(workspaceId: string) {
         buttonText: parsed.buttonText,
         buttonUrl: parsed.buttonUrl,
         buttonPhoneNumber: parsed.buttonPhoneNumber,
+        buttonFlowId,
         rejectionReason: mt.rejected_reason ?? null,
         waTemplateId: mt.id ?? null,
       },
@@ -394,6 +427,11 @@ export default async function templateRoutes(fastify: FastifyInstance) {
               headerMediaHandle: body.headerMediaHandle ?? null,
               headerMediaStorageKey: body.headerMediaStorageKey ?? null,
             }));
+          const flowRefs = await resolveButtonFlowRefs(
+            workspaceId,
+            body.buttonType ?? null,
+            body.buttonFlowId ?? null
+          );
           components = buildMetaComponents({
             bodyPattern: body.bodyPattern,
             header: body.header,
@@ -405,6 +443,8 @@ export default async function templateRoutes(fastify: FastifyInstance) {
             buttonUrl: body.buttonUrl,
             buttonPhoneNumber: body.buttonPhoneNumber,
             buttonUrlSample: body.buttonUrlSample ?? (body.buttonUrl?.includes('{{') ? 'sample_link_id' : undefined),
+            buttonFlowMetaId: flowRefs.metaFlowId,
+            buttonFlowFirstScreenId: flowRefs.firstScreenId,
             variableSamples: body.variableSamples ?? body.variables,
           });
         } catch (validationErr) {
@@ -446,6 +486,7 @@ export default async function templateRoutes(fastify: FastifyInstance) {
           buttonText: body.buttonText ?? null,
           buttonUrl: body.buttonUrl ?? null,
           buttonPhoneNumber: body.buttonPhoneNumber ?? null,
+          buttonFlowId: body.buttonFlowId ?? null,
           status,
           waTemplateId,
           rejectionReason,

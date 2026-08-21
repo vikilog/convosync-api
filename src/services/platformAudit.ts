@@ -28,6 +28,7 @@ export const PLATFORM_AUDIT_ACTIONS = {
   ORG_BILLING_OFFER_CREATE: 'organization.billing_offer.create',
   ORG_BILLING_OFFER_CANCEL: 'organization.billing_offer.cancel',
   ORG_BILLING_OFFER_DELETE: 'organization.billing_offer.delete',
+  ORG_WHATSAPP_FLOW_ENABLE: 'organization.whatsapp_flow.enable',
 } as const;
 
 export type PlatformAuditAction =
@@ -49,6 +50,7 @@ const ACTION_LABELS: Record<string, string> = {
   [PLATFORM_AUDIT_ACTIONS.ORG_BILLING_OFFER_CREATE]: 'Billing Offer Created',
   [PLATFORM_AUDIT_ACTIONS.ORG_BILLING_OFFER_CANCEL]: 'Billing Offer Cancelled',
   [PLATFORM_AUDIT_ACTIONS.ORG_BILLING_OFFER_DELETE]: 'Billing Offer Deleted',
+  [PLATFORM_AUDIT_ACTIONS.ORG_WHATSAPP_FLOW_ENABLE]: 'WhatsApp Flow Enabled',
 };
 
 export type AuditActor = {

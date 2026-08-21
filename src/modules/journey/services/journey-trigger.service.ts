@@ -72,8 +72,14 @@ export class JourneyTriggerService {
         : '';
     const messageId =
       typeof input.payload?.messageId === 'string' ? input.payload.messageId : undefined;
+    const flowResponseFields =
+      input.payload?.flowResponseFields &&
+      typeof input.payload.flowResponseFields === 'object' &&
+      !Array.isArray(input.payload.flowResponseFields)
+        ? (input.payload.flowResponseFields as Record<string, unknown>)
+        : undefined;
 
-    if (!replyText.trim() && !buttonPayload) return;
+    if (!replyText.trim() && !buttonPayload && !flowResponseFields) return;
 
     const waiting = await this.executionRepo.findWaitingForReply(
       input.workspaceId,
@@ -82,6 +88,18 @@ export class JourneyTriggerService {
 
     for (const execution of waiting) {
       const ctx = (execution.context ?? {}) as ExecutionWaitContext;
+
+      if (ctx.waitKind === 'flow' && ctx.nextNodeId) {
+        if (!flowResponseFields) continue;
+        await this.engine.resumeAfterReply(
+          execution.id,
+          'Flow completed',
+          ctx.nextNodeId,
+          messageId,
+          { flowFields: flowResponseFields }
+        );
+        break;
+      }
 
       if (ctx.waitKind === 'button' && execution.currentNodeId) {
         const node = await this.journeyRepo.getNodeWithEdges(

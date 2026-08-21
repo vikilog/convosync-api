@@ -78,6 +78,8 @@ export async function sendWhatsAppTemplateMessage(
   bodyParameters: string[],
   options?: {
     buttonUrlParameter?: string;
+    /** Per-recipient token for a template with a FLOW button — required on every send. */
+    flowToken?: string;
     headerMedia?: {
       format: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
       waMediaId: string;
@@ -128,6 +130,15 @@ export async function sendWhatsAppTemplateMessage(
       sub_type: 'url',
       index: '0',
       parameters: [{ type: 'text', text: options.buttonUrlParameter.trim() }],
+    });
+  }
+
+  if (options?.flowToken?.trim()) {
+    components.push({
+      type: 'button',
+      sub_type: 'flow',
+      index: '0',
+      parameters: [{ type: 'action', action: { flow_token: options.flowToken.trim() } }],
     });
   }
 
@@ -243,6 +254,73 @@ export async function sendWhatsAppTypingIndicator(
     },
     { headers: { Authorization: `Bearer ${waToken}` } }
   );
+}
+
+/** Navigate-only WhatsApp Flow send — no data-exchange endpoint, Meta calls back once on submit. */
+export async function sendWhatsAppFlowMessage(
+  waToken: string,
+  phoneNumberId: string,
+  to: string,
+  params: {
+    bodyText: string;
+    metaFlowId: string;
+    flowToken: string;
+    ctaLabel: string;
+    firstScreenId: string;
+    headerText?: string;
+    footerText?: string;
+  }
+): Promise<SendWhatsAppResult> {
+  const recipient = normalizeWhatsAppRecipient(to);
+  const body = params.bodyText.trim();
+  if (!body) {
+    throw new Error('Message cannot be empty');
+  }
+
+  const apiUrl = `https://graph.facebook.com/v21.0/${phoneNumberId}/messages`;
+  const res = await axios.post(
+    apiUrl,
+    {
+      messaging_product: 'whatsapp',
+      to: recipient,
+      type: 'interactive',
+      interactive: {
+        type: 'flow',
+        ...(params.headerText ? { header: { type: 'text', text: params.headerText } } : {}),
+        body: { text: body },
+        ...(params.footerText ? { footer: { text: params.footerText } } : {}),
+        action: {
+          name: 'flow',
+          parameters: {
+            flow_message_version: '3',
+            flow_token: params.flowToken,
+            flow_id: params.metaFlowId,
+            flow_cta: params.ctaLabel.slice(0, 30),
+            flow_action: 'navigate',
+            // Meta rejects an empty `data: {}` object ("must be of type dynamic_object") —
+            // omit the key entirely when there's nothing to prefill on the first screen.
+            flow_action_payload: { screen: params.firstScreenId },
+          },
+        },
+      },
+    },
+    { headers: { Authorization: `Bearer ${waToken}` } }
+  );
+
+  const data = res.data as {
+    messages?: Array<{ id: string }>;
+    contacts?: Array<{ wa_id: string }>;
+  };
+
+  const waMessageId = data.messages?.[0]?.id;
+  if (!waMessageId) {
+    throw new Error('Meta API did not return a message id');
+  }
+
+  return {
+    waMessageId,
+    waId: data.contacts?.[0]?.wa_id,
+  };
 }
 
 export async function sendWhatsAppCtaUrlMessage(

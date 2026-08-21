@@ -18,6 +18,14 @@ export type SendMessageInput = {
    */
   ctaUrl?: string;
   ctaButtonLabel?: string;
+  /** WhatsApp Flow send — mutually exclusive with buttons/ctaUrl/templateName. */
+  flow?: {
+    metaFlowId: string;
+    flowToken: string;
+    ctaLabel: string;
+    firstScreenId: string;
+    headerText?: string;
+  };
 };
 
 export type SendMessageResult = {
