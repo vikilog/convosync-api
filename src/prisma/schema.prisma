@@ -104,6 +104,8 @@ model Workspace {
   mediaAssets       MediaAsset[]
   templates         Template[]
   whatsAppFlows     WhatsAppFlow[]
+  dataTables        DataTable[]
+  webWidget         WebWidget?
   aiKnowledgeConfigs AiKnowledgeConfig[]
   aiKnowledgeRecords AiKnowledge[]
   developerIncomingWebhook DeveloperIncomingWebhook?
@@ -1238,11 +1240,71 @@ model WhatsAppFlow {
   metaFlowId  String?
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Data Table this flow's submissions are written to (optional). Every completed
+  /// submission of this flow — from a journey, a campaign template button, or a
+  /// manual test-send — inserts one row, mapped via dataTableFieldMap.
+  dataTableId String?
+  dataTable   DataTable? @relation(fields: [dataTableId], references: [id], onDelete: SetNull)
+  /// { [dataTableColumnKey]: flowFieldName } — which flow response field fills which column.
+  dataTableFieldMap Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   @@unique([workspaceId, name])
   @@index([workspaceId])
+  @@index([dataTableId])
+}
+
+/// A user-designed table (Airtable-style): the user defines columns with types,
+/// then rows come in either by manual entry or by connecting a WhatsAppFlow so
+/// every submission of that flow appends a row.
+model DataTable {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  columns     DataTableColumn[]
+  rows        DataTableRow[]
+  flows       WhatsAppFlow[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model DataTableColumn {
+  id        String   @id @default(cuid())
+  tableId   String
+  table     DataTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  /// Stable slug used as the JSON key in DataTableRow.data — set at creation, never edited.
+  key       String
+  label     String
+  /// text | number | date | boolean | select | phone | email
+  type      String
+  /// Choice list for type === 'select'.
+  options   Json?
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@unique([tableId, key])
+  @@index([tableId])
+}
+
+model DataTableRow {
+  id        String   @id @default(cuid())
+  tableId   String
+  table     DataTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  /// { [columnKey]: value }
+  data      Json
+  /// manual | flow
+  source    String   @default("manual")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tableId])
 }
 
 model Campaign {
@@ -1500,6 +1562,7 @@ model AiAgent {
   skills                 AiSkill[]
   knowledgeItems         AiAgentKnowledgeItem[]
   agentChatConversations AgentChatConversation[]
+  webWidgets             WebWidget[]
 
   @@index([workspaceId])
 
@@ -1714,6 +1777,26 @@ model AiKnowledgeConfig {
   venueId          String?
   connectionString String?
   updatedAt        DateTime  @updatedAt
+}
+
+/// Embeddable AI chat bubble for a workspace's own website. `token` is the
+/// public key the embed script authenticates with — inherently exposed in
+/// page source, so it only ever unlocks this widget's chat endpoint, nothing
+/// else in the workspace.
+model WebWidget {
+  id          String    @id @default(cuid())
+  workspaceId String    @unique
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  token       String    @unique
+  enabled     Boolean   @default(true)
+  botName     String    @default("Assistant")
+  greeting    String    @default("Hi! How can I help you today?")
+  accentColor String    @default("#16a34a")
+  /// Which AiAgent (skills + knowledge base) answers chat — no answers until set.
+  agentId     String?
+  agent       AiAgent?  @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }
 
 /// Normalized salon knowledge snapshot (ready for future embedding pipeline).

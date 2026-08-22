@@ -81,6 +81,10 @@ import emailRoutes from './modules/email/routes/email.routes.js';
 import emailUnsubscribeRoutes from './routes/emailUnsubscribe.js';
 import whatsappFlowIntegrationRoutes from './routes/whatsappFlowIntegration.js';
 import whatsappFlowRoutes from './routes/whatsappFlows.js';
+import dataTableRoutes from './routes/dataTables.js';
+import webWidgetRoutes from './routes/webWidget.js';
+import webWidgetPublicRoutes from './routes/webWidgetPublic.js';
+import webWidgetScriptRoutes from './routes/webWidgetScript.js';
 import googleRoutes from './modules/google/routes/google.routes.js';
 import mediaRoutes from './routes/media.js';
 import { startCampaignWorker } from './workers/campaign.worker.js';
@@ -198,6 +202,10 @@ async function start() {
   await fastify.register(emailRoutes, { prefix: '/api/email' });
   await fastify.register(whatsappFlowIntegrationRoutes, { prefix: '/api/integrations/whatsapp-flow' });
   await fastify.register(whatsappFlowRoutes, { prefix: '/api/whatsapp-flows' });
+  await fastify.register(dataTableRoutes, { prefix: '/api/data-tables' });
+  await fastify.register(webWidgetRoutes, { prefix: '/api/web-widget' });
+  await fastify.register(webWidgetPublicRoutes, { prefix: '/api/public/widget' });
+  await fastify.register(webWidgetScriptRoutes, { prefix: '/api' });
   // Public, no auth — reached by recipients clicking the unsubscribe link in an email.
   await fastify.register(emailUnsubscribeRoutes, { prefix: '/api/email' });
   await fastify.register(googleRoutes, { prefix: '/api/google' });

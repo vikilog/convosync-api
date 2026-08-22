@@ -54,7 +54,7 @@ export async function testAgentChat(params: {
   agentId: string;
   message: string;
   conversationHistory: ConversationTurn[];
-}): Promise<{ reply: string; tokensUsed: number }> {
+}): Promise<{ reply: string; tokensUsed: number; inputTokens: number; outputTokens: number }> {
   const agent = await prisma.aiAgent.findFirst({
     where: { id: params.agentId, workspaceId: params.workspaceId },
     include: {
@@ -73,6 +73,8 @@ export async function testAgentChat(params: {
       reply:
         'This is a rule-based agent preview. Configure flows to automate responses, or switch to an AI agent type for conversational testing.',
       tokensUsed: 0,
+      inputTokens: 0,
+      outputTokens: 0,
     };
   }
 
@@ -136,8 +138,9 @@ Always respond helpfully in the user's language when possible. If you cannot ans
     { role: 'user', content: params.message },
   ];
 
-  const { content, tokensUsed } = await openai.createTextChatCompletion(messages);
-  return { reply: content, tokensUsed };
+  const { content, tokensUsed, inputTokens, outputTokens } =
+    await openai.createTextChatCompletion(messages);
+  return { reply: content, tokensUsed, inputTokens, outputTokens };
 }
 
 export class AgentTestError extends Error {

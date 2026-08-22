@@ -1,0 +1,36 @@
+
+[2026-08-22T02:51:10.553Z] uncaughtException
+FastifyError: The decorator 'corsPreflightEnabled' has already been added!
+    at decorateConstructor (/Users/vikas/Downloads/wabiz/backend/node_modules/fastify/lib/decorate.js:51:11)
+    at Object.decorateRequest (/Users/vikas/Downloads/wabiz/backend/node_modules/fastify/lib/decorate.js:132:3)
+    at fastifyCors (/Users/vikas/Downloads/wabiz/backend/node_modules/@fastify/cors/index.js:46:11)
+    at Plugin.exec (/Users/vikas/Downloads/wabiz/backend/node_modules/avvio/lib/plugin.js:125:28)
+    at Boot._loadPlugin (/Users/vikas/Downloads/wabiz/backend/node_modules/avvio/boot.js:446:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+
+[2026-08-22T02:51:58.229Z] uncaughtException
+FastifyError: The decorator 'corsPreflightEnabled' has already been added!
+    at decorateConstructor (/Users/vikas/Downloads/wabiz/backend/node_modules/fastify/lib/decorate.js:51:11)
+    at Object.decorateRequest (/Users/vikas/Downloads/wabiz/backend/node_modules/fastify/lib/decorate.js:132:3)
+    at fastifyCors (/Users/vikas/Downloads/wabiz/backend/node_modules/@fastify/cors/index.js:46:11)
+    at Plugin.exec (/Users/vikas/Downloads/wabiz/backend/node_modules/avvio/lib/plugin.js:125:28)
+    at Boot._loadPlugin (/Users/vikas/Downloads/wabiz/backend/node_modules/avvio/boot.js:446:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+
+[2026-08-22T02:52:00.504Z] uncaughtException
+FastifyError: The decorator 'corsPreflightEnabled' has already been added!
+    at decorateConstructor (/Users/vikas/Downloads/wabiz/backend/node_modules/fastify/lib/decorate.js:51:11)
+    at Object.decorateRequest (/Users/vikas/Downloads/wabiz/backend/node_modules/fastify/lib/decorate.js:132:3)
+    at fastifyCors (/Users/vikas/Downloads/wabiz/backend/node_modules/@fastify/cors/index.js:46:11)
+    at Plugin.exec (/Users/vikas/Downloads/wabiz/backend/node_modules/avvio/lib/plugin.js:125:28)
+    at Boot._loadPlugin (/Users/vikas/Downloads/wabiz/backend/node_modules/avvio/boot.js:446:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+
+[2026-08-22T02:53:09.739Z] uncaughtException
+FastifyError: The decorator 'corsPreflightEnabled' has already been added!
+    at decorateConstructor (/Users/vikas/Downloads/wabiz/backend/node_modules/fastify/lib/decorate.js:51:11)
+    at Object.decorateRequest (/Users/vikas/Downloads/wabiz/backend/node_modules/fastify/lib/decorate.js:132:3)
+    at fastifyCors (/Users/vikas/Downloads/wabiz/backend/node_modules/@fastify/cors/index.js:46:11)
+    at Plugin.exec (/Users/vikas/Downloads/wabiz/backend/node_modules/avvio/lib/plugin.js:125:28)
+    at Boot._loadPlugin (/Users/vikas/Downloads/wabiz/backend/node_modules/avvio/boot.js:446:10)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)

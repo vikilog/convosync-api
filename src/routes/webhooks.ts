@@ -36,6 +36,7 @@ import {
 } from '../services/whatsappMedia.js';
 import { getWorkspaceWhatsAppCredentials } from '../services/whatsappCredentials.js';
 import { isOptOutMessage, markContactUnsubscribed } from '../services/contactOptOut.service.js';
+import { syncFlowResponseToDataTable } from '../services/dataTableFlowSync.service.js';
 import { sendWhatsAppMessage } from '../services/whatsapp.js';
 import {
   mergeWhatsAppStatusMetadata,
@@ -350,6 +351,24 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
                   logWebhook(
                     'POST → opt-out handling error',
                     optOutErr instanceof Error ? optOutErr.message : optOutErr
+                  );
+                }
+              }
+
+              // Data Table sync works regardless of whatever automation (if any) is
+              // currently assigned — the flow may have been sent by a campaign or a
+              // manual test-send with no journey execution to piggyback on.
+              if (parsed.flowResponse?.flowName) {
+                try {
+                  await syncFlowResponseToDataTable({
+                    workspaceId: workspace.id,
+                    flowName: parsed.flowResponse.flowName,
+                    fields: parsed.flowResponse.fields,
+                  });
+                } catch (syncErr) {
+                  logWebhook(
+                    'POST → data table sync error',
+                    syncErr instanceof Error ? syncErr.message : syncErr
                   );
                 }
               }

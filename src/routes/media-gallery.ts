@@ -5,10 +5,13 @@ import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import {
+  MEDIA_MAX_BYTES,
+  MEDIA_MAX_BYTES_CEILING,
   MediaStorageError,
   deleteMediaGalleryFile,
   getMediaGalleryUsedBytes,
   isDisallowedActiveContentMime,
+  mediaSizeLimitMessage,
   mediaTypeFromMime,
   readMediaGalleryFile,
   saveMediaGalleryFile,
@@ -29,7 +32,7 @@ import {
 import { contentDisposition } from '../utils/contentDisposition.js';
 
 const SCOPE = z.enum(['customer', 'partner', 'both']);
-const TYPE = z.enum(['image', 'pdf', 'video', 'document']);
+const TYPE = z.enum(['image', 'pdf', 'video', 'audio', 'document']);
 
 const updateSchema = z.object({
   title: z.string().min(1).max(200).optional(),
@@ -43,7 +46,7 @@ const updateSchema = z.object({
   url: z.string().url().optional(),
 });
 
-const ALLOWED_MIME_PREFIXES = ['image/', 'video/'];
+const ALLOWED_MIME_PREFIXES = ['image/', 'video/', 'audio/'];
 const ALLOWED_MIME_EXACT = new Set([
   'application/pdf',
   'application/msword',
@@ -57,6 +60,33 @@ function isAllowedMime(mimeType: string): boolean {
   if (isDisallowedActiveContentMime(mimeType)) return false;
   if (ALLOWED_MIME_EXACT.has(mimeType)) return true;
   return ALLOWED_MIME_PREFIXES.some((p) => mimeType.startsWith(p));
+}
+
+type FileValidation =
+  | { ok: true; type: ReturnType<typeof mediaTypeFromMime> }
+  | { ok: false; statusCode: number; error: string };
+
+/** Shared by create (POST /) and replace-file (PATCH /:mediaId) — one place for clear rejection copy. */
+function validateUploadedFile(mimeType: string, buffer: Buffer, filename: string): FileValidation {
+  if (!isAllowedMime(mimeType)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      error: `"${mimeType || 'unknown'}" isn't a supported file type. Upload an image, video, audio file, PDF, or Word/Excel document.`,
+    };
+  }
+  if (!sniffMatchesDeclaredMime(buffer, mimeType)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      error: `This file's contents don't match its "${mimeType}" type — it may be corrupted or mislabeled.`,
+    };
+  }
+  const type = mediaTypeFromMime(mimeType, filename);
+  if (buffer.length > MEDIA_MAX_BYTES[type]) {
+    return { ok: false, statusCode: 413, error: mediaSizeLimitMessage(type) };
+  }
+  return { ok: true, type };
 }
 
 function parseTags(raw: string): string[] {
@@ -130,13 +160,45 @@ async function parseCreateMultipart(request: FastifyRequest) {
   };
 }
 
+type ParsedMultipart = Awaited<ReturnType<typeof parseCreateMultipart>>;
+
+/**
+ * `@fastify/multipart` throws FST_REQ_FILE_TOO_LARGE mid-stream (inside the
+ * `for await` in parseCreateMultipart) when a part exceeds the registered
+ * ceiling — left uncaught, that reaches the client as Fastify's generic
+ * "Payload Too Large" with no size context. Convert it to the same clear,
+ * type-aware copy validateUploadedFile uses everywhere else.
+ */
+async function safeParseCreateMultipart(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<ParsedMultipart | null> {
+  try {
+    return await parseCreateMultipart(request);
+  } catch (err) {
+    const code = (err as { code?: string })?.code;
+    if (code === 'FST_REQ_FILE_TOO_LARGE' || code === 'FST_FILES_LIMIT') {
+      void reply.code(413).send({
+        error: `File is larger than the site limit (${Math.round(
+          MEDIA_MAX_BYTES_CEILING / (1024 * 1024)
+        )} MB).`,
+      });
+      return null;
+    }
+    throw err;
+  }
+}
+
 /** Top-level Media Gallery — workspace-scoped (tenant = workspaceId). */
 export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
   const auth = companyAuth;
   const galleryAuth = { onRequest: auth.onRequest, preHandler: guardMediaGallery };
 
+  // Ceiling covers the largest per-type cap (documents); the real per-type
+  // limit is enforced afterward in validateUploadedFile once we know the
+  // file's actual type, with a clear message naming that type's limit.
   await fastify.register(multipart, {
-    limits: { fileSize: 16 * 1024 * 1024, files: 1 },
+    limits: { fileSize: MEDIA_MAX_BYTES_CEILING, files: 1 },
   });
 
   fastify.get('/usage', galleryAuth, async (request) => {
@@ -247,7 +309,8 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
       return reply.code(400).send({ error: 'Expected multipart form with file' });
     }
 
-    const parsed = await parseCreateMultipart(request);
+    const parsed = await safeParseCreateMultipart(request, reply);
+    if (!parsed) return;
     if (!parsed.title.trim()) {
       return reply.code(400).send({ error: 'Title is required' });
     }
@@ -306,15 +369,16 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
       let type = parsed.typeHint;
 
       if (parsed.fileBuffer?.length) {
-        if (!isAllowedMime(mimeType) || !sniffMatchesDeclaredMime(parsed.fileBuffer, mimeType)) {
-          return reply.code(400).send({ error: 'Unsupported media type' });
+        const validation = validateUploadedFile(mimeType, parsed.fileBuffer, filename);
+        if (!validation.ok) {
+          return reply.code(validation.statusCode).send({ error: validation.error });
         }
         // Always derive from the actual mimeType when a real file is
         // present — a client-supplied `type` was only reconciled when it
         // failed schema validation, so a schema-valid but wrong hint (e.g.
         // `type: 'document'` on an actual video/mp4 upload) previously
         // passed straight through uncorrected.
-        type = mediaTypeFromMime(mimeType, filename);
+        type = validation.type;
       } else if (!TYPE.safeParse(type).success) {
         type = 'document';
       }
@@ -391,7 +455,8 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
 
     // Multipart = metadata edit and/or file replace (JSON path stays for Activate toggle).
     if (request.isMultipart()) {
-      const parsed = await parseCreateMultipart(request);
+      const parsed = await safeParseCreateMultipart(request, reply);
+      if (!parsed) return;
       const data: Record<string, unknown> = {};
 
       // Client always sends these fields on Edit; apply even when tags/usage are empty.
@@ -427,8 +492,10 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
             });
           }
           const mimeType = parsed.mimeType || 'application/octet-stream';
-          if (!isAllowedMime(mimeType) || !sniffMatchesDeclaredMime(parsed.fileBuffer, mimeType)) {
-            return reply.code(400).send({ error: 'Unsupported media type' });
+          const filename = parsed.fileName || existing.filename || 'file';
+          const validation = validateUploadedFile(mimeType, parsed.fileBuffer, filename);
+          if (!validation.ok) {
+            return reply.code(validation.statusCode).send({ error: validation.error });
           }
           try {
             await assertMediaStorageUploadAllowed(workspaceId, parsed.fileBuffer.length);
@@ -438,10 +505,9 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
             }
             throw err;
           }
-          const filename = parsed.fileName || existing.filename || 'file';
           // Always derive from the actual mimeType — see the matching note
           // in POST /.
-          const type = mediaTypeFromMime(mimeType, filename);
+          const type = validation.type;
           try {
             const { storageKey, url } = await saveMediaGalleryFile(
               workspaceId,

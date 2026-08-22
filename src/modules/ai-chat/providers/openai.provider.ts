@@ -15,7 +15,7 @@ export class OpenAiProvider {
 
   async createTextChatCompletion(
     messages: OpenAiMessage[]
-  ): Promise<{ content: string; tokensUsed: number }> {
+  ): Promise<{ content: string; tokensUsed: number; inputTokens: number; outputTokens: number }> {
     if (!config.openai.apiKey) {
       throw new OpenAiProviderError(
         'OpenAI is not configured. Set OPENAI_API_KEY in backend .env.',
@@ -46,8 +46,13 @@ export class OpenAiProvider {
       if (typeof content !== 'string' || !content.trim()) {
         throw new OpenAiProviderError('Empty response from OpenAI', 'OPENAI_EMPTY_RESPONSE', 502);
       }
-      const tokensUsed = Number(res.data?.usage?.total_tokens ?? 0);
-      return { content: content.trim(), tokensUsed };
+      const usage = res.data?.usage ?? {};
+      return {
+        content: content.trim(),
+        tokensUsed: Number(usage.total_tokens ?? 0),
+        inputTokens: Number(usage.prompt_tokens ?? 0),
+        outputTokens: Number(usage.completion_tokens ?? 0),
+      };
     } catch (err) {
       if (err instanceof OpenAiProviderError) throw err;
       throw mapAxiosError(err);

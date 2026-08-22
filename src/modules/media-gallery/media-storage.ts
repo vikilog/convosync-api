@@ -20,6 +20,16 @@ function extensionForMime(mimeType: string, fileName?: string): string {
     'image/webp': 'webp',
     'image/gif': 'gif',
     'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/quicktime': 'mov',
+    'audio/mpeg': 'mp3',
+    'audio/mp3': 'mp3',
+    'audio/ogg': 'ogg',
+    'audio/wav': 'wav',
+    'audio/x-wav': 'wav',
+    'audio/mp4': 'm4a',
+    'audio/x-m4a': 'm4a',
+    'audio/aac': 'aac',
     'application/pdf': 'pdf',
     'application/msword': 'doc',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
@@ -27,14 +37,51 @@ function extensionForMime(mimeType: string, fileName?: string): string {
   return map[mimeType] || mimeType.split('/')[1]?.split('+')[0] || 'bin';
 }
 
-export function mediaTypeFromMime(
-  mimeType: string,
-  fileName?: string
-): 'image' | 'pdf' | 'video' | 'document' {
+export type MediaGalleryType = 'image' | 'pdf' | 'video' | 'audio' | 'document';
+
+export function mediaTypeFromMime(mimeType: string, fileName?: string): MediaGalleryType {
   if (mimeType.startsWith('image/')) return 'image';
   if (mimeType.startsWith('video/')) return 'video';
+  if (mimeType.startsWith('audio/')) return 'audio';
   if (mimeType === 'application/pdf' || fileName?.toLowerCase().endsWith('.pdf')) return 'pdf';
   return 'document';
+}
+
+/**
+ * Mirrors WhatsApp Cloud API's own per-type media caps — gallery assets are
+ * mainly sent to customers via WhatsApp, so a file the gallery accepts but
+ * WhatsApp would reject on send is worse than rejecting it up front here.
+ */
+export const MEDIA_MAX_BYTES: Record<MediaGalleryType, number> = {
+  image: 5 * 1024 * 1024,
+  video: 16 * 1024 * 1024,
+  audio: 16 * 1024 * 1024,
+  pdf: 100 * 1024 * 1024,
+  document: 100 * 1024 * 1024,
+};
+
+/** Largest of all per-type caps — the ceiling the multipart parser itself must allow through. */
+export const MEDIA_MAX_BYTES_CEILING = Math.max(...Object.values(MEDIA_MAX_BYTES));
+
+function formatMb(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return Number.isInteger(mb) ? `${mb} MB` : `${mb.toFixed(1)} MB`;
+}
+
+export function mediaTypeLabel(type: MediaGalleryType): string {
+  const labels: Record<MediaGalleryType, string> = {
+    image: 'Images',
+    video: 'Videos',
+    audio: 'Audio files',
+    pdf: 'PDFs',
+    document: 'Documents',
+  };
+  return labels[type];
+}
+
+/** Human copy for "why was this rejected" — shared by both create and replace-file routes. */
+export function mediaSizeLimitMessage(type: MediaGalleryType): string {
+  return `${mediaTypeLabel(type)} must be ${formatMb(MEDIA_MAX_BYTES[type])} or smaller.`;
 }
 
 /**
@@ -86,6 +133,19 @@ export function sniffMatchesDeclaredMime(buffer: Buffer, mimeType: string): bool
   const isMp4 = buffer[4] === 0x66 && buffer[5] === 0x74 && buffer[6] === 0x79 && buffer[7] === 0x70;
   const isWebm = buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3;
   const isPdf = buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46;
+  const isOgg = buffer[0] === 0x4f && buffer[1] === 0x67 && buffer[2] === 0x67 && buffer[3] === 0x53;
+  const isWav =
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x41 &&
+    buffer[10] === 0x56 &&
+    buffer[11] === 0x45;
+  const isMp3 =
+    (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) || // ID3 tag
+    (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0); // raw MPEG frame sync
 
   if (normalized === 'image/jpeg' || normalized === 'image/jpg') return isJpeg;
   if (normalized === 'image/png') return isPng;
@@ -94,6 +154,12 @@ export function sniffMatchesDeclaredMime(buffer: Buffer, mimeType: string): bool
   if (normalized === 'video/mp4' || normalized === 'video/quicktime') return isMp4;
   if (normalized === 'video/webm') return isWebm;
   if (normalized === 'application/pdf') return isPdf;
+  if (normalized === 'audio/ogg') return isOgg;
+  if (normalized === 'audio/wav' || normalized === 'audio/x-wav') return isWav;
+  if (normalized === 'audio/mpeg' || normalized === 'audio/mp3') return isMp3;
+  if (normalized === 'audio/mp4' || normalized === 'audio/x-m4a' || normalized === 'audio/aac') {
+    return isMp4;
+  }
 
   // Unrecognized-but-allowed type (other video/* variants, Office docs,
   // text/plain) — nothing to sniff against, don't false-reject.
