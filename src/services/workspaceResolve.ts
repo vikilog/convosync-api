@@ -60,6 +60,16 @@ export async function findInstagramAccountByEntryId(entryId: string) {
   });
 }
 
+/** Resolve a workspace by its connected Facebook Page id (single Page per workspace). */
+export async function findWorkspaceByFbPageId(pageId: string) {
+  const id = pageId.trim();
+  if (!id) return null;
+
+  return prisma.workspace.findFirst({
+    where: { fbPageId: id },
+  });
+}
+
 export async function findMessengerAccountByPageId(pageId: string) {
   const id = pageId.trim();
   if (!id) return null;

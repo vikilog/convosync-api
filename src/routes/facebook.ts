@@ -5,6 +5,7 @@ import { encryptSecret } from '../lib/field-encryption.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import { getWorkspaceFacebookPageCredentials } from '../services/facebookCredentials.js';
+import { subscribeFacebookPageFeed } from '../services/instagramWebhookSubscribe.js';
 import {
   connectWorkspaceFacebook,
   FacebookConnectError,
@@ -279,7 +280,18 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
           `Facebook Page connected for workspace ${workspaceId}: ${result.pageName} (${result.pageId})`
         );
 
-        return reply.send({ success: true, ...result });
+        const fbCredentials = await getWorkspaceFacebookPageCredentials(workspaceId);
+        const webhookSubscribe = fbCredentials
+          ? await subscribeFacebookPageFeed(fbCredentials.pageId, fbCredentials.pageAccessToken)
+          : { ok: false, error: 'Page credentials not found after connect' };
+        if (!webhookSubscribe.ok) {
+          fastify.log.warn(
+            { err: webhookSubscribe.error },
+            `Facebook Page feed webhook subscription failed for workspace ${workspaceId}`
+          );
+        }
+
+        return reply.send({ success: true, ...result, webhookSubscribe });
       } catch (err: unknown) {
         if (err instanceof FacebookConnectError) {
           return reply.code(400).send({
@@ -307,7 +319,17 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
           fbPageName: body.pageName,
         },
       });
-      return reply.send({ success: true });
+      const webhookSubscribe = await subscribeFacebookPageFeed(
+        body.pageId,
+        body.pageAccessToken
+      );
+      if (!webhookSubscribe.ok) {
+        fastify.log.warn(
+          { err: webhookSubscribe.error },
+          `Facebook Page feed webhook subscription failed for workspace ${workspaceId}`
+        );
+      }
+      return reply.send({ success: true, webhookSubscribe });
     }
 
     return reply.code(400).send({ error: 'Missing Meta authorization code' });
@@ -356,6 +378,15 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
     if (!workspace?.fbPageToken) return reply.code(400).send({ error: 'Not connected' });
 
     try {
+      const tokenInfo = await inspectPageAccessToken(workspace.fbPageToken);
+      if (tokenInfo.missingScopes.includes('pages_read_user_content')) {
+        return reply.code(403).send({
+          error: `Missing pages_read_user_content permission.${permissionHint(tokenInfo.missingScopes)}`,
+          missingScopes: tokenInfo.missingScopes,
+          grantedScopes: tokenInfo.scopes,
+        });
+      }
+
       const res = await axios.get(`${GRAPH_API}/${postId}/comments`, {
         params: {
           fields: 'id,from,message,created_time,like_count,can_hide,can_remove',
@@ -395,69 +426,10 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/comments/:commentId/reply', auth, async (request, reply) => {
-    const { workspaceId } = getJwtUser(request);
-    const { commentId } = request.params as { commentId: string };
-    const { message } = request.body as { message?: string };
-    const workspace = await getWorkspacePageToken(workspaceId);
-    if (!workspace?.fbPageToken) return reply.code(400).send({ error: 'Not connected' });
-
-    try {
-      await axios.post(
-        `${GRAPH_API}/${commentId}/comments`,
-        { message },
-        { params: { access_token: workspace.fbPageToken } }
-      );
-      return { success: true };
-    } catch (err: unknown) {
-      const msg = axios.isAxiosError(err)
-        ? JSON.stringify(err.response?.data) || err.message
-        : 'Failed to reply';
-      return reply.code(400).send({ error: msg });
-    }
-  });
-
-  fastify.post('/comments/:commentId/hide', auth, async (request, reply) => {
-    const { workspaceId } = getJwtUser(request);
-    const { commentId } = request.params as { commentId: string };
-    const { hidden } = request.body as { hidden?: boolean };
-    const workspace = await getWorkspacePageToken(workspaceId);
-    if (!workspace?.fbPageToken) return reply.code(400).send({ error: 'Not connected' });
-
-    try {
-      await axios.post(`${GRAPH_API}/${commentId}`, null, {
-        params: {
-          is_hidden: hidden !== false,
-          access_token: workspace.fbPageToken,
-        },
-      });
-      return { success: true };
-    } catch (err: unknown) {
-      const msg = axios.isAxiosError(err)
-        ? JSON.stringify(err.response?.data) || err.message
-        : 'Failed to hide comment';
-      return reply.code(400).send({ error: msg });
-    }
-  });
-
-  fastify.delete('/comments/:commentId', auth, async (request, reply) => {
-    const { workspaceId } = getJwtUser(request);
-    const { commentId } = request.params as { commentId: string };
-    const workspace = await getWorkspacePageToken(workspaceId);
-    if (!workspace?.fbPageToken) return reply.code(400).send({ error: 'Not connected' });
-
-    try {
-      await axios.delete(`${GRAPH_API}/${commentId}`, {
-        params: { access_token: workspace.fbPageToken },
-      });
-      return { success: true };
-    } catch (err: unknown) {
-      const msg = axios.isAxiosError(err)
-        ? JSON.stringify(err.response?.data) || err.message
-        : 'Failed to delete comment';
-      return reply.code(400).send({ error: msg });
-    }
-  });
+  // Comment reply/hide/delete moved to the unified Social Listening action
+  // endpoint (POST /social-listening/comments/:id/action) — see
+  // facebookListening.service.ts. Read-only post/comment browsing above
+  // stays here, reused directly by Social Listening's Content tab.
 
   fastify.post('/posts', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);

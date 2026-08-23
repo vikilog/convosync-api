@@ -4,8 +4,13 @@ import {
   countAutoDmsSentToday,
   getOrCreateSocialListeningSettings,
 } from './socialListeningSettings.service.js';
+import type { SocialListeningPlatform } from './socialCommentSync.service.js';
 
 export type DashboardRange = 'today' | '7d' | '30d' | 'all';
+
+function platformWhere(platform?: SocialListeningPlatform) {
+  return platform ? { platform } : {};
+}
 
 export function parseDashboardRange(raw: unknown): DashboardRange {
   const s = String(raw || '7d');
@@ -30,10 +35,15 @@ function createdAtFilter(from: Date | null) {
   return from ? { createdAt: { gte: from } } : {};
 }
 
-export async function getDashboardStats(workspaceId: string, range: DashboardRange) {
+export async function getDashboardStats(
+  workspaceId: string,
+  range: DashboardRange,
+  platform?: SocialListeningPlatform
+) {
   const from = rangeStart(range);
   const commentWhere = {
     workspaceId,
+    ...platformWhere(platform),
     ...(from
       ? {
           OR: [
@@ -44,23 +54,32 @@ export async function getDashboardStats(workspaceId: string, range: DashboardRan
       : {}),
   };
 
+  // auto_dm activity has no platform column of its own — scope it via the
+  // comment ids it references when a platform filter is requested.
+  const autoHandledWhere: Record<string, unknown> = {
+    workspaceId,
+    eventType: 'auto_dm',
+    ...createdAtFilter(from),
+  };
+  if (platform) {
+    const scopedComments = await prisma.socialComment.findMany({
+      where: { workspaceId, platform },
+      select: { id: true },
+    });
+    autoHandledWhere.relatedCommentId = { in: scopedComments.map((c) => c.id) };
+  }
+
   const [totalComments, pendingReview, autoHandled, leadsCreated, settings, workspace] =
     await Promise.all([
       prisma.socialComment.count({ where: commentWhere }),
       prisma.socialComment.count({
-        where: { workspaceId, status: 'new' },
+        where: { workspaceId, status: 'new', ...platformWhere(platform) },
       }),
-      prisma.socialListeningActivity.count({
-        where: {
-          workspaceId,
-          eventType: 'auto_dm',
-          ...createdAtFilter(from),
-        },
-      }),
+      prisma.socialListeningActivity.count({ where: autoHandledWhere }),
       prisma.lead.count({
         where: {
           workspaceId,
-          source: 'instagram',
+          source: platform ? platform : { in: ['instagram', 'facebook'] },
           ...createdAtFilter(from),
         },
       }),
@@ -86,12 +105,17 @@ export async function getDashboardStats(workspaceId: string, range: DashboardRan
   };
 }
 
-export async function getIntentBreakdown(workspaceId: string, range: DashboardRange) {
+export async function getIntentBreakdown(
+  workspaceId: string,
+  range: DashboardRange,
+  platform?: SocialListeningPlatform
+) {
   const from = rangeStart(range);
   const groups = await prisma.socialComment.groupBy({
     by: ['intent'],
     where: {
       workspaceId,
+      ...platformWhere(platform),
       ...(from
         ? {
             OR: [
@@ -124,18 +148,22 @@ export async function getIntentBreakdown(workspaceId: string, range: DashboardRa
   };
 }
 
-export async function getNeedsAttention(workspaceId: string, limit = 25) {
+export async function getNeedsAttention(
+  workspaceId: string,
+  limit = 25,
+  platform?: SocialListeningPlatform
+) {
   const take = Math.min(Math.max(limit, 1), 50);
 
   // Align with Pending review: every status=new, plus failed DMs
   const [pending, failedDms] = await Promise.all([
     prisma.socialComment.findMany({
-      where: { workspaceId, status: 'new' },
+      where: { workspaceId, status: 'new', ...platformWhere(platform) },
       orderBy: [{ commentedAt: 'asc' }, { createdAt: 'asc' }],
       take: 40,
     }),
     prisma.socialComment.findMany({
-      where: { workspaceId, dmStatus: 'failed' },
+      where: { workspaceId, dmStatus: 'failed', ...platformWhere(platform) },
       orderBy: [{ updatedAt: 'desc' }],
       take: 15,
     }),
@@ -190,7 +218,7 @@ export async function getNeedsAttention(workspaceId: string, limit = 25) {
       priority,
       commentId: r.commentId,
       postId: r.postId,
-      username: r.commenterUsername || 'instagram_user',
+      username: r.commenterUsername || `${r.platform}_user`,
       commentText: r.commentText,
       postThumbnailUrl: r.postThumbnailUrl || '',
       postCaption: r.postCaption || '',
@@ -211,7 +239,7 @@ export async function getNeedsAttention(workspaceId: string, limit = 25) {
       priority: 4,
       commentId: r.commentId,
       postId: r.postId,
-      username: r.commenterUsername || 'instagram_user',
+      username: r.commenterUsername || `${r.platform}_user`,
       commentText: r.commentText,
       postThumbnailUrl: r.postThumbnailUrl || '',
       postCaption: r.postCaption || '',
@@ -231,7 +259,12 @@ export async function getNeedsAttention(workspaceId: string, limit = 25) {
   return { items: items.slice(0, take) };
 }
 
-export async function getTopPosts(workspaceId: string, range: DashboardRange, limit = 8) {
+export async function getTopPosts(
+  workspaceId: string,
+  range: DashboardRange,
+  limit = 8,
+  platform?: SocialListeningPlatform
+) {
   const from = rangeStart(range);
   const take = Math.min(Math.max(limit, 1), 20);
 
@@ -239,6 +272,7 @@ export async function getTopPosts(workspaceId: string, range: DashboardRange, li
     by: ['postId'],
     where: {
       workspaceId,
+      ...platformWhere(platform),
       ...(from
         ? {
             OR: [
@@ -257,7 +291,7 @@ export async function getTopPosts(workspaceId: string, range: DashboardRange, li
 
   const postIds = groups.map((g) => g.postId);
   const samples = await prisma.socialComment.findMany({
-    where: { workspaceId, postId: { in: postIds } },
+    where: { workspaceId, postId: { in: postIds }, ...platformWhere(platform) },
     select: {
       postId: true,
       postThumbnailUrl: true,

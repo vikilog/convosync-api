@@ -22,6 +22,9 @@ const PAGE_MESSAGING_WEBHOOK_FIELDS = [
 /** Instagram object fields for live Social Listening comments (App Dashboard must also subscribe these). */
 const IG_COMMENT_WEBHOOK_FIELDS = ['comments', 'live_comments'].join(',');
 
+/** Facebook Page object field for live Social Listening comments (feed carries post/comment/reaction events). */
+const FEED_COMMENT_WEBHOOK_FIELDS = 'feed';
+
 function graphErrMessage(err: unknown): string {
   return (
     (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
@@ -62,6 +65,24 @@ async function subscribeIgComments(
         },
       }
     );
+    return { ok: true };
+  } catch (err: unknown) {
+    return { ok: false, error: graphErrMessage(err) };
+  }
+}
+
+/** Subscribe a Facebook Page to `feed` comment webhooks (Social Listening). */
+export async function subscribeFacebookPageFeed(
+  pageId: string,
+  pageAccessToken: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await axios.post(`https://graph.facebook.com/v25.0/${pageId}/subscribed_apps`, null, {
+      params: {
+        subscribed_fields: FEED_COMMENT_WEBHOOK_FIELDS,
+        access_token: pageAccessToken,
+      },
+    });
     return { ok: true };
   } catch (err: unknown) {
     return { ok: false, error: graphErrMessage(err) };

@@ -314,7 +314,7 @@ export async function handleInstagramWebhookBody(body: PageMessagingWebhookBody)
     const events = collectMessagingEvents(entry);
 
     if (events.length === 0) {
-      // comments/live_comments are handled in handleInstagramCommentWebhookBody
+      // comments/live_comments are handled in handleSocialCommentWebhookBody
       if ((entry.changes?.length ?? 0) > 0) continue;
       logInstagramWebhook('entry with no messaging/standby events', { entryId });
       continue;

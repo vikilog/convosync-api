@@ -9,6 +9,7 @@ const PAGE_FIELDS = 'id,name,category,access_token,picture.type(large)';
 export const REQUIRED_FB_PAGE_SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
+  'pages_read_user_content',
   'read_insights',
 ] as const;
 

@@ -40,11 +40,20 @@ export async function logSocialListeningActivity(input: {
 
 export async function listSocialListeningActivity(
   workspaceId: string,
-  limit = 30
+  limit = 30,
+  platform?: 'instagram' | 'facebook'
 ) {
   const take = Math.min(Math.max(limit, 1), 100);
+  let relatedCommentId: Prisma.SocialListeningActivityWhereInput['relatedCommentId'];
+  if (platform) {
+    const commentIds = await prisma.socialComment.findMany({
+      where: { workspaceId, platform },
+      select: { id: true },
+    });
+    relatedCommentId = { in: commentIds.map((c) => c.id) };
+  }
   const rows = await prisma.socialListeningActivity.findMany({
-    where: { workspaceId },
+    where: { workspaceId, ...(relatedCommentId ? { relatedCommentId } : {}) },
     orderBy: { createdAt: 'desc' },
     take,
   });

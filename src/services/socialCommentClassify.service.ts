@@ -23,7 +23,7 @@ export type SocialCommentStatus =
   | 'escalated'
   | 'ignored';
 
-const SYSTEM_PROMPT = `You classify Instagram post comments for a business Social Listening inbox.
+const SYSTEM_PROMPT = `You classify Instagram and Facebook Page post comments for a business Social Listening inbox.
 Classify intent as exactly ONE of: interested, question, complaint, spam, unclear.
 
 Rules:

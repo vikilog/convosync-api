@@ -5,6 +5,11 @@ import {
   replyToListeningComment,
   sendPrivateReplyToComment,
 } from './instagramListening.service.js';
+import {
+  replyToFacebookComment,
+  sendFacebookPrivateReply,
+} from './facebookListening.service.js';
+import type { SocialListeningPlatform } from './socialCommentSync.service.js';
 import { createLeadFromSocialComment } from './lead.service.js';
 import {
   shouldCreateLeadForIntent,
@@ -16,6 +21,32 @@ import {
 } from './socialListeningPostSetting.service.js';
 import { logSocialListeningActivity } from './socialListeningActivity.service.js';
 import { mapIntentToReviewLabel } from './socialCommentClassify.service.js';
+
+/** Post the public comment reply on the correct platform's Graph API. */
+async function postPublicReply(
+  workspaceId: string,
+  platform: SocialListeningPlatform,
+  commentId: string,
+  text: string,
+  igUserId?: string | null
+): Promise<{ id: string }> {
+  return platform === 'facebook'
+    ? replyToFacebookComment(workspaceId, commentId, text)
+    : replyToListeningComment(workspaceId, commentId, text, igUserId);
+}
+
+/** Send the private-reply DM on the correct platform's Graph API. */
+async function sendPrivateReply(
+  workspaceId: string,
+  platform: SocialListeningPlatform,
+  commentId: string,
+  text: string,
+  igUserId?: string | null
+): Promise<{ messageId: string; recipientId?: string }> {
+  return platform === 'facebook'
+    ? sendFacebookPrivateReply(workspaceId, commentId, text)
+    : sendPrivateReplyToComment(workspaceId, commentId, text, igUserId);
+}
 
 function toneInstruction(tone: ReplyTone): string {
   switch (tone) {
@@ -48,7 +79,7 @@ export async function generateApproveDmTexts(input: {
     ? `\nAgent skill context (follow when writing the DM):\n${input.skillInstructions.trim().slice(0, 1500)}`
     : '';
 
-  const systemPrompt = `You help a brand respond to an Instagram comment.
+  const systemPrompt = `You help a brand respond to a social media post comment (Instagram or Facebook Page).
 
 Generate TWO texts in one JSON object:
 1. publicReply — short public comment reply (max 20 words). Acknowledgment only.
@@ -239,7 +270,7 @@ export async function executeApproveAndSendDm(input: {
 
   try {
     settings = await getEffectivePostSettings(input.workspaceId, row.postId);
-    const igUserId = input.instagramUserId || row.socialAccount.instagramUserId;
+    const igUserId = input.instagramUserId || row.socialAccount?.instagramUserId;
 
     // A prior claim on this comment may have already posted the public
     // reply and durably checkpointed it below, then failed before finishing
@@ -290,7 +321,13 @@ export async function executeApproveAndSendDm(input: {
       dmReplyText = input.messageOverride?.trim() || texts.dmReply;
 
       publicReplyId = (
-        await replyToListeningComment(input.workspaceId, row.commentId, publicReplyText, igUserId)
+        await postPublicReply(
+          input.workspaceId,
+          row.platform as SocialListeningPlatform,
+          row.commentId,
+          publicReplyText,
+          igUserId
+        )
       ).id;
 
       // Durable checkpoint, committed BEFORE attempting the DM — a failure
@@ -309,8 +346,9 @@ export async function executeApproveAndSendDm(input: {
     }
 
     try {
-      const dm = await sendPrivateReplyToComment(
+      const dm = await sendPrivateReply(
         input.workspaceId,
+        row.platform as SocialListeningPlatform,
         row.commentId,
         dmReplyText,
         igUserId
@@ -517,10 +555,11 @@ export async function retryPrivateReplyDm(input: {
       dmReplyText = texts.dmReply;
     }
 
-    const igUserId = input.instagramUserId || row.socialAccount.instagramUserId;
+    const igUserId = input.instagramUserId || row.socialAccount?.instagramUserId;
 
-    const dm = await sendPrivateReplyToComment(
+    const dm = await sendPrivateReply(
       input.workspaceId,
+      row.platform as SocialListeningPlatform,
       row.commentId,
       dmReplyText,
       igUserId

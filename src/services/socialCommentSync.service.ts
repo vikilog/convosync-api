@@ -5,6 +5,9 @@ import {
   mapIntentToReviewLabel,
   mapStatusToReviewStatus,
 } from './socialCommentClassify.service.js';
+import { getWorkspaceFacebookPageCredentials } from './facebookCredentials.js';
+
+export type SocialListeningPlatform = 'instagram' | 'facebook';
 
 export type EnrichedListeningComment = Omit<InstagramListeningComment, 'replies'> & {
   socialCommentId: string | null;
@@ -44,6 +47,7 @@ function flattenComments(
 
 export async function upsertListeningCommentsForPost(input: {
   workspaceId: string;
+  platform?: SocialListeningPlatform;
   instagramUserId?: string | null;
   postId: string;
   comments: InstagramListeningComment[];
@@ -53,20 +57,40 @@ export async function upsertListeningCommentsForPost(input: {
   enriched: EnrichedListeningComment[];
   pendingClassifyIds: string[];
 }> {
-  const account = input.instagramUserId
-    ? await prisma.instagramAccount.findFirst({
-        where: { workspaceId: input.workspaceId, instagramUserId: input.instagramUserId },
-      })
-    : await prisma.instagramAccount.findFirst({
-        where: { workspaceId: input.workspaceId },
-        orderBy: { createdAt: 'desc' },
-      });
+  const platform: SocialListeningPlatform = input.platform ?? 'instagram';
 
-  if (!account) {
-    return {
-      enriched: input.comments.map((c) => enrichTree(c, new Map())),
-      pendingClassifyIds: [],
-    };
+  let account: { id: string; instagramUserId: string; username: string | null } | null = null;
+  let ownAccountId: string | null = null;
+  let ownUsername: string | null = null;
+
+  if (platform === 'instagram') {
+    account = input.instagramUserId
+      ? await prisma.instagramAccount.findFirst({
+          where: { workspaceId: input.workspaceId, instagramUserId: input.instagramUserId },
+        })
+      : await prisma.instagramAccount.findFirst({
+          where: { workspaceId: input.workspaceId },
+          orderBy: { createdAt: 'desc' },
+        });
+
+    if (!account) {
+      return {
+        enriched: input.comments.map((c) => enrichTree(c, new Map())),
+        pendingClassifyIds: [],
+      };
+    }
+    ownAccountId = account.instagramUserId;
+    ownUsername = account.username;
+  } else {
+    const fbCredentials = await getWorkspaceFacebookPageCredentials(input.workspaceId);
+    if (!fbCredentials) {
+      return {
+        enriched: input.comments.map((c) => enrichTree(c, new Map())),
+        pendingClassifyIds: [],
+      };
+    }
+    ownAccountId = fbCredentials.pageId;
+    ownUsername = fbCredentials.pageName;
   }
 
   const flat = flattenComments(input.comments);
@@ -83,11 +107,9 @@ export async function upsertListeningCommentsForPost(input: {
     });
 
     const isOwnComment =
-      Boolean(c.fromId && c.fromId === account.instagramUserId) ||
+      Boolean(c.fromId && c.fromId === ownAccountId) ||
       Boolean(
-        c.username &&
-          account.username &&
-          c.username.toLowerCase() === account.username.toLowerCase()
+        c.username && ownUsername && c.username.toLowerCase() === ownUsername.toLowerCase()
       );
 
     const row = await prisma.socialComment.upsert({
@@ -99,7 +121,8 @@ export async function upsertListeningCommentsForPost(input: {
       },
       create: {
         workspaceId: input.workspaceId,
-        socialAccountId: account.id,
+        platform,
+        socialAccountId: account?.id ?? null,
         postId: input.postId,
         commentId: c.id,
         parentCommentId: c.parentCommentId,

@@ -3,7 +3,7 @@ import {
   type PageMessagingWebhookBody,
 } from './instagramWebhookHandler.js';
 import { handleMessengerWebhookBody } from './messengerWebhookHandler.js';
-import { handleInstagramCommentWebhookBody } from './instagramCommentWebhook.service.js';
+import { handleSocialCommentWebhookBody } from './instagramCommentWebhook.service.js';
 import { findInstagramAccountByEntryId } from './workspaceResolve.js';
 import { findMessengerAccountByPageId } from './workspaceResolve.js';
 import {
@@ -23,8 +23,8 @@ export async function handleMetaMessagingWebhook(body: PageMessagingWebhookBody)
   // ponytail: temporary — inspect raw Meta IG/Page webhook payload
   console.log('[Instagram Webhook] raw payload', JSON.stringify(body, null, 2));
 
-  // Social Listening: comments / live_comments (object=instagram or page)
-  await handleInstagramCommentWebhookBody(body);
+  // Social Listening: Instagram comments/live_comments + Facebook Page feed comments (object=instagram or page)
+  await handleSocialCommentWebhookBody(body);
 
   if (body.object === 'instagram') {
     await handleInstagramWebhookBody(body);

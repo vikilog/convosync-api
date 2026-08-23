@@ -540,24 +540,28 @@ model InstagramAccount {
   @@index([status])
 }
 
-/// Instagram comment persisted for AI classification + Review Queue.
+/// Instagram or Facebook Page comment persisted for AI classification + Review Queue.
 model SocialComment {
   id                   String    @id @default(cuid())
   workspaceId          String
   workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  /// InstagramAccount.id
-  socialAccountId      String
-  socialAccount        InstagramAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
-  /// IG media / post id
+  /// instagram | facebook
+  platform             String    @default("instagram")
+  /// InstagramAccount.id — null for platform = "facebook" (Facebook Page
+  /// credentials are resolved directly from Workspace.fbPageId/fbPageToken,
+  /// there is no dedicated multi-row account table for it).
+  socialAccountId      String?
+  socialAccount        InstagramAccount? @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  /// IG media id, or FB Page post id
   postId               String
-  /// IG comment id (Graph)
+  /// IG or FB comment id (Graph)
   commentId            String
   parentCommentId      String?
   commenterUsername    String?
-  /// IG-scoped commenter id (webhook `from.id`) — used to link the eventual
-  /// Lead to the SAME Contact row findOrCreateInstagramContact already
-  /// created for this commenter, instead of a synthetic phone that can
-  /// never match.
+  /// Platform-scoped commenter id (webhook `from.id` / `sender_id`) — used to
+  /// link the eventual Lead to the SAME Contact row already created for this
+  /// commenter (findOrCreateInstagramContact / findOrCreateMessengerContact),
+  /// instead of a synthetic phone that can never match.
   commenterId          String?
   commenterProfilePic  String?
   commentText          String
@@ -590,6 +594,7 @@ model SocialComment {
   @@unique([workspaceId, commentId])
   @@index([workspaceId, status])
   @@index([workspaceId, postId])
+  @@index([workspaceId, platform])
   @@index([socialAccountId])
   @@index([classificationStatus])
 }
@@ -652,7 +657,7 @@ model Lead {
   email                  String?
   /// Denormalized stage name for activity / legacy display (synced from stageId).
   stage                  String    @default("New")
-  /// instagram | manual | whatsapp
+  /// instagram | facebook | manual | whatsapp
   source                 String    @default("instagram")
   requirement            String    @default("")
   notes                  String    @default("")

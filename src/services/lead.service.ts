@@ -14,6 +14,7 @@ import {
 } from './leadJourney.js';
 import { resolveContactIdentityFields } from './leadIdentity.js';
 import { findOrCreateInstagramContact } from '../lib/instagramContact.js';
+import { findOrCreateMessengerContact } from '../lib/messengerContact.js';
 import { eventBus } from '../modules/journey/events/event-bus.js';
 
 function isPrismaUniqueViolation(err: unknown): boolean {
@@ -111,21 +112,33 @@ export async function createLeadFromSocialComment(input: {
   }
 
   // Resolve the SAME Contact identity the inbound webhook handler already
-  // creates for this commenter (ensureInstagramCommentContact /
-  // findOrCreateInstagramContact) so the lead is linked to a real contact
-  // from creation — not left to fall back to a synthetic ig:lead:{id}
-  // phone at conversion time that can never match the real one.
+  // creates for this commenter (ensureSocialCommentContact /
+  // findOrCreateInstagramContact / findOrCreateMessengerContact) so the
+  // lead is linked to a real contact from creation — not left to fall back
+  // to a synthetic ig:lead:{id} phone at conversion time that can never
+  // match the real one.
   let contactId: string | null = null;
   if (comment.commenterId?.trim()) {
-    const contact = await findOrCreateInstagramContact({
-      db: prisma,
-      workspaceId: input.workspaceId,
-      scopedUserId: comment.commenterId.trim(),
-      name: comment.commenterUsername?.trim()
-        ? `@${comment.commenterUsername.replace(/^@/, '')}`
-        : undefined,
-    });
-    contactId = contact.id;
+    const id = comment.commenterId.trim();
+    if (comment.platform === 'facebook') {
+      const contact = await findOrCreateMessengerContact({
+        db: prisma,
+        workspaceId: input.workspaceId,
+        psid: id,
+        name: comment.commenterUsername?.trim() || `Facebook ${id.slice(-6)}`,
+      });
+      contactId = contact.id;
+    } else {
+      const contact = await findOrCreateInstagramContact({
+        db: prisma,
+        workspaceId: input.workspaceId,
+        scopedUserId: id,
+        name: comment.commenterUsername?.trim()
+          ? `@${comment.commenterUsername.replace(/^@/, '')}`
+          : undefined,
+      });
+      contactId = contact.id;
+    }
   }
 
   // Same-person dedup: contactId is the reliable identity — the same key
@@ -170,7 +183,7 @@ export async function createLeadFromSocialComment(input: {
     {
       id: `act-${Date.now()}-created`,
       type: 'created',
-      text: 'Lead created from Instagram comment',
+      text: `Lead created from ${comment.platform === 'facebook' ? 'Facebook' : 'Instagram'} comment`,
       at: now,
     },
   ];
@@ -190,7 +203,7 @@ export async function createLeadFromSocialComment(input: {
     stage: defaultStage.name,
     contactId,
     name: comment.commenterUsername ? `@${comment.commenterUsername}` : null,
-    source: 'instagram',
+    source: comment.platform,
     requirement: comment.commentText.slice(0, 500),
     notes: '',
     originUsername: comment.commenterUsername,

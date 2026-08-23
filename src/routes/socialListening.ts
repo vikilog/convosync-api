@@ -4,6 +4,11 @@ import { getJwtUser } from '../middleware/auth.js';
 import { planFeatureAuth } from '../middleware/planFeatureAuth.js';
 import { replyToListeningComment } from '../services/instagramListening.service.js';
 import {
+  replyToFacebookComment,
+  hideFacebookComment,
+  deleteFacebookComment,
+} from '../services/facebookListening.service.js';
+import {
   classifySocialCommentById,
   mapIntentToReviewLabel,
   mapStatusToReviewStatus,
@@ -27,11 +32,17 @@ import {
   parseDashboardRange,
 } from '../services/socialListeningDashboard.service.js';
 import { listSocialListeningActivity } from '../services/socialListeningActivity.service.js';
+import { getFacebookPageInsightsForWorkspace } from '../services/facebookPageInsights.service.js';
 import {
   getPostAutomationMap,
   getEffectivePostSettings,
   updatePostSettings,
 } from '../services/socialListeningPostSetting.service.js';
+import type { SocialListeningPlatform } from '../services/socialCommentSync.service.js';
+
+function parsePlatform(raw: string | undefined): SocialListeningPlatform | undefined {
+  return raw === 'instagram' || raw === 'facebook' ? raw : undefined;
+}
 
 export default async function socialListeningRoutes(fastify: FastifyInstance) {
   const auth = planFeatureAuth('socialListening');
@@ -91,42 +102,58 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
 
   fastify.get('/dashboard/stats', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { range?: string };
+    const query = request.query as { range?: string; platform?: string };
     const range = parseDashboardRange(query.range);
-    return getDashboardStats(workspaceId, range);
+    return getDashboardStats(workspaceId, range, parsePlatform(query.platform));
   });
 
   fastify.get('/dashboard/intent-breakdown', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { range?: string };
+    const query = request.query as { range?: string; platform?: string };
     const range = parseDashboardRange(query.range);
-    return getIntentBreakdown(workspaceId, range);
+    return getIntentBreakdown(workspaceId, range, parsePlatform(query.platform));
   });
 
   fastify.get('/dashboard/needs-attention', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { limit?: string };
+    const query = request.query as { limit?: string; platform?: string };
     const limit = query.limit ? Number(query.limit) : 25;
-    return getNeedsAttention(workspaceId, Number.isFinite(limit) ? limit : 25);
+    return getNeedsAttention(
+      workspaceId,
+      Number.isFinite(limit) ? limit : 25,
+      parsePlatform(query.platform)
+    );
   });
 
   fastify.get('/dashboard/activity', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { limit?: string };
+    const query = request.query as { limit?: string; platform?: string };
     const limit = query.limit ? Number(query.limit) : 30;
     const events = await listSocialListeningActivity(
       workspaceId,
-      Number.isFinite(limit) ? limit : 30
+      Number.isFinite(limit) ? limit : 30,
+      parsePlatform(query.platform)
     );
     return { events };
   });
 
   fastify.get('/dashboard/top-posts', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { range?: string; limit?: string };
+    const query = request.query as { range?: string; limit?: string; platform?: string };
     const range = parseDashboardRange(query.range);
     const limit = query.limit ? Number(query.limit) : 8;
-    return getTopPosts(workspaceId, range, Number.isFinite(limit) ? limit : 8);
+    return getTopPosts(
+      workspaceId,
+      range,
+      Number.isFinite(limit) ? limit : 8,
+      parsePlatform(query.platform)
+    );
+  });
+
+  /** Page-level reach/engagement analytics — surfaces the connected Facebook Page's Insights in the Dashboard. */
+  fastify.get('/dashboard/facebook-insights', auth, async (request) => {
+    const { workspaceId } = getJwtUser(request);
+    return getFacebookPageInsightsForWorkspace(workspaceId);
   });
 
   /** Batch: agent on/off + funnel per post (missing = agent off). */
@@ -230,25 +257,41 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
   /** Review Queue — SocialComment rows with status=new (shared with Post Detail). */
   fastify.get('/comments', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { status?: string; postId?: string };
+    const query = request.query as { status?: string; postId?: string; platform?: string };
+    const platform = parsePlatform(query.platform);
 
     // Hide the page's own comments/replies from the human review queue.
-    const accounts = await prisma.instagramAccount.findMany({
-      where: { workspaceId },
-      select: { username: true, instagramUserId: true },
-    });
+    const [accounts, workspace] = await Promise.all([
+      prisma.instagramAccount.findMany({
+        where: { workspaceId },
+        select: { username: true, instagramUserId: true },
+      }),
+      prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { fbPageId: true, fbPageName: true },
+      }),
+    ]);
     const ownUsernames = accounts
       .map((a) => a.username?.trim())
       .filter((n): n is string => Boolean(n));
+    if (workspace?.fbPageName?.trim()) {
+      ownUsernames.push(workspace.fbPageName.trim());
+    }
+    const ownCommenterIds = workspace?.fbPageId?.trim() ? [workspace.fbPageId.trim()] : [];
 
-    if (ownUsernames.length > 0 && (!query.status || query.status === 'new')) {
+    const ownFilterOr = [
+      ...ownUsernames.map((n) => ({
+        commenterUsername: { equals: n, mode: 'insensitive' as const },
+      })),
+      ...ownCommenterIds.map((id) => ({ commenterId: id })),
+    ];
+
+    if (ownFilterOr.length > 0 && (!query.status || query.status === 'new')) {
       await prisma.socialComment.updateMany({
         where: {
           workspaceId,
           status: 'new',
-          OR: ownUsernames.map((n) => ({
-            commenterUsername: { equals: n, mode: 'insensitive' as const },
-          })),
+          OR: ownFilterOr,
         },
         data: { status: 'ignored', classificationStatus: 'classified' },
       });
@@ -257,21 +300,14 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
     const rows = await prisma.socialComment.findMany({
       where: {
         workspaceId,
+        ...(platform ? { platform } : {}),
         ...(query.postId ? { postId: query.postId } : {}),
         ...(query.status === 'all'
           ? {}
           : query.status
             ? { status: query.status }
             : { status: 'new' }),
-        ...(ownUsernames.length > 0
-          ? {
-              NOT: {
-                OR: ownUsernames.map((n) => ({
-                  commenterUsername: { equals: n, mode: 'insensitive' as const },
-                })),
-              },
-            }
-          : {}),
+        ...(ownFilterOr.length > 0 ? { NOT: { OR: ownFilterOr } } : {}),
       },
       orderBy: [{ commentedAt: 'desc' }, { createdAt: 'desc' }],
       take: 200,
@@ -279,9 +315,10 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
 
     const comments = rows.map((r) => ({
       id: r.id,
+      platform: r.platform,
       commentId: r.commentId,
       postId: r.postId,
-      username: r.commenterUsername || 'instagram_user',
+      username: r.commenterUsername || `${r.platform}_user`,
       profilePicUrl: r.commenterProfilePic,
       commentText: r.commentText,
       postThumbnailUrl: r.postThumbnailUrl || '',
@@ -338,9 +375,17 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const body = (request.body || {}) as {
-      action?: 'approve_dm' | 'approve_reply' | 'escalate' | 'ignore' | 'review';
+      action?:
+        | 'approve_dm'
+        | 'approve_reply'
+        | 'escalate'
+        | 'ignore'
+        | 'review'
+        | 'hide_comment'
+        | 'delete_comment';
       message?: string;
       instagramUserId?: string;
+      hidden?: boolean;
     };
 
     const row = await prisma.socialComment.findFirst({
@@ -365,19 +410,22 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
         approveDmResult = await executeApproveAndSendDm({
           workspaceId,
           socialCommentId: row.id,
-          instagramUserId: body.instagramUserId || row.socialAccount.instagramUserId,
+          instagramUserId: body.instagramUserId || row.socialAccount?.instagramUserId,
           messageOverride: body.message,
         });
         nextStatus = approveDmResult.status;
         replyId = approveDmResult.publicReplyId;
       } else if (action === 'approve_reply' || action === 'review') {
         if (body.message?.trim()) {
-          const res = await replyToListeningComment(
-            workspaceId,
-            row.commentId,
-            body.message,
-            body.instagramUserId || row.socialAccount.instagramUserId
-          );
+          const res =
+            row.platform === 'facebook'
+              ? await replyToFacebookComment(workspaceId, row.commentId, body.message)
+              : await replyToListeningComment(
+                  workspaceId,
+                  row.commentId,
+                  body.message,
+                  body.instagramUserId || row.socialAccount?.instagramUserId
+                );
           replyId = res.id;
           nextStatus = 'replied';
           await prisma.socialComment.update({
@@ -398,6 +446,19 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
         } else {
           nextStatus = 'approved';
         }
+      } else if (action === 'hide_comment') {
+        if (row.platform !== 'facebook') {
+          return reply.code(400).send({ error: 'Hide comment is only supported for Facebook Page comments' });
+        }
+        const hidden = body.hidden !== false;
+        await hideFacebookComment(workspaceId, row.commentId, hidden);
+        nextStatus = hidden ? 'ignored' : row.status;
+      } else if (action === 'delete_comment') {
+        if (row.platform !== 'facebook') {
+          return reply.code(400).send({ error: 'Delete comment is only supported for Facebook Page comments' });
+        }
+        await deleteFacebookComment(workspaceId, row.commentId);
+        nextStatus = 'ignored';
       } else {
         return reply.code(400).send({ error: 'Unknown action' });
       }
