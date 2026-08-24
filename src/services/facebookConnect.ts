@@ -30,6 +30,17 @@ export type FacebookConnectResult = {
   missingScopes?: string[];
 };
 
+export type FacebookPageCandidatePublic = {
+  pageId: string;
+  pageName: string;
+  category?: string;
+  picture?: string;
+};
+
+export type FacebookPageSessionCandidate = FacebookPageCandidatePublic & {
+  pageAccessToken: string;
+};
+
 type RawPage = {
   id: string;
   name?: string;
@@ -212,9 +223,21 @@ async function enrichPageDetails(page: RawPage, pageAccessToken: string): Promis
   }
 }
 
-export async function connectWorkspaceFacebook(
-  input: FacebookConnectInput
-): Promise<FacebookConnectResult> {
+/**
+ * Exchanges the OAuth code once and lists every Page the user manages, without
+ * picking one or writing to the workspace — lets the frontend show a picker
+ * (mirrors previewInstagramConnect/completeInstagramConnect) instead of
+ * silently connecting whichever Page Meta returned first.
+ */
+export async function previewFacebookConnect(input: {
+  workspaceId: string;
+  code: string;
+  redirectUri?: string;
+}): Promise<{
+  sessionPages: FacebookPageSessionCandidate[];
+  requiresSelection: boolean;
+  pages: FacebookPageCandidatePublic[];
+}> {
   const redirectUri = resolveFacebookRedirectUri(input.redirectUri);
   const shortUserToken = await exchangeCodeForToken(input.code, redirectUri);
   const userAccessToken = await exchangeForLongLivedUserToken(shortUserToken);
@@ -228,25 +251,46 @@ export async function connectWorkspaceFacebook(
     );
   }
 
-  const selected =
-    (input.pageId
-      ? managedPages.find((page) => page.id === input.pageId)
-      : undefined) || managedPages[0];
+  const sessionPages: FacebookPageSessionCandidate[] = [];
+  for (const page of managedPages) {
+    const pageAccessToken = await resolvePageAccessToken(page.id, userAccessToken, managedPages);
+    sessionPages.push({
+      pageId: page.id,
+      pageName: page.name || page.id,
+      category: page.category,
+      picture: page.picture?.data?.url,
+      pageAccessToken,
+    });
+  }
 
-  const pageAccessToken = await resolvePageAccessToken(
-    selected.id,
-    userAccessToken,
-    managedPages
-  );
+  const pages = sessionPages.map(({ pageAccessToken: _pageAccessToken, ...rest }) => rest);
 
-  const tokenInfo = await inspectPageAccessToken(pageAccessToken);
+  return {
+    sessionPages,
+    requiresSelection: sessionPages.length > 1,
+    pages,
+  };
+}
+
+/** Validates the selected Page's token and saves it to the workspace. */
+export async function completeFacebookConnect(input: {
+  workspaceId: string;
+  pageId: string;
+  pages: FacebookPageSessionCandidate[];
+}): Promise<FacebookConnectResult> {
+  const selected = input.pages.find((page) => page.pageId === input.pageId);
+  if (!selected) {
+    throw new Error('Selected Facebook Page was not found in this connect session');
+  }
+
+  const tokenInfo = await inspectPageAccessToken(selected.pageAccessToken);
   if (!tokenInfo.isValid) {
-    throw new FacebookConnectError('Meta returned an invalid Page access token.', managedPages.length);
+    throw new FacebookConnectError('Meta returned an invalid Page access token.', input.pages.length);
   }
   if (tokenInfo.type && tokenInfo.type !== 'PAGE') {
     throw new FacebookConnectError(
       `Expected a Page access token but Meta returned "${tokenInfo.type}". Reconnect and select your Page.`,
-      managedPages.length
+      input.pages.length
     );
   }
   if (tokenInfo.missingScopes.length > 0) {
@@ -255,14 +299,17 @@ export async function connectWorkspaceFacebook(
     );
   }
 
-  const enriched = await enrichPageDetails(selected, pageAccessToken);
-  const picture = enriched.picture?.data?.url;
+  const enriched = await enrichPageDetails(
+    { id: selected.pageId, name: selected.pageName, category: selected.category },
+    selected.pageAccessToken
+  );
+  const picture = enriched.picture?.data?.url || selected.picture;
 
   await prisma.workspace.update({
     where: { id: input.workspaceId },
     data: {
       fbPageId: enriched.id,
-      fbPageToken: encryptSecret(pageAccessToken),
+      fbPageToken: encryptSecret(selected.pageAccessToken),
       fbPageName: enriched.name || enriched.id,
     },
   });
@@ -276,6 +323,19 @@ export async function connectWorkspaceFacebook(
     grantedScopes: tokenInfo.scopes,
     missingScopes: tokenInfo.missingScopes,
   };
+}
+
+/** Legacy single-call path (code [+ pageId] in one request) — kept for direct callers that skip the preview step. */
+export async function connectWorkspaceFacebook(
+  input: FacebookConnectInput
+): Promise<FacebookConnectResult> {
+  const { sessionPages } = await previewFacebookConnect(input);
+  const pageId = input.pageId || sessionPages[0].pageId;
+  return completeFacebookConnect({
+    workspaceId: input.workspaceId,
+    pageId,
+    pages: sessionPages,
+  });
 }
 
 export async function getConnectedFacebookPage(workspaceId: string) {

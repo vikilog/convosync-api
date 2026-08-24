@@ -2,18 +2,22 @@ import { FastifyInstance } from 'fastify';
 import axios from 'axios';
 import { prisma } from '../index.js';
 import { encryptSecret } from '../lib/field-encryption.js';
-import { getJwtUser } from '../middleware/auth.js';
+import { getJwtUser, type JwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import { getWorkspaceFacebookPageCredentials } from '../services/facebookCredentials.js';
 import { subscribeFacebookPageFeed } from '../services/instagramWebhookSubscribe.js';
+import { upsertListeningCommentsForPost, triggerClassifyAfterUpsert } from '../services/socialCommentSync.service.js';
 import {
   connectWorkspaceFacebook,
+  previewFacebookConnect,
+  completeFacebookConnect,
   FacebookConnectError,
   getConnectedFacebookPage,
   inspectPageAccessToken,
   fetchFacebookPagePosts,
   fetchFacebookPageInsights,
   resolveFacebookRedirectUri,
+  type FacebookPageSessionCandidate,
 } from '../services/facebookConnect.js';
 
 const GRAPH_API = 'https://graph.facebook.com/v19.0';
@@ -257,6 +261,48 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
     return info;
   });
 
+  /** Exchanges the OAuth code and lists every Page the user manages so the frontend can show a picker instead of silently connecting the first one. */
+  fastify.post('/connect/preview', auth, async (request, reply) => {
+    const body = request.body as { code?: string; redirectUri?: string };
+    const { workspaceId } = getJwtUser(request);
+
+    if (!body.code) {
+      return reply.code(400).send({ error: 'Missing Meta authorization code' });
+    }
+
+    try {
+      const { sessionPages, requiresSelection, pages } = await previewFacebookConnect({
+        workspaceId,
+        code: body.code,
+        redirectUri: body.redirectUri,
+      });
+
+      const connectToken = fastify.jwt.sign(
+        { purpose: 'facebook_connect', workspaceId, pages: sessionPages } as JwtUser & {
+          pages: unknown;
+        },
+        { expiresIn: '15m' }
+      );
+
+      return reply.send({ success: true, connectToken, requiresSelection, pages });
+    } catch (err: unknown) {
+      if (err instanceof FacebookConnectError) {
+        return reply.code(400).send({
+          error: err.message,
+          missingScopes: err.missingScopes,
+          discovery: { pagesFound: err.pagesFound, pageNames: err.pageNames },
+        });
+      }
+      const graphMessage =
+        axios.isAxiosError(err) && err.response?.data
+          ? JSON.stringify(err.response.data)
+          : err instanceof Error
+            ? err.message
+            : 'Facebook connection failed';
+      return reply.code(400).send({ error: graphMessage });
+    }
+  });
+
   fastify.post('/connect', auth, async (request, reply) => {
     const body = request.body as {
       code?: string;
@@ -264,8 +310,63 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
       pageId?: string;
       pageAccessToken?: string;
       pageName?: string;
+      connectToken?: string;
     };
     const { workspaceId } = getJwtUser(request);
+
+    if (body.connectToken) {
+      if (!body.pageId) {
+        return reply.code(400).send({ error: 'Missing pageId for Facebook connect' });
+      }
+
+      try {
+        const session = fastify.jwt.verify<{
+          purpose?: string;
+          workspaceId?: string;
+          pages?: FacebookPageSessionCandidate[];
+        }>(body.connectToken);
+
+        if (session.purpose !== 'facebook_connect' || session.workspaceId !== workspaceId) {
+          return reply.code(400).send({ error: 'Invalid or expired Facebook connect session' });
+        }
+        if (!session.pages?.length) {
+          return reply.code(400).send({ error: 'Facebook connect session has no Pages' });
+        }
+
+        const result = await completeFacebookConnect({
+          workspaceId,
+          pageId: body.pageId,
+          pages: session.pages,
+        });
+
+        fastify.log.info(
+          `Facebook Page connected for workspace ${workspaceId}: ${result.pageName} (${result.pageId})`
+        );
+
+        const fbCredentials = await getWorkspaceFacebookPageCredentials(workspaceId);
+        const webhookSubscribe = fbCredentials
+          ? await subscribeFacebookPageFeed(fbCredentials.pageId, fbCredentials.pageAccessToken)
+          : { ok: false, error: 'Page credentials not found after connect' };
+        if (!webhookSubscribe.ok) {
+          fastify.log.warn(
+            { err: webhookSubscribe.error },
+            `Facebook Page feed webhook subscription failed for workspace ${workspaceId}`
+          );
+        }
+
+        return reply.send({ success: true, ...result, webhookSubscribe });
+      } catch (err: unknown) {
+        if (err instanceof FacebookConnectError) {
+          return reply.code(400).send({
+            error: err.message,
+            missingScopes: err.missingScopes,
+            discovery: { pagesFound: err.pagesFound, pageNames: err.pageNames },
+          });
+        }
+        const message = err instanceof Error ? err.message : 'Facebook connection failed';
+        return reply.code(400).send({ error: message });
+      }
+    }
 
     if (body.code) {
       try {
@@ -394,7 +495,8 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
         },
       });
 
-      const comments = (res.data.data || []).map(
+      const rawComments = res.data.data || [];
+      const comments = rawComments.map(
         (c: {
           id: string;
           from?: { name?: string; picture?: { data?: { url?: string } } };
@@ -416,6 +518,27 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
           canDelete: c.can_remove ?? true,
         })
       );
+
+      // Backfill: comments made before the Page's feed webhook was subscribed
+      // (or missed by it) never land in SocialComment otherwise — classification
+      // and the review queue only ever see webhook-delivered comments.
+      const { pendingClassifyIds } = await upsertListeningCommentsForPost({
+        workspaceId,
+        platform: 'facebook',
+        postId,
+        comments: rawComments.map(
+          (c: { id: string; from?: { id?: string; name?: string }; message?: string; created_time?: string; like_count?: number }) => ({
+            id: c.id,
+            text: c.message || '',
+            username: c.from?.name || null,
+            fromId: c.from?.id || null,
+            timestamp: c.created_time || null,
+            likeCount: c.like_count ?? null,
+            replies: [],
+          })
+        ),
+      });
+      triggerClassifyAfterUpsert(workspaceId, pendingClassifyIds);
 
       return { comments };
     } catch (err: unknown) {
