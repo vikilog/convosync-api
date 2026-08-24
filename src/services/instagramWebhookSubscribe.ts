@@ -32,7 +32,7 @@ function graphErrMessage(err: unknown): string {
   );
 }
 
-async function subscribePageMessaging(
+export async function subscribePageMessaging(
   pageId: string,
   pageAccessToken: string
 ): Promise<{ ok: boolean; error?: string }> {

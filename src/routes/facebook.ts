@@ -5,7 +5,7 @@ import { encryptSecret } from '../lib/field-encryption.js';
 import { getJwtUser, type JwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import { getWorkspaceFacebookPageCredentials } from '../services/facebookCredentials.js';
-import { subscribeFacebookPageFeed } from '../services/instagramWebhookSubscribe.js';
+import { subscribeFacebookPageFeed, subscribePageMessaging } from '../services/instagramWebhookSubscribe.js';
 import { upsertListeningCommentsForPost, triggerClassifyAfterUpsert } from '../services/socialCommentSync.service.js';
 import {
   connectWorkspaceFacebook,
@@ -21,6 +21,24 @@ import {
 } from '../services/facebookConnect.js';
 
 const GRAPH_API = 'https://graph.facebook.com/v19.0';
+
+/** Subscribes the connected Page to both feed (Social Listening comments) and messaging (pages_messaging DMs) webhook fields. */
+async function subscribeFacebookPageWebhooks(
+  pageId: string,
+  pageAccessToken: string
+): Promise<{ ok: boolean; error?: string }> {
+  const [feed, messaging] = await Promise.all([
+    subscribeFacebookPageFeed(pageId, pageAccessToken),
+    subscribePageMessaging(pageId, pageAccessToken),
+  ]);
+  if (feed.ok && messaging.ok) return { ok: true };
+  return {
+    ok: false,
+    error: [!feed.ok && `feed: ${feed.error}`, !messaging.ok && `messaging: ${messaging.error}`]
+      .filter(Boolean)
+      .join(' · '),
+  };
+}
 
 type GraphPost = {
   id: string;
@@ -345,12 +363,12 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
 
         const fbCredentials = await getWorkspaceFacebookPageCredentials(workspaceId);
         const webhookSubscribe = fbCredentials
-          ? await subscribeFacebookPageFeed(fbCredentials.pageId, fbCredentials.pageAccessToken)
+          ? await subscribeFacebookPageWebhooks(fbCredentials.pageId, fbCredentials.pageAccessToken)
           : { ok: false, error: 'Page credentials not found after connect' };
         if (!webhookSubscribe.ok) {
           fastify.log.warn(
             { err: webhookSubscribe.error },
-            `Facebook Page feed webhook subscription failed for workspace ${workspaceId}`
+            `Facebook Page webhook subscription failed for workspace ${workspaceId}`
           );
         }
 
@@ -383,12 +401,12 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
 
         const fbCredentials = await getWorkspaceFacebookPageCredentials(workspaceId);
         const webhookSubscribe = fbCredentials
-          ? await subscribeFacebookPageFeed(fbCredentials.pageId, fbCredentials.pageAccessToken)
+          ? await subscribeFacebookPageWebhooks(fbCredentials.pageId, fbCredentials.pageAccessToken)
           : { ok: false, error: 'Page credentials not found after connect' };
         if (!webhookSubscribe.ok) {
           fastify.log.warn(
             { err: webhookSubscribe.error },
-            `Facebook Page feed webhook subscription failed for workspace ${workspaceId}`
+            `Facebook Page webhook subscription failed for workspace ${workspaceId}`
           );
         }
 
@@ -420,14 +438,14 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
           fbPageName: body.pageName,
         },
       });
-      const webhookSubscribe = await subscribeFacebookPageFeed(
+      const webhookSubscribe = await subscribeFacebookPageWebhooks(
         body.pageId,
         body.pageAccessToken
       );
       if (!webhookSubscribe.ok) {
         fastify.log.warn(
           { err: webhookSubscribe.error },
-          `Facebook Page feed webhook subscription failed for workspace ${workspaceId}`
+          `Facebook Page webhook subscription failed for workspace ${workspaceId}`
         );
       }
       return reply.send({ success: true, webhookSubscribe });
