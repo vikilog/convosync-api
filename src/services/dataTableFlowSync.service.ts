@@ -1,20 +1,28 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
+import { resolveFlowSend } from './whatsappFlowToken.service.js';
 
 /**
  * Appends one DataTableRow when an inbound WhatsApp Flow response belongs to a
  * flow connected to a Data Table — regardless of whether the response arrived
  * via a journey, a campaign template button, or a manual test-send, since all
- * three land here through the same webhook. Match is by flow name within the
- * workspace: Meta's nfm_reply only carries the flow's name, not its id.
+ * three land here through the same webhook. Matched via the flow_token that was
+ * recorded (recordFlowSend) when the flow was sent: Meta's nfm_reply.name is
+ * always the fixed string "flow", never the flow's actual name, so it can't be
+ * used to identify which flow was submitted.
  */
 export async function syncFlowResponseToDataTable(input: {
   workspaceId: string;
-  flowName: string;
   fields: Record<string, unknown>;
 }): Promise<void> {
+  const flowToken = input.fields.flow_token;
+  if (typeof flowToken !== 'string' || !flowToken) return;
+
+  const send = await resolveFlowSend(flowToken);
+  if (!send || send.workspaceId !== input.workspaceId) return;
+
   const flow = await prisma.whatsAppFlow.findFirst({
-    where: { workspaceId: input.workspaceId, name: input.flowName, dataTableId: { not: null } },
+    where: { id: send.flowId, workspaceId: input.workspaceId, dataTableId: { not: null } },
     select: { dataTableId: true, dataTableFieldMap: true },
   });
   if (!flow?.dataTableId) return;

@@ -15,6 +15,7 @@ import {
   publishMetaFlow,
   uploadMetaFlowJson,
 } from '../services/whatsappFlowMeta.js';
+import { recordFlowSend } from '../services/whatsappFlowToken.service.js';
 
 /**
  * WhatsApp Flow CRUD + publish-to-Meta + test send (MVP: navigate-only, raw
@@ -271,6 +272,7 @@ export default async function whatsappFlowRoutes(fastify: FastifyInstance) {
       return reply.code(400).send({ error: 'WhatsApp is not connected for this workspace' });
     }
 
+    const flowToken = randomUUID();
     try {
       const result = await sendWhatsAppFlowMessage(
         credentials.accessToken,
@@ -279,11 +281,12 @@ export default async function whatsappFlowRoutes(fastify: FastifyInstance) {
         {
           bodyText: body.bodyText || `Please complete: ${flow.name}`,
           metaFlowId: flow.metaFlowId,
-          flowToken: randomUUID(),
+          flowToken,
           ctaLabel: body.ctaLabel || 'Open',
           firstScreenId,
         }
       );
+      await recordFlowSend({ flowToken, flowId: flow.id, workspaceId });
       return { ok: true, waMessageId: result.waMessageId };
     } catch (err) {
       return reply.code(502).send({ error: formatMetaSendError(err) });

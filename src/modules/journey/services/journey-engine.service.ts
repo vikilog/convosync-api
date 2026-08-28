@@ -27,6 +27,7 @@ import {
 import { upsertLeadForContact } from '../../../services/lead.service.js';
 import { registerWorkspaceTags } from '../../../services/workspaceTags.service.js';
 import { randomUUID } from 'node:crypto';
+import { recordFlowSend } from '../../../services/whatsappFlowToken.service.js';
 import type {
   AddToFunnelNodeData,
   AskQuestionNodeData,
@@ -398,6 +399,7 @@ export class JourneyEngine {
     }
 
     const text = data.text?.trim() || `Please complete: ${flow.name}`;
+    const flowToken = randomUUID();
 
     const result = await this.messagingProvider.send({
       workspaceId: execution.journey.workspaceId,
@@ -406,13 +408,15 @@ export class JourneyEngine {
       text: renderTemplateVariables(text, execution.contact),
       flow: {
         metaFlowId: flow.metaFlowId,
-        flowToken: randomUUID(),
+        flowToken,
         ctaLabel: data.ctaLabel || 'Open',
         firstScreenId,
         headerText: data.headerText,
       },
       metadata: { executionId: execution.id, nodeId, action: 'send_flow', flowId: flow.id },
     });
+
+    await recordFlowSend({ flowToken, flowId: flow.id, workspaceId: execution.journey.workspaceId });
 
     const context: ExecutionWaitContext = {
       waitKind: 'flow',

@@ -32,6 +32,7 @@ import {
   uploadTemplateHeaderMediaForSend,
 } from './templateSendHeader.js';
 import { isMetaRateLimitError } from './whatsapp.js';
+import { recordFlowSend } from './whatsappFlowToken.service.js';
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -280,6 +281,7 @@ async function executeWhatsAppCampaignBroadcast(
 
     const displayContent = renderTemplateBody(template.bodyPattern, bodyParams);
 
+    const flowToken = template.buttonType === 'FLOW' ? randomUUID() : undefined;
     try {
       await assertWhatsAppTemplateAffordable({
         workspaceId,
@@ -296,9 +298,12 @@ async function executeWhatsAppCampaignBroadcast(
         bodyParams,
         {
           ...(headerMedia ? { headerMedia } : {}),
-          ...(template.buttonType === 'FLOW' ? { flowToken: randomUUID() } : {}),
+          ...(flowToken ? { flowToken } : {}),
         }
       );
+      if (flowToken && template.buttonFlowId) {
+        await recordFlowSend({ flowToken, flowId: template.buttonFlowId, workspaceId });
+      }
 
       const { conversation } = await findOrReopenConversationForInbound({
         workspaceId,

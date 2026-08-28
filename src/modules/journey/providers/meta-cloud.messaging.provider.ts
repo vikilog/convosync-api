@@ -23,6 +23,7 @@ import {
   uploadTemplateHeaderMediaForSend,
 } from '../../../services/templateSendHeader.js';
 import { templateMessagePresentationMetadata } from '../../../services/templateMessageMetadata.js';
+import { recordFlowSend } from '../../../services/whatsappFlowToken.service.js';
 import type { MessagingProvider, SendMessageInput, SendMessageResult } from './messaging.provider.js';
 
 export class MetaCloudMessagingProvider implements MessagingProvider {
@@ -64,6 +65,7 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
       buttonText: string | null;
       buttonUrl: string | null;
       buttonPhoneNumber: string | null;
+      buttonFlowId: string | null;
     } | null = null;
 
     if (input.templateName || input.templateId) {
@@ -122,6 +124,7 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
         phoneNumberId: credentials.phoneNumberId,
       });
 
+      const templateFlowToken = templateRecord?.buttonType === 'FLOW' ? randomUUID() : undefined;
       const result = await sendWhatsAppTemplateMessage(
         credentials.accessToken,
         credentials.phoneNumberId,
@@ -131,10 +134,17 @@ export class MetaCloudMessagingProvider implements MessagingProvider {
         variables,
         {
           ...(headerMedia ? { headerMedia } : {}),
-          ...(templateRecord?.buttonType === 'FLOW' ? { flowToken: randomUUID() } : {}),
+          ...(templateFlowToken ? { flowToken: templateFlowToken } : {}),
         }
       );
       waMessageId = result.waMessageId;
+      if (templateFlowToken && templateRecord?.buttonFlowId) {
+        await recordFlowSend({
+          flowToken: templateFlowToken,
+          flowId: templateRecord.buttonFlowId,
+          workspaceId: input.workspaceId,
+        });
+      }
     } else {
       if (!renderedBody) {
         throw new Error('Message text or template is required');

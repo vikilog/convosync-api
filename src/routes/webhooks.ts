@@ -358,11 +358,10 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
               // Data Table sync works regardless of whatever automation (if any) is
               // currently assigned — the flow may have been sent by a campaign or a
               // manual test-send with no journey execution to piggyback on.
-              if (parsed.flowResponse?.flowName) {
+              if (parsed.flowResponse) {
                 try {
                   await syncFlowResponseToDataTable({
                     workspaceId: workspace.id,
-                    flowName: parsed.flowResponse.flowName,
                     fields: parsed.flowResponse.fields,
                   });
                 } catch (syncErr) {

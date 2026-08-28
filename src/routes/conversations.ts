@@ -96,6 +96,7 @@ import {
 } from '../services/inboxScope.js';
 import { contentDisposition } from '../utils/contentDisposition.js';
 import { sendInboxEmailToContact } from '../services/inboxEmailSend.js';
+import { recordFlowSend } from '../services/whatsappFlowToken.service.js';
 
 function denyInboxScope(reply: FastifyReply) {
   return reply.code(403).send({
@@ -977,6 +978,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     }
 
     let waMessageId: string | undefined;
+    const flowToken = template.buttonType === 'FLOW' ? randomUUID() : undefined;
     try {
       await assertWhatsAppTemplateAffordable({
         workspaceId,
@@ -992,10 +994,13 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         bodyParams,
         {
           ...(headerMedia ? { headerMedia } : {}),
-          ...(template.buttonType === 'FLOW' ? { flowToken: randomUUID() } : {}),
+          ...(flowToken ? { flowToken } : {}),
         }
       );
       waMessageId = sent.waMessageId;
+      if (flowToken && template.buttonFlowId) {
+        await recordFlowSend({ flowToken, flowId: template.buttonFlowId, workspaceId });
+      }
     } catch (err) {
       if (err instanceof InsufficientWalletBalanceError) {
         return reply.code(402).send({ error: err.message, code: err.code });

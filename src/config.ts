@@ -76,6 +76,20 @@ export const config = {
     /** WABA invoice currency for credit share: AUD|EUR|GBP|IDR|INR|USD */
     creditLineCurrency: (process.env.META_CREDIT_LINE_CURRENCY || 'INR').trim().toUpperCase(),
   },
+  /**
+   * Instagram API with Instagram Login ("Instagram business login") — a separate Meta product
+   * from Facebook Login for Business above, with its own App ID/secret, OAuth host
+   * (instagram.com, not facebook.com) and Graph host (graph.instagram.com, not graph.facebook.com).
+   * Grants instagram_business_* scopes (e.g. instagram_business_manage_comments) that the
+   * Facebook-Login track cannot issue.
+   */
+  instagramBusinessLogin: {
+    appId: process.env.INSTAGRAM_BUSINESS_APP_ID || '',
+    appSecret: process.env.INSTAGRAM_BUSINESS_APP_SECRET || '',
+    redirectUri:
+      process.env.INSTAGRAM_BUSINESS_LOGIN_REDIRECT_URI ||
+      `${(process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '')}/instagram/business-login/callback`,
+  },
   /** Meta WhatsApp webhook callback (GET verify + POST events). */
   webhookUrl: `${backendPublicUrl}/api/webhook/whatsapp`,
   /** Meta Page webhook callback for Instagram DMs (GET verify + POST events). */

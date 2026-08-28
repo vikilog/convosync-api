@@ -89,6 +89,8 @@ model Workspace {
   socialComments        SocialComment[]
   leadFunnels           LeadFunnel[]
   leads                 Lead[]
+  installedApps         InstalledApp[]
+  instagramBusinessLoginAccounts InstagramBusinessLoginAccount[]
   socialListeningSettings SocialListeningSettings?
   socialListeningActivities SocialListeningActivity[]
   socialListeningPostSettings SocialListeningPostSetting[]
@@ -540,6 +542,29 @@ model InstagramAccount {
   @@index([status])
 }
 
+/// Instagram account connected via "Instagram API with Instagram Login" — no Facebook Page
+/// involved, distinct token (graph.instagram.com) carrying instagram_business_* scopes.
+model InstagramBusinessLoginAccount {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Instagram-scoped user id from graph.instagram.com/me — distinct namespace from InstagramAccount.instagramUserId.
+  instagramUserId   String
+  username          String?
+  /// Encrypted long-lived access token (csenc:v1:) — used against graph.instagram.com only.
+  accessToken       String
+  /// connected | expired | revoked | error
+  status            String    @default("connected")
+  tokenExpiresAt    DateTime?
+  connectedByUserId String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([workspaceId, instagramUserId])
+  @@index([workspaceId])
+  @@index([status])
+}
+
 /// Instagram or Facebook Page comment persisted for AI classification + Review Queue.
 model SocialComment {
   id                   String    @id @default(cuid())
@@ -638,6 +663,19 @@ model LeadFunnelStage {
   // Partial unique index (funnelId) WHERE isFinal = true lives in a
   // hand-written migration — Prisma's DSL can't express a filtered index.
   // See 20260817100000_lead_funnel_single_final_stage.
+}
+
+/// Which first-party App Store apps a workspace has installed (App Store → Apps sidebar section).
+model InstalledApp {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// App registry id, e.g. "crm", "attendance" — matches the frontend's APP_REGISTRY.
+  appId       String
+  installedAt DateTime  @default(now())
+
+  @@unique([workspaceId, appId])
+  @@index([workspaceId])
 }
 
 model Lead {
@@ -1254,10 +1292,27 @@ model WhatsAppFlow {
   dataTableFieldMap Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  sends       WhatsAppFlowSend[]
 
   @@unique([workspaceId, name])
   @@index([workspaceId])
   @@index([dataTableId])
+}
+
+/// Tracks the flow_token generated for each outbound Flow send (native send-test/journey
+/// send-flow, or a template's Flow button) so the completion webhook — which only carries
+/// the token, never the flow's identity — can be traced back to its WhatsAppFlow. Meta's
+/// nfm_reply.name is always the fixed string "flow", not the flow's actual name, so that
+/// field can't be used to identify which flow was submitted.
+model WhatsAppFlowSend {
+  flowToken   String   @id
+  flowId      String
+  flow        WhatsAppFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  workspaceId String
+  createdAt   DateTime @default(now())
+
+  @@index([flowId])
+  @@index([workspaceId])
 }
 
 /// A user-designed table (Airtable-style): the user defines columns with types,
