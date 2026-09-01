@@ -20,6 +20,7 @@ import {
   listContactLinks,
   unlinkContact,
 } from '../services/contactLink.service.js';
+import { setContactAutomationsPaused } from '../services/contactAutomationSettings.service.js';
 import {
   countContactsWithTag,
   deleteContactInWorkspace,
@@ -557,6 +558,25 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     const overview = await getContactOverview(workspaceId, id);
     if (!overview) return reply.code(404).send({ error: 'Not found' });
     return overview;
+  });
+
+  fastify.post('/:id/automation-pause', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const schema = z.object({ paused: z.boolean() });
+    const parsed = schema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
+    }
+    const updated = await setContactAutomationsPaused(workspaceId, id, parsed.data.paused);
+    if (!updated) return reply.code(404).send({ error: 'Not found' });
+
+    getIo().to(workspaceId).emit('contact_updated', {
+      contactId: id,
+      automationsPaused: parsed.data.paused,
+    });
+
+    return { id, automationsPaused: parsed.data.paused };
   });
 
   fastify.get('/:id/audits', auth, async (request, reply) => {

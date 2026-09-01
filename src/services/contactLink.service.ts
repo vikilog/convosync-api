@@ -292,6 +292,7 @@ export async function getContactOverview(workspaceId: string, contactId: string)
       tags: contact.tags,
       customFields: contact.customFields,
       excludeFromInsights: contact.excludeFromInsights,
+      automationsPaused: contact.automationsPaused,
       linkGroupId: contact.linkGroupId,
       channel: channelForContact(contact),
       createdAt: contact.createdAt.toISOString(),

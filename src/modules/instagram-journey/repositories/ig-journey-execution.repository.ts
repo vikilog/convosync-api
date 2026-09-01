@@ -110,6 +110,18 @@ export class InstagramJourneyExecutionRepository {
     });
   }
 
+  /** Any journey already running/waiting for this contact — used to gate fan-out so only one automation owns a chat at a time. */
+  findAnyActiveForContact(workspaceId: string, contactId: string) {
+    return this.db.instagramJourneyExecution.findFirst({
+      where: {
+        contactId,
+        status: { in: ['running', 'waiting'] },
+        journey: { workspaceId },
+      },
+      select: { id: true, journeyId: true },
+    });
+  }
+
   findWaitingForReply(workspaceId: string, contactId: string) {
     return this.db.instagramJourneyExecution.findMany({
       where: {

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../../lib/prisma.js';
 import { isWorkspaceAutomationsPaused } from '../../../services/workspaceAutomationSettings.service.js';
+import { isContactAutomationsPaused } from '../../../services/contactAutomationSettings.service.js';
 import type { InstagramJourneyRepository } from '../repositories/ig-journey.repository.js';
 import type { InstagramJourneyExecutionRepository } from '../repositories/ig-journey-execution.repository.js';
 import type { InstagramJourneyEngine } from './ig-journey-engine.service.js';
@@ -23,8 +24,11 @@ export class InstagramJourneyTriggerService {
   /** DM inbound: resume waiting Ask Question, then match assigned / keyword journeys. */
   async handleDmReceived(input: IgJourneyTriggerPayload): Promise<void> {
     if (await isWorkspaceAutomationsPaused(input.workspaceId)) return;
+    if (await isContactAutomationsPaused(input.contactId)) return;
 
-    await this.resumeWaitingReplies(input);
+    // This DM already answered a running flow — don't also treat it as a fresh trigger.
+    const resumed = await this.resumeWaitingReplies(input);
+    if (resumed) return;
 
     const assigned = await prisma.conversation.findFirst({
       where: {
@@ -106,6 +110,7 @@ export class InstagramJourneyTriggerService {
   /** Comment inbound: match published comment.received journeys (no reply-wait). */
   async handleCommentReceived(input: IgJourneyTriggerPayload): Promise<void> {
     if (await isWorkspaceAutomationsPaused(input.workspaceId)) return;
+    if (await isContactAutomationsPaused(input.contactId)) return;
     await this.matchAndStart(input);
   }
 
@@ -120,6 +125,7 @@ export class InstagramJourneyTriggerService {
     opts: { restart?: boolean } = {}
   ): Promise<void> {
     if (await isWorkspaceAutomationsPaused(workspaceId)) return;
+    if (await isContactAutomationsPaused(contactId)) return;
     const restart = opts.restart ?? true;
     const journeys = await this.journeyRepo.findPublishedWithNodes(workspaceId);
     const journey = journeys.find((j) => j.id === journeyId);
@@ -166,9 +172,10 @@ export class InstagramJourneyTriggerService {
     }
   }
 
-  private async resumeWaitingReplies(input: IgJourneyTriggerPayload): Promise<void> {
+  /** @returns true if this message advanced a waiting execution (i.e. it was a reply, not a fresh trigger). */
+  private async resumeWaitingReplies(input: IgJourneyTriggerPayload): Promise<boolean> {
     const replyText = input.text?.trim();
-    if (!replyText) return;
+    if (!replyText) return false;
 
     const messageId =
       typeof input.payload?.messageId === 'string' ? input.payload.messageId : undefined;
@@ -215,7 +222,7 @@ export class InstagramJourneyTriggerService {
           (node.outgoingEdges.length === 1 ? node.outgoingEdges[0] : undefined);
         if (!edge) continue;
         await this.engine.resumeAfterReply(execution.id, replyText, edge.targetNodeId, messageId);
-        break;
+        return true;
       }
 
       let nextNodeId = ctx.waitKind === 'reply' ? ctx.nextNodeId : undefined;
@@ -235,11 +242,22 @@ export class InstagramJourneyTriggerService {
       if (!nextNodeId) continue;
 
       await this.engine.resumeAfterReply(execution.id, replyText, nextNodeId, messageId);
-      break;
+      return true;
     }
+
+    return false;
   }
 
   private async matchAndStart(input: IgJourneyTriggerPayload): Promise<void> {
+    // One automation owns a chat at a time — don't fan out into a second journey
+    // (or re-trigger the same one) while this contact already has an active run,
+    // whether it started from a DM or a comment/post.
+    const alreadyActive = await this.executionRepo.findAnyActiveForContact(
+      input.workspaceId,
+      input.contactId
+    );
+    if (alreadyActive) return;
+
     const journeys = await this.journeyRepo.findPublishedWithNodes(input.workspaceId);
 
     for (const journey of journeys) {

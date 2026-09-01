@@ -11,6 +11,7 @@ import {
 } from '../../../services/walletUsage.js';
 import { InsufficientWalletBalanceError } from '../../../services/wallet.service.js';
 import { isWorkspaceAutomationsPaused } from '../../../services/workspaceAutomationSettings.service.js';
+import { isContactAutomationsPaused } from '../../../services/contactAutomationSettings.service.js';
 
 function resolveInboundChannel(
   payload: Record<string, unknown> | undefined,
@@ -55,6 +56,7 @@ export class JourneyTriggerService {
 
   private async handleMessageReceived(input: JourneyTriggerPayload): Promise<void> {
     if (await isWorkspaceAutomationsPaused(input.workspaceId)) return;
+    if (await isContactAutomationsPaused(input.contactId)) return;
     await this.resumeWaitingReplies(input);
     await this.handleEvent(input);
   }
@@ -140,6 +142,7 @@ export class JourneyTriggerService {
 
   async handleEvent(input: JourneyTriggerPayload): Promise<void> {
     if (await isWorkspaceAutomationsPaused(input.workspaceId)) return;
+    if (await isContactAutomationsPaused(input.contactId)) return;
 
     const conversation = await prisma.conversation.findFirst({
       where: {
@@ -176,6 +179,7 @@ export class JourneyTriggerService {
     contactId: string
   ): Promise<void> {
     if (await isWorkspaceAutomationsPaused(workspaceId)) return;
+    if (await isContactAutomationsPaused(contactId)) return;
     const journey = await this.journeyRepo.findPublishedById(workspaceId, journeyId);
     if (!journey) return;
 
