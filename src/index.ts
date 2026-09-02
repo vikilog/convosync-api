@@ -110,6 +110,7 @@ import callingRoutes from './modules/calling/calling.routes.js';
 import internalRoutes from './routes/internal.js';
 import { startCallingSweeper } from './modules/calling/calling.sweeper.js';
 import { startCampaignReaperSweeper } from './services/campaignReaper.sweeper.js';
+import { startKnowledgeRefreshSweeper } from './services/knowledgeRefresh.sweeper.js';
 import { startCallTranscriptWorker } from './workers/call-transcript.worker.js';
 import { startContactInsightWorker } from './workers/contact-insight.worker.js';
 import { startContactInsightScheduler } from './workers/contact-insight.scheduler.js';
@@ -239,6 +240,7 @@ async function start() {
   initGoogleModule(prisma);
   startCampaignWorker();
   startCampaignReaperSweeper();
+  startKnowledgeRefreshSweeper();
   startJourneyWorker();
   startIgJourneyWorker();
   startDeveloperSyncWorker();

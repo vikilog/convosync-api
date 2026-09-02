@@ -9,6 +9,11 @@ import { OpenAiProviderError } from '../modules/ai-chat/providers/openai.provide
 import { ConversationService } from '../modules/ai-agent/conversation.service.js';
 import { UrlFetchError, fetchUrlKnowledge } from '../services/url-fetch.service.js';
 import { indexKnowledgeItemInBackground, knowledgeIndexService } from '../modules/ai-agent/knowledge/knowledge-index.service.js';
+import {
+  DocumentExtractError,
+  extractTextFromDocument,
+  isSupportedDocumentFile,
+} from '../modules/ai-agent/knowledge/document-text-extract.js';
 import { invalidateWorkspaceCache } from '../modules/ai-agent/hybrid/redis-cache.js';
 import { getRetrievalStats } from '../modules/ai-agent/hybrid/analytics.js';
 import { DEFAULT_AGENT_ACTIONS } from '../constants/agent-actions.js';
@@ -796,6 +801,73 @@ export default async function agentRoutes(fastify: FastifyInstance) {
     void indexKnowledgeItemInBackground(workspaceId, item);
     void invalidateWorkspaceCache(fastify, workspaceId);
     return reply.code(201).send(item);
+  });
+
+  /** Document upload — parses PDF/DOCX/TXT/MD into real text before indexing (one file per call). */
+  fastify.post('/:id/knowledge/upload', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const agent = await getAgentOr404(workspaceId, id);
+    if (!agent) return reply.code(404).send({ error: 'Not found' });
+
+    if (!request.isMultipart()) {
+      return reply.code(400).send({ error: 'Expected multipart form with a file' });
+    }
+
+    let fileBuffer: Buffer | null = null;
+    let mimeType = '';
+    let fileName = '';
+    let title = '';
+
+    try {
+      for await (const part of request.parts()) {
+        if (part.type === 'file') {
+          fileBuffer = await part.toBuffer();
+          mimeType = part.mimetype || 'application/octet-stream';
+          fileName = part.filename || 'document';
+        } else if (part.fieldname === 'title') {
+          title = String(part.value ?? '').trim();
+        }
+      }
+    } catch (err) {
+      const code = (err as { code?: string })?.code;
+      if (code === 'FST_REQ_FILE_TOO_LARGE') {
+        return reply.code(413).send({ error: 'File is larger than the 16 MB limit.' });
+      }
+      throw err;
+    }
+
+    if (!fileBuffer?.length) {
+      return reply.code(400).send({ error: 'A file is required' });
+    }
+    if (!isSupportedDocumentFile(fileName, mimeType)) {
+      return reply
+        .code(400)
+        .send({ error: 'Unsupported file type. Upload PDF, DOCX, TXT, or MD.', code: 'UNSUPPORTED_FORMAT' });
+    }
+
+    try {
+      const { text, wordCount } = await extractTextFromDocument(fileBuffer, fileName, mimeType);
+      const item = await prisma.aiAgentKnowledgeItem.create({
+        data: {
+          agentId: id,
+          type: 'document',
+          title: title || fileName,
+          content: text,
+          metadata: { fileName, wordCount },
+          status: 'ready',
+        },
+      });
+      void indexKnowledgeItemInBackground(workspaceId, item);
+      void invalidateWorkspaceCache(fastify, workspaceId);
+      return reply.code(201).send(item);
+    } catch (err) {
+      if (err instanceof DocumentExtractError) {
+        const statusCode = err.code === 'UNSUPPORTED_FORMAT' ? 400 : 422;
+        return reply.code(statusCode).send({ error: err.message, code: err.code });
+      }
+      throw err;
+    }
   });
 
   fastify.put('/:id/knowledge/:kId', auth, async (request, reply) => {

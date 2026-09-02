@@ -4,6 +4,7 @@ import { classifyDeliveryStatus } from '../lib/messageResendStatus.js';
 import {
   getCampaignAudienceContacts,
   resolveSegmentIdsFromFilter,
+  resolveTagMatchModeFromFilter,
   segmentLabelFromIds,
   type CampaignAudienceChannel,
 } from './campaignAudience.service.js';
@@ -38,6 +39,7 @@ type CampaignAudienceFilter = {
   segmentId?: string;
   segmentIds?: string[];
   tag?: string;
+  tagMatchMode?: 'any' | 'all';
   variableMappings?: Record<string, string>;
 };
 
@@ -47,7 +49,7 @@ function parseAudienceFilter(raw: unknown): CampaignAudienceFilter {
 }
 
 function segmentLabelFromFilter(audienceType: string, filter: CampaignAudienceFilter): string {
-  return segmentLabelFromIds(resolveSegmentIdsFromFilter(audienceType, filter));
+  return segmentLabelFromIds(resolveSegmentIdsFromFilter(audienceType, filter), resolveTagMatchModeFromFilter(filter));
 }
 
 /** Primary: metadata.campaignId. Fallback: template + sentAt window (pre-logging campaigns). */
@@ -387,7 +389,12 @@ async function getEmailCampaignInsights(
 
   if (recipients.length === 0 && campaign.sentCount > 0) {
     const segmentIds = resolveSegmentIdsFromFilter(campaign.audienceType, filter);
-    const audienceContacts = await getCampaignAudienceContacts(workspaceId, 'email', segmentIds);
+    const audienceContacts = await getCampaignAudienceContacts(
+      workspaceId,
+      'email',
+      segmentIds,
+      resolveTagMatchModeFromFilter(filter)
+    );
     const sentAtIso = campaign.sentAt?.toISOString() ?? new Date().toISOString();
     recipients = audienceContacts.slice(0, campaign.sentCount).map((contact) => ({
       messageId: `campaign-${campaignId}-${contact.id}`,

@@ -25,6 +25,8 @@ const audienceFilterSchema = z.object({
   segmentId: z.string().optional(),
   segmentIds: z.array(z.string()).optional(),
   tag: z.string().optional(),
+  /** 'any' = union (OR) · 'all' = intersection (AND) — see campaignAudienceFilter.ts. */
+  tagMatchMode: z.enum(['any', 'all']).optional(),
   variableMappings: z.record(z.string()).optional(),
   headerMediaStorageKey: z.string().optional(),
   headerMediaMimeType: z.string().optional(),
@@ -312,6 +314,73 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
     }
 
     return reply.code(409).send({ error: `Campaign is ${campaign.status} — nothing to cancel` });
+  });
+
+  // Re-arms a paused (cancelled) campaign at its original scheduledAt — only
+  // possible while that time is still in the future; a lapsed schedule needs
+  // a fresh scheduledAt via PATCH instead of a blind resume.
+  fastify.post('/:id/resume', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const campaign = await prisma.campaign.findFirst({ where: { id, workspaceId } });
+    if (!campaign) return reply.code(404).send({ error: 'Not found' });
+
+    if (campaign.status !== 'cancelled') {
+      return reply.code(409).send({ error: `Campaign is ${campaign.status} — nothing to resume` });
+    }
+    if (!campaign.scheduledAt || campaignScheduleDelayMs(campaign.scheduledAt) <= 0) {
+      return reply.code(409).send({
+        error: 'Original send time has already passed — edit the campaign to set a new time first.',
+      });
+    }
+
+    const updated = await prisma.campaign.updateMany({
+      where: { id, workspaceId, status: 'cancelled' },
+      data: { status: 'scheduled' },
+    });
+    if (updated.count === 0) {
+      return reply.code(409).send({ error: 'Campaign is no longer cancelled' });
+    }
+
+    try {
+      await enqueueCampaignBroadcast(
+        { campaignId: id, workspaceId },
+        campaignScheduleDelayMs(campaign.scheduledAt)
+      );
+    } catch (err) {
+      await prisma.campaign.update({ where: { id }, data: { status: 'cancelled' } });
+      request.log.error({ err, campaignId: id }, 'Failed to re-enqueue resumed campaign');
+      return reply.code(502).send({ error: 'Could not resume — scheduling queue failed. Try again.' });
+    }
+
+    return { ok: true, status: 'scheduled' };
+  });
+
+  const DELETE_SEND_LOCK_MS = 2 * 60 * 1000;
+
+  fastify.delete('/:id', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const campaign = await prisma.campaign.findFirst({ where: { id, workspaceId } });
+    if (!campaign) return reply.code(404).send({ error: 'Not found' });
+
+    if (campaign.status === 'running') {
+      return reply.code(409).send({ error: 'Cannot delete a campaign that is currently sending' });
+    }
+
+    if (campaign.status === 'scheduled') {
+      const msUntilSend = campaign.scheduledAt ? campaign.scheduledAt.getTime() - Date.now() : Infinity;
+      if (msUntilSend < DELETE_SEND_LOCK_MS) {
+        return reply.code(409).send({
+          error: 'Too close to send time to delete — pause it first, or wait for it to complete.',
+        });
+      }
+      // Drop the queued job so it doesn't fire against a now-deleted campaign.
+      await cancelScheduledCampaignBroadcast(id);
+    }
+
+    await prisma.campaign.delete({ where: { id } });
+    return { ok: true };
   });
 
   fastify.post('/:id/resend-failed', auth, async (request, reply) => {

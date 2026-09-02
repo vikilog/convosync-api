@@ -118,21 +118,33 @@ export default async function contactRoutes(fastify: FastifyInstance) {
       }),
       prisma.contact.findMany({
         where: { workspaceId },
-        select: { tags: true },
+        select: { tags: true, customFields: true },
       }),
     ]);
 
     const tagCounts = new Map<string, number>();
+    const countryCounts = new Map<string, number>();
     for (const row of tagRows) {
       for (const tag of row.tags) {
         if (!tag) continue;
         tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+      }
+      const customFields = row.customFields as Record<string, unknown> | null;
+      const country = typeof customFields?.country === 'string' ? customFields.country.trim() : '';
+      if (country) {
+        countryCounts.set(country, (countryCounts.get(country) ?? 0) + 1);
       }
     }
     const topTags = [...tagCounts.entries()]
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8)
       .map(([tag, count]) => ({ tag, count }));
+
+    // Only meaningful once contacts span more than one country — client hides
+    // the panel below that; still return the full breakdown either way.
+    const countries = [...countryCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([country, count]) => ({ country, count }));
 
     const sources = sourceGroups.map((g) => ({
       source: g.source?.trim() || 'Unknown',
@@ -147,6 +159,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
       channels: { whatsapp, instagram, messenger },
       sources,
       topTags,
+      countries,
     };
   });
 
@@ -198,10 +211,11 @@ export default async function contactRoutes(fastify: FastifyInstance) {
 
   fastify.get('/campaign-audience/contacts', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const { channel, segmentId, segmentIds: segmentIdsRaw } = request.query as {
+    const { channel, segmentId, segmentIds: segmentIdsRaw, matchMode } = request.query as {
       channel?: string;
       segmentId?: string;
       segmentIds?: string;
+      matchMode?: string;
     };
     const resolvedChannel: CampaignAudienceChannel =
       channel === 'email' || channel === 'instagram' ? channel : 'whatsapp';
@@ -216,7 +230,8 @@ export default async function contactRoutes(fastify: FastifyInstance) {
         // keep segmentId fallback
       }
     }
-    return listCampaignAudienceContacts(workspaceId, resolvedChannel, resolvedSegment);
+    const resolvedMatchMode = matchMode === 'all' ? 'all' : 'any';
+    return listCampaignAudienceContacts(workspaceId, resolvedChannel, resolvedSegment, resolvedMatchMode);
   });
 
   fastify.get('/segments', auth, async (request) => {

@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../index.js';
-import { normalizeSegmentIds, segmentsWhere } from './campaignAudienceFilter.js';
+import { normalizeSegmentIds, segmentsWhere, type TagMatchMode } from './campaignAudienceFilter.js';
 
 export type CampaignAudienceChannel = 'whatsapp' | 'email' | 'instagram';
 
@@ -9,9 +9,11 @@ export {
   normalizeSegmentIds,
   resolveAudienceCountArgs,
   resolveSegmentIdsFromFilter,
+  resolveTagMatchModeFromFilter,
   segmentIdToTag,
   segmentLabelFromIds,
   segmentsWhere,
+  type TagMatchMode,
 } from './campaignAudienceFilter.js';
 
 const EXCLUDED_TAGS = ['Unsubscribed', 'Blocked'];
@@ -47,12 +49,13 @@ export function channelWhere(channel: CampaignAudienceChannel): Prisma.ContactWh
 export async function countCampaignAudience(
   workspaceId: string,
   channel: CampaignAudienceChannel,
-  segmentIdOrIds: string | string[] = 'all'
+  segmentIdOrIds: string | string[] = 'all',
+  tagMatchMode: TagMatchMode = 'any'
 ) {
   const where: Prisma.ContactWhereInput = {
     ...baseWhere(workspaceId),
     ...channelWhere(channel),
-    ...segmentsWhere(segmentIdOrIds),
+    ...segmentsWhere(segmentIdOrIds, tagMatchMode),
   };
   return prisma.contact.count({ where });
 }
@@ -109,12 +112,13 @@ export async function getCampaignAudienceSegments(workspaceId: string, channel: 
 export async function getCampaignAudienceContacts(
   workspaceId: string,
   channel: CampaignAudienceChannel,
-  segmentIdOrIds: string | string[] = 'all'
+  segmentIdOrIds: string | string[] = 'all',
+  tagMatchMode: TagMatchMode = 'any'
 ) {
   const where: Prisma.ContactWhereInput = {
     ...baseWhere(workspaceId),
     ...channelWhere(channel),
-    ...segmentsWhere(segmentIdOrIds),
+    ...segmentsWhere(segmentIdOrIds, tagMatchMode),
   };
   return prisma.contact.findMany({ where, orderBy: { updatedAt: 'desc' } });
 }
@@ -166,13 +170,14 @@ const AUDIENCE_CONTACT_LIST_LIMIT = 200;
 export async function listCampaignAudienceContacts(
   workspaceId: string,
   channel: CampaignAudienceChannel,
-  segmentIdOrIds: string | string[] = 'all'
+  segmentIdOrIds: string | string[] = 'all',
+  tagMatchMode: TagMatchMode = 'any'
 ) {
   const segmentIds = normalizeSegmentIds(segmentIdOrIds);
   const where: Prisma.ContactWhereInput = {
     ...baseWhere(workspaceId),
     ...channelWhere(channel),
-    ...segmentsWhere(segmentIds),
+    ...segmentsWhere(segmentIds, tagMatchMode),
   };
 
   const [total, contacts] = await Promise.all([

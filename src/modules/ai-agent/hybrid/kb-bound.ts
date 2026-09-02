@@ -3,11 +3,57 @@
  * Use for low-confidence retrieval, empty context, and post-generation checks.
  */
 
-/** Whole-message soft “what can you do” — not product asks (“what do you offer”, “help me with X”). */
+/**
+ * Words that signal "asking about capability in general" (help/can/do, EN + Hinglish),
+ * including the "kaam aana" (useful/can help) idiom split across tokens.
+ */
+const CAPABILITY_SIGNAL_TOKENS = new Set([
+  'help', 'madad', 'assist', 'sakte', 'sakta', 'sakti', 'kar', 'kaam', 'kya', 'kaise', 'kis',
+  'can', 'what', 'how', 'do',
+]);
+
+/** Pronouns/connectors/politeness that carry no topic content — ignored when scoring. */
+const CAPABILITY_FILLER_TOKENS = new Set([
+  'hi', 'hello', 'hey', 'tum', 'tumse', 'aap', 'aapse', 'mujhe', 'mera', 'meri', 'mere',
+  'ho', 'hoon', 'liye', 'tarah', 'overall', 'batao', 'bolo', 'na', 'bhi', 'se', 'aa', 'aana',
+  'you', 'for', 'me', 'please', 'kindly', 'and',
+]);
+
+const CAPABILITY_ASK_MAX_WORDS = 16;
+
+function capabilityAskTokens(message: string): string[] {
+  return message
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+/**
+ * Whole-message soft “what can you do” — not product asks (“what do you offer”,
+ * “help me with X”, “WhatsApp connect nahi ho raha”). Token-based rather than a
+ * fixed phrase list: natural Hinglish reorders freely ("tum kya kya kar sakte ho",
+ * "kis kis tarah se kaam aa sakte ho") and a rigid anchored regex missed those
+ * paraphrases entirely, silently escalating a basic "what can you help with"
+ * question to human handoff instead of answering it.
+ *
+ * A message counts as a bare capability ask only when every token is either a
+ * capability-signal word or filler — any real topic word (whatsapp, refund,
+ * pricing, ...) falls through to normal KB-gated handling, same as before.
+ */
 export function looksLikeCapabilityAsk(message: string): boolean {
-  return /^(?:hi[,!.\s]+)?(?:how can you (?:help|assist)|what can you (?:do|help|assist)(?:\s+for me)?|kaise help(?:\s+kar(?:\s*sakte)?)?|kya kar sakte(?:\s+ho)?|aap kya (?:kar sakte|help)(?:\s+ho)?)[\s?!🙏]*$/i.test(
-    message.trim()
-  );
+  const tokens = capabilityAskTokens(message.trim());
+  if (tokens.length === 0 || tokens.length > CAPABILITY_ASK_MAX_WORDS) return false;
+
+  let hasSignal = false;
+  for (const token of tokens) {
+    if (CAPABILITY_SIGNAL_TOKENS.has(token)) {
+      hasSignal = true;
+    } else if (!CAPABILITY_FILLER_TOKENS.has(token)) {
+      return false; // real topic content — not a bare capability ask
+    }
+  }
+  return hasSignal;
 }
 
 /** Pure hi/bye — LLM often mislabels factual first WhatsApp msgs as greeting. */

@@ -6,6 +6,7 @@ import {
   audienceTagFromIds,
   getCampaignAudienceContacts,
   resolveSegmentIdsFromFilter,
+  resolveTagMatchModeFromFilter,
   type CampaignAudienceChannel,
 } from './campaignAudience.service.js';
 import {
@@ -53,6 +54,7 @@ type CampaignAudienceFilter = {
   segmentId?: string;
   segmentIds?: string[];
   tag?: string;
+  tagMatchMode?: 'any' | 'all';
   variableMappings?: Record<string, string>;
   headerMediaStorageKey?: string;
   headerMediaMimeType?: string;
@@ -126,7 +128,12 @@ async function executeWhatsAppCampaignBroadcast(
 
   const segmentIds = resolveSegmentIdsFromFilter(campaign.audienceType, filter);
   const audienceTag = audienceTagFromIds(segmentIds);
-  const allContacts = await getCampaignAudienceContacts(workspaceId, 'whatsapp', segmentIds);
+  const allContacts = await getCampaignAudienceContacts(
+    workspaceId,
+    'whatsapp',
+    segmentIds,
+    resolveTagMatchModeFromFilter(filter)
+  );
   if (allContacts.length === 0) {
     // Route-level validation rejects this at create/edit time now, but a
     // legacy campaign or an audience that emptied out between scheduling and
@@ -459,7 +466,12 @@ async function executeEmailCampaignBroadcast(
   }
 
   const segmentIds = resolveSegmentIdsFromFilter(campaign.audienceType, filter);
-  const allContacts = await getCampaignAudienceContacts(workspaceId, 'email', segmentIds);
+  const allContacts = await getCampaignAudienceContacts(
+    workspaceId,
+    'email',
+    segmentIds,
+    resolveTagMatchModeFromFilter(filter)
+  );
   if (allContacts.length === 0) {
     throw new Error('No contacts with email addresses in the selected audience');
   }

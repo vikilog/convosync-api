@@ -35,49 +35,16 @@ export function isValidUrl(url: string): boolean {
 
 export { extractTextFromHtml } from './html-text-extract.js';
 
-export async function fetchUrlKnowledge(params: {
-  agentId: string;
-  workspaceId: string;
-  url: string;
-  refreshInterval: string;
-}): Promise<{
-  success: true;
-  title: string;
+type FetchedPage = {
+  displayTitle: string;
+  extractedContent: string;
+  bodyText: string;
   wordCount: number;
-  preview: string;
-  item: Awaited<ReturnType<typeof prisma.aiAgentKnowledgeItem.create>>;
-}> {
-  const normalizedUrl = normalizeUrl(params.url);
-  if (!isValidUrl(normalizedUrl)) {
-    throw new UrlFetchError('Please enter a valid URL', 'INVALID_URL', 400);
-  }
+  source: string;
+};
 
-  const oneHourAgo = new Date(Date.now() - RATE_LIMIT_MS);
-  const recent = await prisma.aiAgentKnowledgeItem.findFirst({
-    where: {
-      agentId: params.agentId,
-      type: 'online_data',
-      url: normalizedUrl,
-      createdAt: { gte: oneHourAgo },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
-  // Allow retry when the last fetch captured no usable text (e.g. SPA shell before meta fallback).
-  const recentWordCount = Number(
-    (recent?.metadata as { wordCount?: number } | null)?.wordCount ?? -1
-  );
-  if (recent && recentWordCount > 0) {
-    throw new UrlFetchError(
-      'This URL was fetched recently. Please wait up to an hour before fetching again.',
-      'RATE_LIMITED',
-      429
-    );
-  }
-  if (recent && recentWordCount <= 0) {
-    await knowledgeIndexService.deleteItemVectors(params.workspaceId, recent.id);
-    await prisma.aiAgentKnowledgeItem.delete({ where: { id: recent.id } });
-  }
-
+/** Core fetch+parse used by both the interactive "fetch URL" endpoint and the refresh sweeper. */
+async function fetchAndExtractPage(normalizedUrl: string): Promise<FetchedPage> {
   let response;
   try {
     response = await axios.get<string>(normalizedUrl, {
@@ -137,7 +104,60 @@ export async function fetchUrlKnowledge(params: {
   }
 
   const displayTitle = title || normalizedUrl;
-  const extractedContent = `Title: ${displayTitle}\nDescription: ${metaDesc}\nContent: ${bodyText}`;
+  return {
+    displayTitle,
+    extractedContent: `Title: ${displayTitle}\nDescription: ${metaDesc}\nContent: ${bodyText}`,
+    bodyText,
+    wordCount,
+    source,
+  };
+}
+
+export async function fetchUrlKnowledge(params: {
+  agentId: string;
+  workspaceId: string;
+  url: string;
+  refreshInterval: string;
+}): Promise<{
+  success: true;
+  title: string;
+  wordCount: number;
+  preview: string;
+  item: Awaited<ReturnType<typeof prisma.aiAgentKnowledgeItem.create>>;
+}> {
+  const normalizedUrl = normalizeUrl(params.url);
+  if (!isValidUrl(normalizedUrl)) {
+    throw new UrlFetchError('Please enter a valid URL', 'INVALID_URL', 400);
+  }
+
+  const oneHourAgo = new Date(Date.now() - RATE_LIMIT_MS);
+  const recent = await prisma.aiAgentKnowledgeItem.findFirst({
+    where: {
+      agentId: params.agentId,
+      type: 'online_data',
+      url: normalizedUrl,
+      createdAt: { gte: oneHourAgo },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  // Allow retry when the last fetch captured no usable text (e.g. SPA shell before meta fallback).
+  const recentWordCount = Number(
+    (recent?.metadata as { wordCount?: number } | null)?.wordCount ?? -1
+  );
+  if (recent && recentWordCount > 0) {
+    throw new UrlFetchError(
+      'This URL was fetched recently. Please wait up to an hour before fetching again.',
+      'RATE_LIMITED',
+      429
+    );
+  }
+  if (recent && recentWordCount <= 0) {
+    await knowledgeIndexService.deleteItemVectors(params.workspaceId, recent.id);
+    await prisma.aiAgentKnowledgeItem.delete({ where: { id: recent.id } });
+  }
+
+  const { displayTitle, extractedContent, bodyText, wordCount, source } =
+    await fetchAndExtractPage(normalizedUrl);
   const preview = bodyText.substring(0, 200);
 
   const item = await prisma.aiAgentKnowledgeItem.create({
@@ -166,6 +186,63 @@ export async function fetchUrlKnowledge(params: {
     preview,
     item,
   };
+}
+
+/**
+ * Re-fetch an existing online_data item in place (used by the scheduled
+ * refresh sweeper — see knowledgeRefresh.sweeper.ts). Updates content +
+ * metadata and reindexes vectors; on failure, leaves the existing content
+ * untouched (a stale-but-working answer beats a wiped-out one) and records
+ * the error for visibility.
+ */
+export async function refreshOnlineDataItem(
+  item: { id: string; agentId: string; url: string | null; metadata: unknown },
+  workspaceId: string
+): Promise<{ success: true; wordCount: number } | { success: false; error: string }> {
+  if (!item.url) return { success: false, error: 'No URL on this item' };
+
+  const prevMetadata = (item.metadata as Record<string, unknown> | null) ?? {};
+
+  try {
+    const normalizedUrl = normalizeUrl(item.url);
+    const { displayTitle, extractedContent, wordCount, source } =
+      await fetchAndExtractPage(normalizedUrl);
+
+    const updated = await prisma.aiAgentKnowledgeItem.update({
+      where: { id: item.id },
+      data: {
+        title: displayTitle,
+        content: extractedContent,
+        metadata: {
+          ...prevMetadata,
+          lastFetched: new Date().toISOString(),
+          wordCount,
+          extractSource: source,
+          lastRefreshError: null,
+        },
+      },
+    });
+
+    await knowledgeIndexService.deleteItemVectors(workspaceId, item.id);
+    await indexKnowledgeItemInBackground(workspaceId, updated);
+
+    return { success: true, wordCount };
+  } catch (err) {
+    const message = err instanceof UrlFetchError ? err.message : 'Refresh failed';
+    await prisma.aiAgentKnowledgeItem
+      .update({
+        where: { id: item.id },
+        data: {
+          metadata: {
+            ...prevMetadata,
+            lastRefreshAttempt: new Date().toISOString(),
+            lastRefreshError: message,
+          },
+        },
+      })
+      .catch(() => undefined);
+    return { success: false, error: message };
+  }
 }
 
 function mapFetchError(err: unknown): UrlFetchError {

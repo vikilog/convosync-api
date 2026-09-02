@@ -5,6 +5,12 @@ import {
   matchRelevantSkills,
 } from '../modules/ai-agent/context-builder.service.js';
 import { retrieveKnowledgeChunks } from '../modules/ai-agent/knowledge/knowledge-retrieval.js';
+import { extractDirectAnswer } from '../modules/ai-agent/hybrid/extract-answer.js';
+import {
+  KB_BOUND_SYSTEM_PREFIX,
+  KB_NO_MATCH_SYSTEM_PREFIX,
+  recoverGroundedKbReply,
+} from '../modules/ai-agent/hybrid/kb-bound.js';
 
 type ConversationTurn = { role: 'user' | 'assistant'; content: string };
 
@@ -54,7 +60,15 @@ export async function testAgentChat(params: {
   agentId: string;
   message: string;
   conversationHistory: ConversationTurn[];
-}): Promise<{ reply: string; tokensUsed: number; inputTokens: number; outputTokens: number }> {
+}): Promise<{
+  reply: string;
+  tokensUsed: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** True when the post-generation grounding guard replaced the model's reply. */
+  guarded: boolean;
+  escalate: boolean;
+}> {
   const agent = await prisma.aiAgent.findFirst({
     where: { id: params.agentId, workspaceId: params.workspaceId },
     include: {
@@ -75,6 +89,8 @@ export async function testAgentChat(params: {
       tokensUsed: 0,
       inputTokens: 0,
       outputTokens: 0,
+      guarded: false,
+      escalate: false,
     };
   }
 
@@ -107,7 +123,12 @@ export async function testAgentChat(params: {
     allowUnscoredDbFallback: true,
   });
 
-  const systemPrompt = `You are ${agent.name}, an AI assistant for ${agent.workspace.name}.
+  // Same KB-bound prefix the live hybrid/LangGraph reply pipeline uses (kb-bound.ts) —
+  // without it, the preview lets the model answer off-topic questions from general
+  // training knowledge instead of refusing, which the real pipeline never does.
+  const kbBoundPrefix = knowledgeChunks.length === 0 ? KB_NO_MATCH_SYSTEM_PREFIX : KB_BOUND_SYSTEM_PREFIX;
+
+  const systemPrompt = `${kbBoundPrefix}You are ${agent.name}, an AI assistant for ${agent.workspace.name}.
 
 Tone: ${agent.toneOfVoice}
 Language: ${agent.fallbackLanguage}
@@ -140,7 +161,23 @@ Always respond helpfully in the user's language when possible. If you cannot ans
 
   const { content, tokensUsed, inputTokens, outputTokens } =
     await openai.createTextChatCompletion(messages);
-  return { reply: content, tokensUsed, inputTokens, outputTokens };
+
+  const kbText = knowledgeChunks.map((k) => `${k.title}\n${k.content ?? ''}`).join('\n');
+  const guarded = recoverGroundedKbReply({
+    reply: content,
+    kbText,
+    message: params.message,
+    extract: extractDirectAnswer,
+  });
+
+  return {
+    reply: guarded.reply,
+    tokensUsed,
+    inputTokens,
+    outputTokens,
+    guarded: guarded.replaced,
+    escalate: guarded.escalate,
+  };
 }
 
 export class AgentTestError extends Error {
