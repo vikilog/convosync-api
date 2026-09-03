@@ -32,6 +32,10 @@ const audienceFilterSchema = z.object({
   headerMediaMimeType: z.string().optional(),
   headerMediaFileName: z.string().optional(),
   headerMediaAssetId: z.string().optional(),
+  /** How a recipient's reply to this campaign should be routed — see campaignReplyRouting.service.ts. */
+  replyHandling: z.enum(['default', 'journey', 'ai_agent']).optional(),
+  replyJourneyId: z.string().optional(),
+  replyAgentId: z.string().optional(),
 });
 
 export default async function campaignRoutes(fastify: FastifyInstance) {
@@ -158,7 +162,11 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
     const campaign = await prisma.campaign.findFirst({ where: { id, workspaceId } });
     if (!campaign) return reply.code(404).send({ error: 'Not found' });
 
-    if (!isScheduledCampaignEditable(campaign.status, campaign.scheduledAt)) {
+    // 'failed' isn't covered by isScheduledCampaignEditable (that guard is
+    // specifically about editing a still-pending schedule) — a failed
+    // campaign is separately always editable, to let the user fix whatever
+    // caused the failure and relaunch it.
+    if (!isScheduledCampaignEditable(campaign.status, campaign.scheduledAt) && campaign.status !== 'failed') {
       // 'draft' is always editable, so only a 'scheduled' campaign inside its
       // 10-minute send-lock window, or another terminal status, lands here.
       return reply.code(409).send({
@@ -169,19 +177,29 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
       });
     }
 
+    // Relaunching a failed campaign that was never scheduled (sent
+    // immediately) shouldn't be forced through the scheduling path — the
+    // caller follows up with POST /:id/send. If scheduledAt is given (or the
+    // campaign already had one — a failed *scheduled* send), fall through to
+    // the normal reschedule path below instead.
+    const relaunchWithoutSchedule =
+      campaign.status === 'failed' && body.scheduledAt === undefined && !campaign.scheduledAt;
+
     let nextScheduledAt = campaign.scheduledAt;
-    if (body.scheduledAt !== undefined) {
-      const scheduledAt = new Date(body.scheduledAt);
-      if (Number.isNaN(scheduledAt.getTime())) {
-        return reply.code(400).send({ error: 'Invalid scheduledAt' });
+    if (!relaunchWithoutSchedule) {
+      if (body.scheduledAt !== undefined) {
+        const scheduledAt = new Date(body.scheduledAt);
+        if (Number.isNaN(scheduledAt.getTime())) {
+          return reply.code(400).send({ error: 'Invalid scheduledAt' });
+        }
+        nextScheduledAt = scheduledAt;
       }
-      nextScheduledAt = scheduledAt;
-    }
-    // Required either way — a draft has no existing scheduledAt to fall back
-    // on, so skipping this check let a draft PATCHed without a new
-    // scheduledAt silently schedule for "now" via a 0ms enqueue delay below.
-    if (!nextScheduledAt || campaignScheduleDelayMs(nextScheduledAt) <= 0) {
-      return reply.code(400).send({ error: 'scheduledAt must be in the future' });
+      // Required either way — a draft has no existing scheduledAt to fall back
+      // on, so skipping this check let a draft PATCHed without a new
+      // scheduledAt silently schedule for "now" via a 0ms enqueue delay below.
+      if (!nextScheduledAt || campaignScheduleDelayMs(nextScheduledAt) <= 0) {
+        return reply.code(400).send({ error: 'scheduledAt must be in the future' });
+      }
     }
 
     const prevFilter =
@@ -226,16 +244,21 @@ export default async function campaignRoutes(fastify: FastifyInstance) {
         ...(nextFilter !== undefined
           ? { audienceFilter: Object.keys(nextFilter).length ? (nextFilter as object) : undefined }
           : {}),
-        scheduledAt: nextScheduledAt,
-        status: 'scheduled',
         totalRecipients,
+        ...(relaunchWithoutSchedule
+          ? { lastError: null }
+          : { scheduledAt: nextScheduledAt, status: 'scheduled' }),
       },
     });
+
+    if (relaunchWithoutSchedule) {
+      return updated;
+    }
 
     try {
       await enqueueCampaignBroadcast(
         { campaignId: id, workspaceId },
-        campaignScheduleDelayMs(nextScheduledAt)
+        campaignScheduleDelayMs(nextScheduledAt as Date)
       );
     } catch (err) {
       request.log.error({ err, campaignId: id }, 'Failed to re-enqueue scheduled campaign');

@@ -10,6 +10,8 @@ import { eventBus } from '../modules/journey/events/event-bus.js';
 import { isWorkspaceAutomationsPaused } from './workspaceAutomationSettings.service.js';
 import { maybeSendDefaultReply } from './defaultReply.service.js';
 import { tryAutoAssignInboundConversation } from './inboxAutoAssign.service.js';
+import { resolveCampaignReplyRoute } from './campaignReplyRouting.service.js';
+import { applyConversationAssignee, ConversationAssigneeError } from './conversation-assignee.service.js';
 
 function logRoute(label: string, payload?: unknown) {
   const prefix = '[InboundRouter]';
@@ -52,6 +54,31 @@ export async function routeInboundConversation(ctx: InboundMessagingContext): Pr
   const routed: InboundMessagingContext = { ...ctx, channel };
 
   if (!conversation?.assigneeType) {
+    const campaignRoute = await resolveCampaignReplyRoute(ctx.workspaceId, ctx.contactId);
+    if (campaignRoute) {
+      try {
+        await applyConversationAssignee(
+          ctx.workspaceId,
+          ctx.conversationId,
+          { assigneeType: campaignRoute.assigneeType, assigneeId: campaignRoute.assigneeId },
+          { actorType: 'SYSTEM', actorName: 'Campaign reply routing' },
+          { requireCurrentlyUnassigned: true }
+        );
+        logRoute('unassigned — routed to campaign reply handler', {
+          campaignId: campaignRoute.campaignId,
+          assigneeType: campaignRoute.assigneeType,
+          assigneeId: campaignRoute.assigneeId,
+        });
+        return;
+      } catch (err) {
+        // Stale/invalid config (journey unpublished, agent deleted, race with a
+        // manual assignment) — fall through to normal auto-assign/default reply.
+        logRoute('campaign reply route failed, falling through', {
+          error: err instanceof ConversationAssigneeError ? err.message : String(err),
+        });
+      }
+    }
+
     const autoAssigned = await tryAutoAssignInboundConversation({
       workspaceId: ctx.workspaceId,
       conversationId: ctx.conversationId,

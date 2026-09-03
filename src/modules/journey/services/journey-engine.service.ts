@@ -778,7 +778,18 @@ export class JourneyEngine {
       return;
     }
 
-    const baseMs = delayMs(data.amount ?? 0, data.unit ?? 'hours');
+    let baseMs: number | null = null;
+    if (data.untilWindowCloseMinutesBefore != null && execution.contact) {
+      const activity = await getContactActivity(execution.contact);
+      if (activity.lastInboundAt) {
+        const windowCloseAt = activity.lastInboundAt.getTime() + 24 * 60 * 60_000;
+        const targetAt = windowCloseAt - data.untilWindowCloseMinutesBefore * 60_000;
+        baseMs = Math.max(0, targetAt - Date.now());
+      }
+    }
+    if (baseMs == null) {
+      baseMs = delayMs(data.amount ?? 0, data.unit ?? 'hours');
+    }
     const workspace = await prisma.workspace.findUnique({
       where: { id: execution.journey.workspaceId },
       select: { timezone: true },

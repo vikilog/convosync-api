@@ -14,6 +14,7 @@ import {
   KB_BOUND_SYSTEM_PREFIX,
   KB_OUT_OF_SCOPE_REPLY,
   filterHitsByMinScore,
+  isConversationalTurn,
   recoverGroundedKbReply,
 } from './kb-bound.js';
 import type { HybridHit } from './types.js';
@@ -210,11 +211,7 @@ export async function callLlmFull(params: {
 
   if (
     context.kbChunksLoaded === 0 &&
-    params.stage !== 'greeting' &&
-    params.intent !== 'greeting' &&
-    params.intent !== 'farewell' &&
-    params.intent !== 'human_request' &&
-    params.intent !== 'media_request'
+    !isConversationalTurn(params.intent, params.stage, params.message)
   ) {
     return {
       content: KB_OUT_OF_SCOPE_REPLY,

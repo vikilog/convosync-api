@@ -995,6 +995,11 @@ model Contact {
   excludeFromInsights Boolean @default(false)
   /// Manual kill switch — no journey/keyword automation may start or resume for this contact while true.
   automationsPaused Boolean @default(false)
+  /// Most recent campaign this contact received a message from, with reply-handling
+  /// configured — used to route their next reply per that campaign's config
+  /// (see campaignReplyRouting.service.ts) instead of default inbox/AI handling.
+  lastCampaignId String?
+  lastCampaignAt DateTime?
   workspaceId   String
   workspace     Workspace @relation(fields: [workspaceId], references: [id])
   createdAt     DateTime  @default(now())
@@ -1033,6 +1038,7 @@ model Conversation {
   lastMessage   String?
   lastMessageAt DateTime?
   unreadCount   Int       @default(0)
+  isFavorite    Boolean   @default(false)
   labels        String[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt

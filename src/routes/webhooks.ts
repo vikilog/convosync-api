@@ -37,6 +37,7 @@ import {
 import { getWorkspaceWhatsAppCredentials } from '../services/whatsappCredentials.js';
 import { isOptOutMessage, markContactUnsubscribed } from '../services/contactOptOut.service.js';
 import { syncFlowResponseToDataTable } from '../services/dataTableFlowSync.service.js';
+import { tagContactOnFlowCompletion } from '../services/flowCompletionTag.service.js';
 import { sendWhatsAppMessage } from '../services/whatsapp.js';
 import {
   mergeWhatsAppStatusMetadata,
@@ -368,6 +369,18 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
                   logWebhook(
                     'POST → data table sync error',
                     syncErr instanceof Error ? syncErr.message : syncErr
+                  );
+                }
+                try {
+                  await tagContactOnFlowCompletion({
+                    workspaceId: workspace.id,
+                    contactId: contact.id,
+                    fields: parsed.flowResponse.fields,
+                  });
+                } catch (tagErr) {
+                  logWebhook(
+                    'POST → flow completion tag error',
+                    tagErr instanceof Error ? tagErr.message : tagErr
                   );
                 }
               }

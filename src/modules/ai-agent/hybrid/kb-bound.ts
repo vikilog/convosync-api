@@ -82,7 +82,22 @@ export function isConversationalTurn(
 }
 
 export const KB_OUT_OF_SCOPE_REPLY =
-  'Mujhe iske baare me exact info nahi hai, main aapko team se connect kar deta hu';
+  'Could you repeat your question or tell me a bit more about what you need help with?';
+
+/** Phrases marking a reply as "refused / escalating" — used by grounding checks below. */
+const REFUSAL_MARKERS = [
+  'repeat your question',
+  'tell me a bit more',
+  'connect you with our team',
+  'connect you with a human',
+  'human agent',
+  "don't have exact info",
+  'do not have exact info',
+];
+
+function looksLikeRefusal(lowerReply: string): boolean {
+  return REFUSAL_MARKERS.some((marker) => lowerReply.includes(marker));
+}
 
 /** @deprecated Prefer KB_OUT_OF_SCOPE_REPLY; kept for human_request tone variants. */
 export const KB_ESCALATE_REPLY_HUMAN =
@@ -147,12 +162,7 @@ export function isReplyGroundedInKb(reply: string, kbText: string): boolean {
   if (!trimmed) return false;
 
   const lower = trimmed.toLowerCase();
-  if (
-    lower.includes('team se connect') ||
-    lower.includes('human agent') ||
-    lower.includes('exact info nahi') ||
-    lower.includes('connect kar')
-  ) {
+  if (looksLikeRefusal(lower)) {
     return true;
   }
 
@@ -201,12 +211,7 @@ export function recoverGroundedKbReply(params: {
   }
 
   const lower = params.reply.trim().toLowerCase();
-  const modelRefused =
-    !lower ||
-    lower.includes('team se connect') ||
-    lower.includes('human agent') ||
-    lower.includes('exact info nahi') ||
-    lower.includes('connect kar');
+  const modelRefused = !lower || looksLikeRefusal(lower);
 
   if (!modelRefused) {
     const grounded = guardKbBoundReply({ reply: params.reply, kbText: params.kbText });

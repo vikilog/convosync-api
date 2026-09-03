@@ -180,6 +180,16 @@ export type WaitNodeData = {
     endTime?: string;
     daysOfWeek?: number[];
   };
+  /**
+   * When set, ignore `amount`/`unit` and instead wait until this many minutes
+   * before the contact's 24h WhatsApp session window closes (computed from
+   * their actual last inbound message at execution time, not a fixed
+   * duration from whenever this node runs) — correct whether the journey
+   * started right when they replied or was assigned to them hours into an
+   * already-open window. Falls back to `amount`/`unit` if the contact has no
+   * inbound message on record.
+   */
+  untilWindowCloseMinutesBefore?: number;
 };
 
 export type GotoStepNodeData = {

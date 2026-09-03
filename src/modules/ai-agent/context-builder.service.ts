@@ -235,6 +235,20 @@ CRITICAL:
       return mediaPrompt;
     }
 
+    // Capability asks / vague fragments ("how?", "what can you help with") skip
+    // retrieval via isConversationalTurn, so kbChunks is always empty for them —
+    // without this branch they'd fall into the generic KB_NO_MATCH_SYSTEM_PREFIX
+    // below and refuse+escalate instead of answering or asking what they need.
+    if (kbChunks.length === 0 && isConversationalTurn(intent, stage, currentMessage)) {
+      return `You are ${agent.name}, a helpful assistant for ${agent.brandBackground || 'our company'}.
+Tone: ${agent.toneOfVoice || 'professional'}
+Language: ${agent.fallbackLanguage || 'english'}
+
+The user's message is a general/capability question or too brief to search the knowledge base with (e.g. "how?", "what can you help with?").
+Do NOT say you lack info and do NOT offer to connect them to a human for this.
+Use the conversation history if it helps you understand what they mean. Either briefly explain what you can help with, or ask ONE short clarifying question to find out what they need — whichever fits their message better. Keep it to 1-2 sentences, matching their language/tone.`;
+    }
+
     let prompt = '';
 
     if (kbChunks.length === 0) {

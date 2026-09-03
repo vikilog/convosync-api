@@ -60,7 +60,19 @@ type CampaignAudienceFilter = {
   headerMediaMimeType?: string;
   headerMediaFileName?: string;
   headerMediaAssetId?: string;
+  replyHandling?: 'default' | 'journey' | 'ai_agent';
+  replyJourneyId?: string;
+  replyAgentId?: string;
 };
+
+/** True when a reply from a contact who received this campaign should be routed
+ * per campaignReplyRouting.service.ts rather than default inbox/AI handling. */
+function campaignHasReplyRouting(filter: CampaignAudienceFilter): boolean {
+  return (
+    (filter.replyHandling === 'journey' && Boolean(filter.replyJourneyId)) ||
+    (filter.replyHandling === 'ai_agent' && Boolean(filter.replyAgentId))
+  );
+}
 
 function parseAudienceFilter(raw: unknown): CampaignAudienceFilter {
   if (!raw || typeof raw !== 'object') return {};
@@ -355,6 +367,13 @@ async function executeWhatsAppCampaignBroadcast(
           lastMessageAt: new Date(),
         },
       });
+
+      if (campaignHasReplyRouting(filter)) {
+        await prisma.contact.update({
+          where: { id: contact.id },
+          data: { lastCampaignId: campaign.id, lastCampaignAt: new Date() },
+        });
+      }
 
       sentCount += 1;
     } catch (err) {
