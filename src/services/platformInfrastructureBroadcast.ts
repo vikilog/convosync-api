@@ -2,7 +2,7 @@ import { getPlatformInfrastructureSnapshot } from './platformInfrastructure.js';
 import { getIo, PLATFORM_ROOM, platformRoomSize } from '../socket.js';
 
 const EVENT = 'platform_infrastructure';
-const INTERVAL_MS = 5_000;
+const INTERVAL_MS = 30_000;
 
 let timer: ReturnType<typeof setInterval> | null = null;
 

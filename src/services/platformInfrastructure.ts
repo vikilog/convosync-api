@@ -282,28 +282,34 @@ async function checkRedis(): Promise<PlatformInfrastructureSnapshot['redis']> {
   }
 }
 
-async function checkQueues(): Promise<PlatformInfrastructureSnapshot['queues']> {
-  const queues = QUEUE_NAMES.map((name) => new Queue(name, { connection }));
-  try {
-    return await Promise.all(
-      queues.map(async (q) => {
-        try {
-          const counts = await q.getJobCounts('waiting', 'active', 'delayed', 'failed');
-          return {
-            name: q.name,
-            waiting: counts.waiting ?? 0,
-            active: counts.active ?? 0,
-            delayed: counts.delayed ?? 0,
-            failed: counts.failed ?? 0,
-          };
-        } catch {
-          return { name: q.name, waiting: 0, active: 0, delayed: 0, failed: 0 };
-        }
-      })
-    );
-  } finally {
-    await Promise.all(queues.map((q) => q.close().catch(() => undefined)));
+/** Reused across ticks — opening a fresh BullMQ connection per queue per tick was the
+ *  dominant source of Redis command volume on this poller (see platformInfrastructureBroadcast). */
+let sharedQueues: Queue[] | null = null;
+function getSharedQueues(): Queue[] {
+  if (!sharedQueues) {
+    sharedQueues = QUEUE_NAMES.map((name) => new Queue(name, { connection }));
   }
+  return sharedQueues;
+}
+
+async function checkQueues(): Promise<PlatformInfrastructureSnapshot['queues']> {
+  const queues = getSharedQueues();
+  return Promise.all(
+    queues.map(async (q) => {
+      try {
+        const counts = await q.getJobCounts('waiting', 'active', 'delayed', 'failed');
+        return {
+          name: q.name,
+          waiting: counts.waiting ?? 0,
+          active: counts.active ?? 0,
+          delayed: counts.delayed ?? 0,
+          failed: counts.failed ?? 0,
+        };
+      } catch {
+        return { name: q.name, waiting: 0, active: 0, delayed: 0, failed: 0 };
+      }
+    })
+  );
 }
 
 function buildAlerts(

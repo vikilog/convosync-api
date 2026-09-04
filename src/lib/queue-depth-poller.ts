@@ -17,7 +17,7 @@ const connection = { url: config.redisUrl, maxRetriesPerRequest: null as null };
 
 let started = false;
 
-export function startQueueDepthPoller(intervalMs = 15_000): void {
+export function startQueueDepthPoller(intervalMs = 30_000): void {
   if (started) return;
   started = true;
 
