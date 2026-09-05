@@ -343,6 +343,53 @@ export async function createMetaMessageTemplate(
   }
 }
 
+export type MetaTemplateAnalyticsClick = {
+  type: string;
+  button_content?: string;
+  count: number;
+};
+
+export type MetaTemplateAnalyticsCost = {
+  type: string;
+  value: number;
+};
+
+export type MetaTemplateAnalyticsDataPoint = {
+  template_id: string;
+  start: number;
+  end: number;
+  sent?: number;
+  delivered?: number;
+  read?: number;
+  clicked?: MetaTemplateAnalyticsClick[];
+  cost?: MetaTemplateAnalyticsCost[];
+};
+
+/**
+ * Meta caps template_analytics at 10 template_ids per call and only
+ * supports DAILY granularity — see
+ * https://developers.facebook.com/docs/whatsapp/business-management-api/analytics/
+ */
+export async function fetchMetaTemplateAnalytics(
+  creds: WorkspaceWhatsAppCredentials,
+  input: { templateIds: string[]; start: number; end: number }
+): Promise<MetaTemplateAnalyticsDataPoint[]> {
+  const res = await axios.get(`${GRAPH}/${creds.wabaId}/template_analytics`, {
+    params: {
+      access_token: creds.accessToken,
+      start: input.start,
+      end: input.end,
+      granularity: 'DAILY',
+      template_ids: JSON.stringify(input.templateIds.slice(0, 10)),
+      metric_types: JSON.stringify(['SENT', 'DELIVERED', 'READ', 'CLICKED']),
+    },
+  });
+  const entries = (res.data?.data ?? []) as Array<{
+    data_points?: MetaTemplateAnalyticsDataPoint[];
+  }>;
+  return entries.flatMap((e) => e.data_points ?? []);
+}
+
 export async function deleteMetaMessageTemplate(
   creds: WorkspaceWhatsAppCredentials,
   templateName: string

@@ -13,6 +13,7 @@ import {
   deleteMetaMessageTemplate,
   extractVariableIndexes,
   fetchMetaMessageTemplates,
+  fetchMetaTemplateAnalytics,
   metaErrorMessage,
   normalizeMetaLanguageCode,
   parseMetaComponents,
@@ -584,6 +585,61 @@ export default async function templateRoutes(fastify: FastifyInstance) {
       throw err;
     }
     return template;
+  });
+
+  fastify.get('/:id/insights', auth, async (request, reply) => {
+    const { workspaceId } = getJwtUser(request);
+    const { id } = request.params as { id: string };
+    const { days } = request.query as { days?: string };
+    const existing = await prisma.template.findFirst({ where: { id, workspaceId } });
+    if (!existing) return reply.code(404).send({ error: 'Template not found' });
+    if (!existing.waTemplateId) {
+      return reply.code(400).send({ error: 'This template has not been submitted to Meta yet.' });
+    }
+
+    const rangeDays = Math.min(90, Math.max(1, parseInt(days || '30', 10) || 30));
+    const end = Math.floor(Date.now() / 1000);
+    const start = end - rangeDays * 24 * 60 * 60;
+
+    try {
+      const creds = await getWorkspaceWhatsAppCredentials(workspaceId);
+      const dataPoints = await fetchMetaTemplateAnalytics(creds, {
+        templateIds: [existing.waTemplateId],
+        start,
+        end,
+      });
+
+      const totals = { sent: 0, delivered: 0, read: 0, clicked: {} as Record<string, number> };
+      for (const point of dataPoints) {
+        totals.sent += point.sent ?? 0;
+        totals.delivered += point.delivered ?? 0;
+        totals.read += point.read ?? 0;
+        for (const click of point.clicked ?? []) {
+          const key = click.button_content || click.type;
+          totals.clicked[key] = (totals.clicked[key] ?? 0) + (click.count ?? 0);
+        }
+      }
+
+      return {
+        templateId: existing.id,
+        waTemplateId: existing.waTemplateId,
+        start,
+        end,
+        dataPoints: dataPoints
+          .map((p) => ({
+            start: p.start,
+            end: p.end,
+            sent: p.sent ?? 0,
+            delivered: p.delivered ?? 0,
+            read: p.read ?? 0,
+            clicked: p.clicked ?? [],
+          }))
+          .sort((a, b) => a.start - b.start),
+        totals,
+      };
+    } catch (err) {
+      return reply.code(400).send({ error: metaErrorMessage(err) });
+    }
   });
 
   fastify.post('/:id/refresh-status', auth, async (request, reply) => {
