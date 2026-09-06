@@ -34,3 +34,18 @@ FastifyError: The decorator 'corsPreflightEnabled' has already been added!
     at Plugin.exec (/Users/vikas/Downloads/wabiz/backend/node_modules/avvio/lib/plugin.js:125:28)
     at Boot._loadPlugin (/Users/vikas/Downloads/wabiz/backend/node_modules/avvio/boot.js:446:10)
     at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+
+[2026-09-04T16:59:41.483Z] unhandledRejection
+ReplyError: ERR max requests limit exceeded. Limit: 500000, Usage: 500002. See https://upstash.com/docs/redis/troubleshooting/max_requests_limit for details
+    at parseError (/Users/vikas/Downloads/wabiz/backend/node_modules/redis-parser/lib/parser.js:179:12)
+    at parseType (/Users/vikas/Downloads/wabiz/backend/node_modules/redis-parser/lib/parser.js:302:14)
+
+[2026-09-04T16:59:41.619Z] unhandledRejection
+ReplyError: ERR max requests limit exceeded. Limit: 500000, Usage: 500002. See https://upstash.com/docs/redis/troubleshooting/max_requests_limit for details
+    at parseError (/Users/vikas/Downloads/wabiz/backend/node_modules/redis-parser/lib/parser.js:179:12)
+    at parseType (/Users/vikas/Downloads/wabiz/backend/node_modules/redis-parser/lib/parser.js:302:14)
+
+[2026-09-05T07:16:19.892Z] unhandledRejection
+ReplyError: ERR max requests limit exceeded. Limit: 500000, Usage: 500002. See https://upstash.com/docs/redis/troubleshooting/max_requests_limit for details
+    at parseError (/Users/vikas/Downloads/wabiz/backend/node_modules/redis-parser/lib/parser.js:179:12)
+    at parseType (/Users/vikas/Downloads/wabiz/backend/node_modules/redis-parser/lib/parser.js:302:14)

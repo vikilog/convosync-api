@@ -26,11 +26,16 @@ import {
   JtiBlacklistUnavailableError,
   signSessionToken,
 } from '../services/userSecurity.js';
+import {
+  requestPasswordReset,
+  resetPasswordWithToken,
+  verifyResetCode,
+} from '../services/passwordReset.service.js';
 
 async function replyServiceError(reply: { code: (n: number) => { send: (b: unknown) => unknown } }, err: unknown) {
   const message = err instanceof Error ? err.message : 'Request failed';
   const status =
-    /too many|incorrect|expired|not requested|not configured|valid mobile|add a mobile|changed since|nothing to update/i.test(
+    /too many|incorrect|expired|no account found|not requested|not configured|valid mobile|add a mobile|changed since|nothing to update/i.test(
       message
     )
       ? 400
@@ -172,6 +177,45 @@ export default async function authRoutes(fastify: FastifyInstance) {
       workspaces,
       activeWorkspaceId,
     };
+  });
+
+  fastify.post('/forgot-password', async (request, reply) => {
+    const schema = z.object({ email: z.string().email() });
+    const body = schema.parse(request.body);
+    try {
+      await requestPasswordReset(body.email);
+    } catch (err) {
+      return replyServiceError(reply, err);
+    }
+    return { message: 'Reset code sent to your email.' };
+  });
+
+  fastify.post('/verify-reset-code', async (request, reply) => {
+    const schema = z.object({
+      email: z.string().email(),
+      code: z.string().min(4).max(12),
+    });
+    const body = schema.parse(request.body);
+    try {
+      const result = await verifyResetCode(body);
+      return result;
+    } catch (err) {
+      return replyServiceError(reply, err);
+    }
+  });
+
+  fastify.post('/reset-password', async (request, reply) => {
+    const schema = z.object({
+      resetToken: z.string().min(1),
+      newPassword: z.string().min(8),
+    });
+    const body = schema.parse(request.body);
+    try {
+      await resetPasswordWithToken(body);
+    } catch (err) {
+      return replyServiceError(reply, err);
+    }
+    return { success: true };
   });
 
   /** Logout this device — blacklist jti until JWT exp (Redis). */
