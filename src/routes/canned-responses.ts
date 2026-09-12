@@ -1,7 +1,7 @@
 import multipart from '@fastify/multipart';
 import { Prisma } from '@prisma/client';
 import { FastifyInstance, FastifyRequest } from 'fastify';
-import { z } from 'zod';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth, scopedUpdateData } from '../middleware/workspaceScope.js';
@@ -11,14 +11,7 @@ import {
   saveCannedMediaFile,
 } from '../services/cannedMedia.js';
 import { contentDisposition } from '../utils/contentDisposition.js';
-
-const createSchema = z.object({
-  title: z.string().min(1).max(120),
-  content: z.string().max(4000),
-  shortcut: z.string().max(32).nullable().optional(),
-});
-
-const updateSchema = createSchema.partial();
+import { cannedCreateSchema, cannedUpdateSchema } from './canned-responses.schemas.js';
 
 const ALLOWED_MIME_PREFIXES = ['image/', 'video/', 'audio/'];
 const ALLOWED_MIME_EXACT = new Set([
@@ -83,14 +76,22 @@ async function parseMultipartBody(request: FastifyRequest) {
   return { title, content, shortcut, removeMedia, fileBuffer, mimeType, fileName };
 }
 
+async function skipJsonBodyIfMultipart(request: FastifyRequest) {
+  if (request.isMultipart()) {
+    // ponytail: placeholder so Zod body schema does not 400 multipart; handler uses parts(). Split JSON vs multipart routes if this collides.
+    request.body = { title: '_', content: '' };
+  }
+}
+
 export default async function cannedResponseRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
   await fastify.register(multipart, {
     limits: { fileSize: 16 * 1024 * 1024 },
   });
 
-  fastify.get('/', auth, async (request) => {
+  app.get('/', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     return prisma.cannedResponse.findMany({
       where: { workspaceId },
@@ -98,7 +99,7 @@ export default async function cannedResponseRoutes(fastify: FastifyInstance) {
     });
   });
 
-  fastify.get('/:id', auth, async (request, reply) => {
+  app.get('/:id', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const row = await prisma.cannedResponse.findFirst({ where: { id, workspaceId } });
@@ -106,7 +107,7 @@ export default async function cannedResponseRoutes(fastify: FastifyInstance) {
     return row;
   });
 
-  fastify.get('/:id/media', auth, async (request, reply) => {
+  app.get('/:id/media', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const row = await prisma.cannedResponse.findFirst({ where: { id, workspaceId } });
@@ -127,7 +128,14 @@ export default async function cannedResponseRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/', auth, async (request, reply) => {
+  app.post(
+    '/',
+    {
+      ...auth,
+      schema: { body: cannedCreateSchema },
+      preValidation: skipJsonBodyIfMultipart,
+    },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
 
     if (request.isMultipart()) {
@@ -185,7 +193,7 @@ export default async function cannedResponseRoutes(fastify: FastifyInstance) {
       return reply.code(201).send(row);
     }
 
-    const body = createSchema.parse(request.body ?? {});
+    const body = request.body;
     validateCannedPayload(body, false);
     try {
       const row = await prisma.cannedResponse.create({
@@ -203,7 +211,14 @@ export default async function cannedResponseRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.put('/:id', auth, async (request, reply) => {
+  app.put(
+    '/:id',
+    {
+      ...auth,
+      schema: { body: cannedUpdateSchema },
+      preValidation: skipJsonBodyIfMultipart,
+    },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const existing = await prisma.cannedResponse.findFirst({ where: { id, workspaceId } });
@@ -277,7 +292,7 @@ export default async function cannedResponseRoutes(fastify: FastifyInstance) {
       }
     }
 
-    const body = updateSchema.parse(request.body ?? {});
+    const body = request.body;
     const nextContent = body.content !== undefined ? body.content : existing.content;
     const willHaveMedia = Boolean(existing.mediaStorageKey);
     try {
@@ -303,7 +318,7 @@ export default async function cannedResponseRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.delete('/:id', auth, async (request, reply) => {
+  app.delete('/:id', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const existing = await prisma.cannedResponse.findFirst({ where: { id, workspaceId } });

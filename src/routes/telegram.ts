@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import {
@@ -7,12 +8,21 @@ import {
   TelegramConnectError,
 } from '../services/telegramConnect.js';
 import { disconnectTelegramAccounts } from '../services/channelDisconnectCleanup.service.js';
+import {
+  telegramConnectBodySchema,
+  telegramDisconnectBodySchema,
+  telegramDisconnectQuerySchema,
+} from './telegram.schemas.js';
 
 export default async function telegramRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
-  fastify.post('/connect', auth, async (request, reply) => {
-    const body = (request.body || {}) as { botToken?: string };
+  app.post(
+    '/connect',
+    { ...auth, schema: { body: telegramConnectBodySchema } },
+    async (request, reply) => {
+    const body = request.body;
     const { workspaceId } = getJwtUser(request);
 
     if (!body.botToken || !body.botToken.trim()) {
@@ -34,7 +44,7 @@ export default async function telegramRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/accounts', auth, async (request) => {
+  app.get('/accounts', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const accounts = await listTelegramAccounts(workspaceId);
 
@@ -49,10 +59,16 @@ export default async function telegramRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.delete('/disconnect', auth, async (request) => {
+  app.delete(
+    '/disconnect',
+    {
+      ...auth,
+      schema: { querystring: telegramDisconnectQuerySchema, body: telegramDisconnectBodySchema },
+    },
+    async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { botId?: string };
-    const body = (request.body || {}) as { botId?: string };
+    const query = request.query;
+    const body = request.body;
     const botId = query.botId || body.botId;
 
     const cleanup = await disconnectTelegramAccounts(workspaceId, botId ? { botId } : undefined);

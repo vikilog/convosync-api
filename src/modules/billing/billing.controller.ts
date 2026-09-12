@@ -1,5 +1,4 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { z } from 'zod';
 import { getJwtUser } from '../../middleware/auth.js';
 import { formatBillingError } from '../../utils/razorpay-error.utils.js';
 import { getWorkspaceUsageCost } from '../../services/usageCost.service.js';
@@ -10,60 +9,18 @@ import {
 import { WALLET_TOPUP_PRESETS_INR, PLATFORM_MONTHLY_FEE_INR } from '../../services/wallet.constants.js';
 import type { BillingService } from './billing.service.js';
 import { listPendingBillingOffers } from '../../services/billingOffers.js';
-
-const createOrderSchema = z.object({
-  amountPaise: z.number().int().positive().optional(),
-  purpose: z.enum(['addon', 'custom_plan', 'plan_purchase', 'one_time', 'wallet_topup']).optional(),
-  addonType: z
-    .enum([
-      'contacts',
-      'team_members',
-      'ai_agents',
-      'channels',
-      'ai_tokens',
-      'campaigns',
-      'emails',
-    ])
-    .optional(),
-  quantity: z.number().int().positive().optional(),
-  description: z.string().optional(),
-  creditAmountPaise: z.number().int().positive().optional(),
-  idempotencyKey: z.string().min(8).max(128).optional(),
-});
-
-const verifyOrderSchema = z.object({
-  razorpay_order_id: z.string(),
-  razorpay_payment_id: z.string(),
-  razorpay_signature: z.string(),
-});
-
-const createSubscriptionSchema = z.object({
-  planId: z.string(),
-  billingCycle: z.enum(['monthly', 'annual']).optional(),
-  couponCode: z.string().trim().min(1).max(40).optional(),
-});
-
-const validateCouponSchema = z.object({
-  code: z.string().trim().min(1).max(40),
-  amountPaise: z.number().int().positive(),
-  planId: z.string().optional(),
-});
-
-const verifySubscriptionSchema = z.object({
-  razorpay_payment_id: z.string(),
-  razorpay_subscription_id: z.string(),
-  razorpay_signature: z.string(),
-});
-
-const cancelSubscriptionSchema = z.object({
-  cancelAtPeriodEnd: z.boolean().optional(),
-});
-
-const refundSchema = z.object({
-  paymentId: z.string(),
-  amountPaise: z.number().int().positive().optional(),
-  reason: z.string().optional(),
-});
+import type {
+  BillingLimitQuery,
+  BillingMonthQuery,
+  CancelSubscriptionBody,
+  CreateOrderBody,
+  CreateSubscriptionBody,
+  RefundBody,
+  UpdateWalletBody,
+  ValidateCouponBody,
+  VerifyOrderBody,
+  VerifySubscriptionBody,
+} from './billing.schemas.js';
 
 export class BillingController {
   constructor(private readonly billing: BillingService) {}
@@ -105,9 +62,7 @@ export class BillingController {
     const { workspaceId } = getJwtUser(request);
     if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
 
-    const query = z
-      .object({ limit: z.coerce.number().int().min(1).max(100).optional() })
-      .parse(request.query ?? {});
+    const query = request.query as BillingLimitQuery;
 
     try {
       const transactions = await this.billing.listBillingTransactions(
@@ -124,9 +79,7 @@ export class BillingController {
     const { workspaceId } = getJwtUser(request);
     if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
 
-    const query = z
-      .object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional() })
-      .parse(request.query ?? {});
+    const query = request.query as BillingMonthQuery;
 
     try {
       const usage = await getWorkspaceUsageCost(workspaceId, query.month);
@@ -156,9 +109,7 @@ export class BillingController {
     const { workspaceId } = getJwtUser(request);
     if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
 
-    const query = z
-      .object({ limit: z.coerce.number().int().min(1).max(100).optional() })
-      .parse(request.query ?? {});
+    const query = request.query as BillingLimitQuery;
 
     try {
       const transactions = await listWalletTransactions(workspaceId, query.limit ?? 50);
@@ -172,14 +123,7 @@ export class BillingController {
     const { workspaceId } = getJwtUser(request);
     if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
 
-    const body = z
-      .object({
-        lowBalanceThresholdPaise: z.number().int().min(1000).max(1_000_000).optional(),
-        // AUTO_RECHARGE_DISABLED — re-enable later
-        // autoRechargeEnabled: z.boolean().optional(),
-        // autoRechargeAmountPaise: z.number().int().min(10_000).max(1_000_000).optional(),
-      })
-      .parse(request.body ?? {});
+    const body = request.body as UpdateWalletBody;
 
     try {
       const wallet = await this.billing.updateWallet(workspaceId, body);
@@ -208,7 +152,7 @@ export class BillingController {
     if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
 
     try {
-      const body = createOrderSchema.parse(request.body);
+      const body = request.body as CreateOrderBody;
       const result = await this.billing.createOrder(workspaceId, body);
       return reply.send(result);
     } catch (err) {
@@ -221,7 +165,7 @@ export class BillingController {
     if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
 
     try {
-      const body = verifyOrderSchema.parse(request.body);
+      const body = request.body as VerifyOrderBody;
       const result = await this.billing.verifyOrder(workspaceId, body);
       return reply.send(result);
     } catch (err) {
@@ -234,7 +178,7 @@ export class BillingController {
     if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
 
     try {
-      const body = createSubscriptionSchema.parse(request.body);
+      const body = request.body as CreateSubscriptionBody;
       const result = await this.billing.createSubscription(workspaceId, body);
       return reply.send(result);
     } catch (err) {
@@ -247,7 +191,7 @@ export class BillingController {
     if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
 
     try {
-      const body = validateCouponSchema.parse(request.body);
+      const body = request.body as ValidateCouponBody;
       const result = await this.billing.validateCoupon(body);
       return reply.send(result);
     } catch (err) {
@@ -260,7 +204,7 @@ export class BillingController {
     if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
 
     try {
-      const body = verifySubscriptionSchema.parse(request.body);
+      const body = request.body as VerifySubscriptionBody;
       const result = await this.billing.verifySubscriptionPayment(workspaceId, body);
       return reply.send(result);
     } catch (err) {
@@ -273,7 +217,7 @@ export class BillingController {
     if (!workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
 
     try {
-      const body = cancelSubscriptionSchema.parse(request.body ?? {});
+      const body = (request.body ?? {}) as CancelSubscriptionBody;
       const result = await this.billing.cancelSubscription(
         workspaceId,
         body.cancelAtPeriodEnd ?? true
@@ -314,7 +258,7 @@ export class BillingController {
     if (role !== 'admin') return reply.code(403).send({ error: 'Admin only' });
 
     try {
-      const body = refundSchema.parse(request.body);
+      const body = request.body as RefundBody;
       const result = await this.billing.refundPayment(
         workspaceId,
         body.paymentId,

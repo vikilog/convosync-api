@@ -1,59 +1,33 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { prisma } from '../index.js';
-import { getIo } from '../socket.js';
 import { config } from '../config.js';
-import {
-  resolveWorkspaceByPhoneNumberId,
-  resolveWorkspaceByWabaId,
-} from '../services/workspaceResolve.js';
-import {
-  handleMetaMessagingWebhook,
-} from '../services/metaMessagingWebhook.js';
-import {
-  logInstagramWebhook,
-  type PageMessagingWebhookBody,
-} from '../services/instagramWebhookHandler.js';
-import { routeInboundWhatsApp } from '../services/conversation-inbound-router.service.js';
-import { findOrReopenConversationForInbound } from '../services/conversationThread.service.js';
+import { logInstagramWebhook } from '../services/instagramWebhookHandler.js';
+import { logMessengerWebhook } from '../services/messengerWebhookHandler.js';
 import { handleResendEmailWebhook } from '../modules/email/services/resend-webhook.service.js';
 import { handleSesEmailWebhook } from '../modules/email/services/ses-webhook.service.js';
-import {
-  extractWhatsAppProfileName,
-  upsertWhatsAppContact,
-  type WhatsAppWebhookContact,
-} from '../lib/whatsappContact.js';
-import {
-  handleCoexistenceHistoryWebhook,
-  handleSmbAppStateSync,
-  handleSmbMessageEchoes,
-} from '../services/whatsappCoexistenceWebhook.js';
-import {
-  fetchAndStoreInboundMedia,
-  isSkippedInbound,
-  parseInboundWhatsAppMessage,
-  previewForMessage,
-  type MessageMediaMetadata,
-} from '../services/whatsappMedia.js';
-import { getWorkspaceWhatsAppCredentials } from '../services/whatsappCredentials.js';
-import { isOptOutMessage, markContactUnsubscribed } from '../services/contactOptOut.service.js';
-import { syncFlowResponseToDataTable } from '../services/dataTableFlowSync.service.js';
-import { tagContactOnFlowCompletion } from '../services/flowCompletionTag.service.js';
-import { sendWhatsAppMessage } from '../services/whatsapp.js';
-import {
-  mergeWhatsAppStatusMetadata,
-  normalizeWhatsAppStatusErrors,
-  type WhatsAppStatusUpdate,
-} from '../lib/whatsappStatusErrors.js';
 import { recordInboundMetaWebhook } from '../services/webhookEventLog.service.js';
 import { safeStringEquals, verifyMetaWebhookSignature } from '../utils/crypto.utils.js';
+import { redactWebhookPayload } from '../lib/webhookRedact.js';
 import {
   handleTelegramUpdate,
   type TelegramUpdate,
 } from '../services/telegramWebhookHandler.js';
+import {
+  enqueueWhatsAppInbound,
+  type WhatsAppInboundWebhookBody,
+} from '../queue/whatsapp-inbound.queue.js';
+import {
+  enqueueInstagramInbound,
+  type InstagramInboundWebhookBody,
+} from '../queue/instagram-inbound.queue.js';
+import {
+  enqueueMessengerInbound,
+  type MessengerInboundWebhookBody,
+} from '../queue/messenger-inbound.queue.js';
 
 function logWebhook(label: string, payload: unknown) {
-  const line = `[WhatsApp Webhook] ${label}`;
-  console.log(line, typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2));
+  const safe = typeof payload === 'string' ? payload : redactWebhookPayload(payload);
+  console.log(`[WhatsApp Webhook] ${label}`, typeof safe === 'string' ? safe : JSON.stringify(safe));
 }
 
 type RawBodyRequest = FastifyRequest & { rawBody?: string };
@@ -63,7 +37,13 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
   // handlers below can verify X-Hub-Signature-256 against them — HMAC only
   // matches over the raw body, not a re-serialized copy of the parsed object.
   fastify.addHook('preParsing', async (request, _reply, payload) => {
-    if (!request.url.includes('/whatsapp') && !request.url.includes('/instagram')) return payload;
+    if (
+      !request.url.includes('/whatsapp') &&
+      !request.url.includes('/instagram') &&
+      !request.url.includes('/messenger')
+    ) {
+      return payload;
+    }
     const chunks: Buffer[] = [];
     for await (const chunk of payload) {
       chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
@@ -116,434 +96,17 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
       logWebhook('POST → rejected', 'invalid or missing X-Hub-Signature-256');
       return reply.code(401).send({ error: 'Invalid signature' });
     }
-    const body = request.body as {
-      object?: string;
-      entry?: Array<{
-        id?: string;
-        changes?: Array<{ field?: string; value?: Record<string, unknown> }>;
-      }>;
-    };
-
-    // One row per delivery (incl. ignored fields like message_template_status_update).
-    let processError: string | null = null;
+    const body = request.body as WhatsAppInboundWebhookBody;
+    // Persist receipt before ack; media / AI run on BullMQ (whatsapp-inbound).
+    await recordInboundMetaWebhook(body);
     try {
-    // Meta Page / Instagram webhooks sometimes hit the WhatsApp callback URL by misconfig.
-    if (body?.object === 'page' || body?.object === 'instagram') {
-      logWebhook('POST → forwarding Page/Instagram payload to Meta messaging handler', {
-        object: body.object,
-      });
-      try {
-        await handleMetaMessagingWebhook(body as PageMessagingWebhookBody);
-      } catch (err) {
-        processError = err instanceof Error ? err.message : String(err);
-        logWebhook('POST → Meta messaging forward error', processError);
-        fastify.log.error(err);
-      }
-      logWebhook('POST → response', 'ok');
-      return reply.send('ok');
-    }
-
-    logWebhook('POST payload', body);
-
-      const entry = body?.entry?.[0];
-      const changes = entry?.changes?.[0];
-      const field = changes?.field;
-      const value = changes?.value as {
-        contacts?: WhatsAppWebhookContact[];
-        messages?: Array<Record<string, unknown> & { id: string; from: string }>;
-        message_echoes?: Array<Record<string, unknown> & { id: string; to: string }>;
-        statuses?: WhatsAppStatusUpdate[];
-        metadata?: { phone_number_id?: string };
-        state_sync?: Array<Record<string, unknown>>;
-        history?: Array<Record<string, unknown>>;
-        errors?: Array<{ code?: number; message?: string }>;
-      };
-
-      if (field === 'smb_message_echoes') {
-        await handleSmbMessageEchoes(value);
-        logWebhook('POST → response', 'ok');
-        return reply.send('ok');
-      }
-
-      if (field === 'smb_app_state_sync') {
-        await handleSmbAppStateSync(value);
-        logWebhook('POST → response', 'ok');
-        return reply.send('ok');
-      }
-
-      if (field === 'history') {
-        await handleCoexistenceHistoryWebhook(value);
-        logWebhook('POST → response', 'ok');
-        return reply.send('ok');
-      }
-
-      if (value?.messages?.[0]) {
-        const msg = value.messages[0];
-        const from = msg.from;
-        const parsed = parseInboundWhatsAppMessage(msg);
-        const waNumberId = value.metadata?.phone_number_id;
-
-        if (isSkippedInbound(parsed)) {
-          // Meta still needs 200 OK — we just don't create a Message row.
-          logWebhook('POST → skipped message (no persist)', {
-            from,
-            type: msg.type,
-            waMessageId: msg.id,
-          });
-        } else if (!waNumberId) {
-          logWebhook('POST → skip (no phone_number_id)', value?.metadata);
-        } else {
-          const text = parsed.content;
-          const buttonPayload = parsed.buttonPayload;
-          const workspace = await resolveWorkspaceByPhoneNumberId(waNumberId);
-          if (!workspace) {
-            logWebhook('POST → skip (unknown workspace)', { waNumberId });
-          } else {
-            logWebhook('POST → inbound message', {
-              from,
-              text,
-              waNumberId,
-              workspaceId: workspace.id,
-            });
-
-            const profileName = extractWhatsAppProfileName(value.contacts, from);
-            const contact = await upsertWhatsAppContact({
-              db: prisma,
-              workspaceId: workspace.id,
-              waFrom: from,
-              profileName,
-            });
-
-            const { conversation: conv, reopened } = await findOrReopenConversationForInbound({
-              workspaceId: workspace.id,
-              contactId: contact.id,
-              channel: 'whatsapp',
-              channelAccountId: waNumberId,
-            });
-
-            if (reopened) {
-              logWebhook('POST → reopened resolved conversation', { conversationId: conv.id });
-            }
-
-            const existingMessage = await prisma.message.findFirst({
-              where: { waMessageId: msg.id },
-            });
-            if (existingMessage) {
-              logWebhook('POST → duplicate message skipped', { waMessageId: msg.id });
-            } else {
-              let metadata: MessageMediaMetadata | undefined;
-              if (parsed.location) {
-                metadata = { ...parsed.location };
-              } else if (parsed.flowResponse) {
-                metadata = { ...parsed.flowResponse } as unknown as MessageMediaMetadata;
-              } else if (parsed.media) {
-                metadata = {
-                  mimeType: parsed.media.mimeType,
-                  fileName: parsed.media.fileName,
-                  caption: parsed.media.caption,
-                  waMediaId: parsed.media.waMediaId,
-                  mediaUrl: parsed.media.mediaUrl,
-                };
-              }
-
-              let displayContent = text;
-              if (parsed.reaction?.reactedToWaMessageId) {
-                const reactedTo = await prisma.message.findFirst({
-                  where: {
-                    waMessageId: parsed.reaction.reactedToWaMessageId,
-                    conversationId: conv.id,
-                  },
-                  select: { content: true },
-                });
-                if (reactedTo?.content) {
-                  const snippet = reactedTo.content.slice(0, 60);
-                  displayContent = `${parsed.reaction.emoji || '👍'} reacted to: ${snippet}`;
-                }
-              }
-
-              const message = await prisma.message.create({
-                data: {
-                  waMessageId: msg.id,
-                  conversationId: conv.id,
-                  sender: parsed.sender === 'system' ? 'system' : 'contact',
-                  senderName: parsed.sender === 'system' ? 'WhatsApp' : contact.name,
-                  content: displayContent,
-                  type: parsed.kind,
-                  metadata: metadata ? (metadata as object) : undefined,
-                },
-              });
-
-              if (parsed.media?.waMediaId || parsed.media?.mediaUrl) {
-                try {
-                  const credentials = await getWorkspaceWhatsAppCredentials(
-                    workspace.id,
-                    waNumberId
-                  );
-                  metadata = await fetchAndStoreInboundMedia({
-                    workspaceId: workspace.id,
-                    messageId: message.id,
-                    waToken: credentials.accessToken,
-                    media: parsed.media,
-                  });
-                  await prisma.message.update({
-                    where: { id: message.id },
-                    data: { metadata: metadata as object },
-                  });
-                  message.metadata = metadata as object;
-                } catch (mediaErr) {
-                  logWebhook(
-                    'POST → media download failed',
-                    mediaErr instanceof Error ? mediaErr.message : mediaErr
-                  );
-                }
-              }
-
-              const lastPreview = previewForMessage(
-                parsed.kind,
-                displayContent,
-                parsed.media?.caption
-              );
-
-              await prisma.conversation.updateMany({
-                where: { id: conv.id, workspaceId: workspace.id },
-                data: {
-                  lastMessage: lastPreview,
-                  lastMessageAt: new Date(),
-                  unreadCount: { increment: 1 },
-                },
-              });
-
-              getIo().to(workspace.id).emit('new_message', {
-                conversationId: conv.id,
-                message,
-              });
-              getIo().to(workspace.id).emit('conversation_updated', {
-                conversationId: conv.id,
-              });
-
-              logWebhook('POST → saved message', {
-                messageId: message.id,
-                conversationId: conv.id,
-                contactId: contact.id,
-              });
-
-              // Opt-out works regardless of whatever automation (if any) is
-              // currently assigned to this conversation — a business relying
-              // solely on a rule-based flow's "Unsubscribe" node would miss
-              // every contact not currently inside that flow.
-              if (parsed.sender !== 'system' && !parsed.reaction && isOptOutMessage(displayContent)) {
-                try {
-                  const tagged = await markContactUnsubscribed(contact.id, workspace.id);
-                  if (tagged) {
-                    const credentials = await getWorkspaceWhatsAppCredentials(
-                      workspace.id,
-                      waNumberId
-                    );
-                    if (credentials.accessToken && credentials.phoneNumberId) {
-                      await sendWhatsAppMessage(
-                        credentials.accessToken,
-                        credentials.phoneNumberId,
-                        contact.phone,
-                        "You've been unsubscribed and won't receive further campaign messages."
-                      );
-                    }
-                  }
-                } catch (optOutErr) {
-                  logWebhook(
-                    'POST → opt-out handling error',
-                    optOutErr instanceof Error ? optOutErr.message : optOutErr
-                  );
-                }
-              }
-
-              // Data Table sync works regardless of whatever automation (if any) is
-              // currently assigned — the flow may have been sent by a campaign or a
-              // manual test-send with no journey execution to piggyback on.
-              if (parsed.flowResponse) {
-                try {
-                  await syncFlowResponseToDataTable({
-                    workspaceId: workspace.id,
-                    fields: parsed.flowResponse.fields,
-                  });
-                } catch (syncErr) {
-                  logWebhook(
-                    'POST → data table sync error',
-                    syncErr instanceof Error ? syncErr.message : syncErr
-                  );
-                }
-                try {
-                  await tagContactOnFlowCompletion({
-                    workspaceId: workspace.id,
-                    contactId: contact.id,
-                    fields: parsed.flowResponse.fields,
-                  });
-                } catch (tagErr) {
-                  logWebhook(
-                    'POST → flow completion tag error',
-                    tagErr instanceof Error ? tagErr.message : tagErr
-                  );
-                }
-              }
-
-              // Don't feed system/reaction noise into journeys / AI.
-              if (parsed.sender !== 'system' && !parsed.reaction) {
-                try {
-                  await routeInboundWhatsApp({
-                    workspaceId: workspace.id,
-                    conversationId: conv.id,
-                    contactId: contact.id,
-                    contactPhone: contact.phone,
-                    text: displayContent,
-                    buttonPayload,
-                    flowResponseName: parsed.flowResponse?.flowName,
-                    flowResponseFields: parsed.flowResponse?.fields,
-                    phoneNumberId: waNumberId,
-                    messageId: message.id,
-                  });
-                } catch (flowErr) {
-                  logWebhook(
-                    'POST → inbound router error',
-                    flowErr instanceof Error ? flowErr.message : flowErr
-                  );
-                  fastify.log.error(flowErr);
-                }
-                // Journey trigger emit lives in routeInboundConversation (journey assignee).
-              }
-            }
-          }
-        }
-        // Always fall through — statuses may share the same webhook delivery.
-      }
-
-      if (value?.statuses?.[0]) {
-        const statusUpdate = value.statuses[0];
-        const statusErrors = normalizeWhatsAppStatusErrors(statusUpdate.errors);
-        logWebhook('POST → status update', {
-          id: statusUpdate.id,
-          status: statusUpdate.status,
-          timestamp: statusUpdate.timestamp,
-          recipient_id: statusUpdate.recipient_id,
-          errors: statusErrors,
-        });
-        const message = await prisma.message.findFirst({
-          where: { waMessageId: statusUpdate.id },
-          include: { conversation: true },
-        });
-        if (message?.conversation?.workspaceId) {
-          const metadata = mergeWhatsAppStatusMetadata(message.metadata, statusUpdate);
-          await prisma.message.update({
-            where: { id: message.id },
-            data: {
-              status: statusUpdate.status,
-              metadata: metadata as object,
-            },
-          });
-          getIo().to(message.conversation.workspaceId).emit('message_status', {
-            messageId: message.id,
-            status: statusUpdate.status,
-            ...(statusErrors.length ? { errors: statusErrors } : {}),
-          });
-          logWebhook('POST → status applied', {
-            messageId: message.id,
-            status: statusUpdate.status,
-            errorCount: statusErrors.length,
-            errorCode: statusErrors[0]?.code,
-          });
-        } else {
-          logWebhook('POST → status (no local message)', {
-            id: statusUpdate.id,
-            status: statusUpdate.status,
-            errors: statusErrors,
-          });
-        }
-      }
-
-      // Subscribed field; raw event is persisted to WebhookEventLog (finally).
-      if (field === 'message_template_status_update') {
-        logWebhook('POST → message_template_status_update', value);
-        const statusValue = value as {
-          event?: string;
-          message_template_id?: number | string;
-          message_template_name?: string;
-          message_template_language?: string;
-          reason?: string;
-        };
-        const entryId = typeof entry?.id === 'string' ? entry.id : '';
-        const event = String(statusValue.event ?? '').toUpperCase();
-        const templateName = String(statusValue.message_template_name ?? '').trim();
-        if (entryId && templateName && (event === 'APPROVED' || event === 'REJECTED')) {
-          try {
-            const workspace = await resolveWorkspaceByWabaId(entryId);
-            if (workspace) {
-              const { metaStatusToSystem } = await import('../constants/templateLabels.js');
-              const status = metaStatusToSystem(event);
-              const updated = await prisma.template.updateMany({
-                where: { workspaceId: workspace.id, name: templateName },
-                data: {
-                  status,
-                  rejectionReason:
-                    event === 'REJECTED' ? String(statusValue.reason ?? 'Rejected by Meta') : null,
-                  ...(statusValue.message_template_id
-                    ? { waTemplateId: String(statusValue.message_template_id) }
-                    : {}),
-                },
-              });
-              if (updated.count > 0) {
-                const { emitNotification } = await import(
-                  '../services/notifications/emitNotification.js'
-                );
-                const { NOTIFICATION_TYPES } = await import(
-                  '../services/notifications/types.js'
-                );
-                const tpl = await prisma.template.findFirst({
-                  where: { workspaceId: workspace.id, name: templateName },
-                  select: { id: true, name: true },
-                });
-                await emitNotification({
-                  workspaceId: workspace.id,
-                  type:
-                    event === 'APPROVED'
-                      ? NOTIFICATION_TYPES.TEMPLATE_APPROVED
-                      : NOTIFICATION_TYPES.TEMPLATE_REJECTED,
-                  title:
-                    event === 'APPROVED' ? 'Template approved' : 'Template rejected',
-                  message:
-                    event === 'APPROVED'
-                      ? `${templateName} was approved by Meta.`
-                      : `${templateName} was rejected by Meta.`,
-                  entityType: 'template',
-                  entityId: tpl?.id ?? null,
-                  metadata: {
-                    event,
-                    language: statusValue.message_template_language,
-                    reason: statusValue.reason,
-                  },
-                });
-              }
-            }
-          } catch (err) {
-            logWebhook('POST → template status notify failed', {
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-      }
-
-      if (!value?.messages?.[0] && !value?.statuses?.[0]) {
-        logWebhook('POST → no messages/statuses in payload', {
-          field: changes?.field,
-          keys: value ? Object.keys(value) : [],
-        });
-      }
+      await enqueueWhatsAppInbound(body);
     } catch (err) {
-      processError = err instanceof Error ? err.message : String(err);
-      logWebhook('POST → error', processError);
+      logWebhook('POST → enqueue failed', err instanceof Error ? err.message : String(err));
       fastify.log.error(err);
-    } finally {
-      await recordInboundMetaWebhook(body, { error: processError });
+      return reply.code(500).send({ error: 'Enqueue failed' });
     }
-
-    logWebhook('POST → response', 'ok');
+    logWebhook('POST → queued', 'ok');
     return reply.send('ok');
   });
 
@@ -573,23 +136,57 @@ export default async function webhookRoutes(fastify: FastifyInstance) {
       logInstagramWebhook('POST → rejected', 'invalid or missing X-Hub-Signature-256');
       return reply.code(401).send({ error: 'Invalid signature' });
     }
-    const body = request.body as PageMessagingWebhookBody;
-    console.log('[Instagram Webhook] payload', JSON.stringify(body, null, 2));
-
-    logInstagramWebhook('POST payload', body);
-
-    let processError: string | null = null;
+    const body = request.body as InstagramInboundWebhookBody;
+    // Persist receipt before ack; comments / messaging / AI run on BullMQ (instagram-inbound).
+    await recordInboundMetaWebhook(body);
     try {
-      await handleMetaMessagingWebhook(body);
+      await enqueueInstagramInbound(body);
     } catch (err) {
-      processError = err instanceof Error ? err.message : String(err);
-      logInstagramWebhook('POST → error', processError);
+      logInstagramWebhook('POST → enqueue failed', err instanceof Error ? err.message : String(err));
       fastify.log.error(err);
-    } finally {
-      await recordInboundMetaWebhook(body, { error: processError });
+      return reply.code(500).send({ error: 'Enqueue failed' });
+    }
+    logInstagramWebhook('POST → queued', 'ok');
+    return reply.send('ok');
+  });
+
+  fastify.get('/messenger', async (request, reply) => {
+    console.log('[Messenger Webhook] GET hit — verification request', new Date().toISOString());
+    const { 'hub.mode': mode, 'hub.verify_token': token, 'hub.challenge': challenge } = request.query as {
+      'hub.mode'?: string;
+      'hub.verify_token'?: string;
+      'hub.challenge'?: string;
+    };
+
+    const tokenMatch = safeStringEquals(token, config.meta.webhookVerifyToken);
+    logMessengerWebhook('GET verify', { mode, tokenMatch, challenge });
+
+    if (mode === 'subscribe' && tokenMatch) {
+      logMessengerWebhook('GET verify → success', { challenge });
+      return reply.send(challenge);
     }
 
-    logInstagramWebhook('POST → response', 'ok');
+    logMessengerWebhook('GET verify → forbidden', { mode, token });
+    return reply.code(403).send({ error: 'Forbidden' });
+  });
+
+  fastify.post('/messenger', async (request, reply) => {
+    console.log('[Messenger Webhook] POST hit — incoming event', new Date().toISOString());
+    if (!verifyMetaSignature(request)) {
+      logMessengerWebhook('POST → rejected', 'invalid or missing X-Hub-Signature-256');
+      return reply.code(401).send({ error: 'Invalid signature' });
+    }
+    const body = request.body as MessengerInboundWebhookBody;
+    // Persist receipt before ack; messaging / AI run on BullMQ (messenger-inbound).
+    await recordInboundMetaWebhook(body);
+    try {
+      await enqueueMessengerInbound(body);
+    } catch (err) {
+      logMessengerWebhook('POST → enqueue failed', err instanceof Error ? err.message : String(err));
+      fastify.log.error(err);
+      return reply.code(500).send({ error: 'Enqueue failed' });
+    }
+    logMessengerWebhook('POST → queued', 'ok');
     return reply.send('ok');
   });
 

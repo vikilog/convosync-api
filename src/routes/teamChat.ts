@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { z } from 'zod';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import { listPresence } from '../services/teamPresence.js';
@@ -8,11 +8,16 @@ import {
   listDmMessages,
   listTeamChatPeers,
 } from '../services/teamChat.service.js';
+import {
+  teamChatMessageCreateSchema,
+  teamChatMessagesQuerySchema,
+} from './teamChat.schemas.js';
 
 export default async function teamChatRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
-  fastify.get('/peers', { onRequest: auth.onRequest }, async (request) => {
+  app.get('/peers', { onRequest: auth.onRequest }, async (request) => {
     const { workspaceId, userId } = getJwtUser(request);
     const online = listPresence(workspaceId);
     const onlineUserIds = new Set(online.map((m) => m.userId));
@@ -24,15 +29,12 @@ export default async function teamChatRoutes(fastify: FastifyInstance) {
     return { peers };
   });
 
-  fastify.get('/messages', { onRequest: auth.onRequest }, async (request, reply) => {
+  app.get(
+    '/messages',
+    { onRequest: auth.onRequest, schema: { querystring: teamChatMessagesQuerySchema } },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const q = z
-      .object({
-        peerUserId: z.string().min(1),
-        limit: z.coerce.number().int().min(1).max(100).optional(),
-        before: z.string().optional(),
-      })
-      .parse(request.query);
+    const q = request.query;
 
     try {
       const items = await listDmMessages({
@@ -50,14 +52,12 @@ export default async function teamChatRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/messages', { onRequest: auth.onRequest }, async (request, reply) => {
+  app.post(
+    '/messages',
+    { onRequest: auth.onRequest, schema: { body: teamChatMessageCreateSchema } },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const body = z
-      .object({
-        body: z.string().min(1).max(4000),
-        recipientUserId: z.string().min(1),
-      })
-      .parse(request.body);
+    const body = request.body;
 
     try {
       const message = await createTeamChatMessage({
@@ -74,7 +74,7 @@ export default async function teamChatRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/presence', { onRequest: auth.onRequest }, async (request) => {
+  app.get('/presence', { onRequest: auth.onRequest }, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const members = listPresence(workspaceId);
     return {

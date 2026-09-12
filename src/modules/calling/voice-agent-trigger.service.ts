@@ -6,6 +6,7 @@ import { context, propagation } from '@opentelemetry/api';
 import type { CallSession } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { config } from '../../config.js';
+import { internalAuthHeaders } from '../../lib/internalAuth.js';
 import {
   aiVoiceAgentLiveKitIdentity,
   isLiveKitConfigured,
@@ -123,17 +124,17 @@ export async function maybeStartVoiceAgentForCall(
     ttsVoiceId: agent.voiceTtsVoiceId || undefined,
   };
 
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (config.voiceAgent.internalSecret) {
-    headers['X-ConvoSync-Internal'] = config.voiceAgent.internalSecret;
-  }
-  // W3C Trace Context — Python voice-agent continues the same Tempo trace
-  propagation.inject(context.active(), headers);
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.voiceAgent.startTimeoutMs);
 
   try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...internalAuthHeaders(config.voiceAgent.internalSecret),
+    };
+    // W3C Trace Context — Python voice-agent continues the same Tempo trace
+    propagation.inject(context.active(), headers);
+
     const res = await fetch(url, {
       method: 'POST',
       headers,

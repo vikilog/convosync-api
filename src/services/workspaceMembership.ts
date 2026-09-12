@@ -1,3 +1,7 @@
+import {
+  getCachedWorkspaceAccess,
+  setCachedWorkspaceAccess,
+} from '../lib/workspaceAccessCache.js';
 import { prisma } from '../index.js';
 
 export async function ensureUserMemberships(userId: string) {
@@ -34,9 +38,18 @@ export async function listUserWorkspaces(userId: string) {
 }
 
 export async function userHasWorkspaceAccess(userId: string, workspaceId: string) {
-  await ensureUserMemberships(userId);
-  const m = await prisma.workspaceMembership.findUnique({
+  if ((await getCachedWorkspaceAccess(userId, workspaceId)) === true) return true;
+
+  let m = await prisma.workspaceMembership.findUnique({
     where: { userId_workspaceId: { userId, workspaceId } },
   });
+  if (!m) {
+    // Legacy users with a User.workspaceId but no membership row.
+    await ensureUserMemberships(userId);
+    m = await prisma.workspaceMembership.findUnique({
+      where: { userId_workspaceId: { userId, workspaceId } },
+    });
+  }
+  if (m) await setCachedWorkspaceAccess(userId, workspaceId);
   return !!m;
 }

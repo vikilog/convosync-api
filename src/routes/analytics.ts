@@ -1,13 +1,16 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import { listWorkspaceMemberUsers } from '../services/workspaceMembers.js';
+import { analyticsMessagesQuerySchema } from './analytics.schemas.js';
 
 export default async function analyticsRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
-  fastify.get('/dashboard', auth, async (request) => {
+  app.get('/dashboard', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
 
     const [totalContacts, activeJourneys, pausedJourneys, totalConversations, openConversations] =
@@ -39,9 +42,12 @@ export default async function analyticsRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.get('/messages', auth, async (request) => {
+  app.get(
+    '/messages',
+    { ...auth, schema: { querystring: analyticsMessagesQuerySchema } },
+    async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const { days = '7' } = request.query as { days?: string };
+    const { days = '7' } = request.query;
     const since = new Date();
     since.setDate(since.getDate() - parseInt(days, 10));
 
@@ -78,10 +84,10 @@ export default async function analyticsRoutes(fastify: FastifyInstance) {
       .map(([date, counts]) => ({ date, ...counts }));
   });
 
-  fastify.get('/team', auth, async (request) => {
+  app.get('/team', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const members = await listWorkspaceMemberUsers(workspaceId);
-    return members.map(({ user, conversationsCount }) => ({
+    return members.map(({ user, role, conversationsCount }) => ({
       id: user.id,
       name: user.name,
       initials: user.name
@@ -91,6 +97,8 @@ export default async function analyticsRoutes(fastify: FastifyInstance) {
         .slice(0, 2)
         .toUpperCase(),
       email: user.email,
+      role,
+      isOwner: role === 'owner',
       conversationsCount,
       csat: 4.5,
       avgResponse: '4m 30s',
@@ -98,7 +106,7 @@ export default async function analyticsRoutes(fastify: FastifyInstance) {
     }));
   });
 
-  fastify.get('/campaigns', auth, async (request) => {
+  app.get('/campaigns', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const campaigns = await prisma.campaign.findMany({
       where: { workspaceId },
@@ -108,7 +116,7 @@ export default async function analyticsRoutes(fastify: FastifyInstance) {
     return campaigns.map(mapAnalyticsCampaign);
   });
 
-  fastify.get('/campaigns/upcoming', auth, async (request) => {
+  app.get('/campaigns/upcoming', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const now = new Date();
     const campaigns = await prisma.campaign.findMany({

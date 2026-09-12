@@ -5,10 +5,10 @@ import {
   PlanGateError,
 } from '../../../services/planUsageGuards.js';
 import type { InstagramJourneyContainer } from '../container.js';
-import {
-  createIgJourneySchema,
-  saveIgGraphSchema,
-  updateIgJourneySchema,
+import type {
+  CreateIgJourneyDto,
+  SaveIgGraphDto,
+  UpdateIgJourneyDto,
 } from '../dto/ig-journey.dto.js';
 
 export class InstagramJourneyController {
@@ -37,7 +37,7 @@ export class InstagramJourneyController {
       }
       throw err;
     }
-    const body = createIgJourneySchema.parse(request.body);
+    const body = request.body as CreateIgJourneyDto;
     const journey = await this.c.journeyService.create(workspaceId, body);
     return reply.code(201).send(journey);
   };
@@ -45,7 +45,7 @@ export class InstagramJourneyController {
   update = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const body = updateIgJourneySchema.parse(request.body);
+    const body = request.body as UpdateIgJourneyDto;
     const journey = await this.c.journeyService.update(workspaceId, id, body);
     if (!journey) return reply.code(404).send({ error: 'Not found' });
     return journey;
@@ -70,7 +70,7 @@ export class InstagramJourneyController {
   saveGraph = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const body = saveIgGraphSchema.parse(request.body);
+    const body = request.body as SaveIgGraphDto;
     try {
       const graph = await this.c.graphService.saveGraph(workspaceId, id, body);
       if (!graph) return reply.code(404).send({ error: 'Not found' });

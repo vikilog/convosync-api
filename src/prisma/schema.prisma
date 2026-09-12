@@ -81,6 +81,7 @@ model Workspace {
   persistentMenu Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
 
   whatsappPhoneAccounts WhatsAppPhoneAccount[]
   instagramAccounts     InstagramAccount[]
@@ -135,6 +136,7 @@ model Workspace {
   billingInvoices      BillingInvoice[]
   billingAddOnPurchases BillingAddOnPurchase[]
   paymentIntents       PaymentIntent[]
+  virtualNumberRequests VirtualNumberRequest[]
   billingOffers        BillingOffer[]
   usageLimits          WorkspaceUsageLimits?
   agentChatConversations AgentChatConversation[]
@@ -949,6 +951,7 @@ model User {
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id])
   createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
 
   memberships           WorkspaceMembership[]
   assignedConversations Conversation[]
@@ -1004,6 +1007,7 @@ model Contact {
   workspace     Workspace @relation(fields: [workspaceId], references: [id])
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
 
   conversations     Conversation[]
   journeyExecutions JourneyExecution[]
@@ -1042,6 +1046,7 @@ model Conversation {
   labels        String[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
 
   messages          Message[]
   events            ConversationEvent[]
@@ -1400,6 +1405,7 @@ model Campaign {
   /// column to record why a campaign failed before this, unlike the
   /// synchronous send path which returns the error over HTTP directly.
   lastError       String?
+  deletedAt       DateTime?
 
   @@index([workspaceId])
   @@index([status, updatedAt])
@@ -1625,6 +1631,7 @@ model AiAgent {
   workspace                 Workspace @relation(fields: [workspaceId], references: [id])
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @default(now()) @updatedAt
+  deletedAt                 DateTime?
 
   flowSessions           AgentFlowSession[]
   skills                 AiSkill[]
@@ -2312,6 +2319,74 @@ model BillingAddOnPurchase {
   @@index([workspaceId])
   @@index([razorpayOrderId])
   @@map("billing_addon_purchases")
+}
+
+/// Workspace request for a Plivo-backed virtual phone number — reviewed by
+/// ConvoSync staff (super-admin) before the workspace can pick a number and pay.
+model VirtualNumberRequest {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  // pending_approval | approved | rejected | number_selected | paid | active | released
+  status String @default("pending_approval")
+
+  /** User-given name for this number, e.g. "Sales Line" — shown wherever it's picked from a list. */
+  label       String?
+  description String?
+
+  requestedAt       DateTime  @default(now())
+  requestedByUserId String?
+  approvedAt        DateTime?
+  approvedByPlatformAdminId String?
+  rejectedAt        DateTime?
+  rejectionReason   String?
+
+  selectedNumber        String?
+  selectedCity          String?
+  selectedCountryIso    String?
+  selectedPriceInrPaise Int?
+
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  paidAt            DateTime?
+
+  plivoNumberId  String?
+  activatedAt    DateTime?
+  purchaseError  String?
+  releasedAt     DateTime?
+
+  // Missed-call handling — sent as a WhatsApp message to the caller when enabled.
+  missedCallAutoReplyEnabled Boolean @default(false)
+  missedCallMessage          String?
+
+  // Browser calling — a Plivo Endpoint is the SIP/WebRTC identity the workspace's
+  // browser (Plivo Browser SDK) logs into so agents can talk over real audio.
+  plivoEndpointId       String?
+  plivoEndpointUsername String?
+  plivoEndpointPassword String?
+  // Plivo Application tied to the number's inbound answer_url/hangup_url, so
+  // inbound calls ring the workspace's browser Endpoint instead of Plivo's default.
+  plivoAppId            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([status])
+  @@index([razorpayOrderId])
+  @@map("virtual_number_requests")
+}
+
+/// Async transcript delivered by Plivo's `<Record transcriptionUrl>` callback,
+/// keyed by Plivo's own call_uuid (globally unique) rather than a workspace FK.
+model PlivoCallTranscript {
+  id        String   @id @default(cuid())
+  callUuid  String   @unique
+  text      String
+  createdAt DateTime @default(now())
+
+  @@map("plivo_call_transcripts")
 }
 
 /// Per-workspace usage limits (base plan + addons).

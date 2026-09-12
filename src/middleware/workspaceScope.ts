@@ -1,9 +1,25 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
+import { bindTenantWorkspace } from '../modules/identity/tenant-context.js';
 import { authenticate, getJwtUser } from './auth.js';
+import {
+  getCachedWriteGate,
+  setCachedWriteGate,
+  type WorkspaceWriteGate,
+} from '../lib/workspaceAccessCache.js';
 import { prisma } from '../lib/prisma.js';
 import { endPhase, enterRequestTiming, startPhase } from '../lib/request-timing.js';
 import { canWriteWithSubscription } from '../services/trial.js';
 import { userHasWorkspaceAccess } from '../services/workspaceMembership.js';
+
+function writeGateToTrialFields(gate: WorkspaceWriteGate) {
+  return {
+    isSuperAdmin: gate.isSuperAdmin,
+    subscriptionStatus: gate.subscriptionStatus,
+    trialStartedAt: gate.trialStartedAt ? new Date(gate.trialStartedAt) : null,
+    trialEndsAt: gate.trialEndsAt ? new Date(gate.trialEndsAt) : null,
+    planId: gate.planId,
+  };
+}
 
 /** JWT auth + verify user belongs to active company (workspace) in token. */
 export async function requireWorkspaceAccess(request: FastifyRequest, reply: FastifyReply) {
@@ -20,6 +36,7 @@ export async function requireWorkspaceAccess(request: FastifyRequest, reply: Fas
     if (!allowed) {
       return reply.code(403).send({ error: 'No access to this company workspace' });
     }
+    bindTenantWorkspace(user.workspaceId);
   } finally {
     endPhase('auth');
   }
@@ -39,26 +56,37 @@ export async function requireWritableSubscription(
     const user = getJwtUser(request);
     if (!user?.workspaceId) return;
 
-    const workspace = await prisma.workspace.findUnique({
-      where: { id: user.workspaceId },
-      select: {
-        isSuperAdmin: true,
-        subscriptionStatus: true,
-        trialStartedAt: true,
-        trialEndsAt: true,
-        planId: true,
-      },
-    });
-
-    if (!workspace) {
-      return reply.code(404).send({ error: 'Company workspace not found' });
+    const cached = await getCachedWriteGate(user.workspaceId);
+    let trialFields = cached ? writeGateToTrialFields(cached) : null;
+    if (!trialFields) {
+      const workspace = await prisma.workspace.findUnique({
+        where: { id: user.workspaceId },
+        select: {
+          isSuperAdmin: true,
+          subscriptionStatus: true,
+          trialStartedAt: true,
+          trialEndsAt: true,
+          planId: true,
+        },
+      });
+      if (!workspace) {
+        return reply.code(404).send({ error: 'Company workspace not found' });
+      }
+      trialFields = workspace;
+      await setCachedWriteGate(user.workspaceId, {
+        isSuperAdmin: workspace.isSuperAdmin,
+        subscriptionStatus: workspace.subscriptionStatus,
+        trialStartedAt: workspace.trialStartedAt?.toISOString() ?? null,
+        trialEndsAt: workspace.trialEndsAt?.toISOString() ?? null,
+        planId: workspace.planId,
+      });
     }
 
-    if (!canWriteWithSubscription(workspace.subscriptionStatus, workspace)) {
+    if (!canWriteWithSubscription(trialFields.subscriptionStatus, trialFields)) {
       return reply.code(402).send({
         error: 'Subscription inactive. Upgrade to continue.',
         code: 'subscription_inactive',
-        subscriptionStatus: workspace.subscriptionStatus,
+        subscriptionStatus: trialFields.subscriptionStatus,
       });
     }
   } finally {

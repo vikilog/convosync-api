@@ -1,14 +1,28 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { companyAuthBilling } from '../../middleware/workspaceScope.js';
 import { requireWorkspacePermission } from '../../middleware/workspacePermissions.js';
 import { BillingController } from './billing.controller.js';
 import { BillingService } from './billing.service.js';
 import { RazorpayService } from './razorpay.service.js';
 import { WebhookController } from './webhook.controller.js';
+import {
+  billingLimitQuerySchema,
+  billingMonthQuerySchema,
+  cancelSubscriptionSchema,
+  createOrderSchema,
+  createSubscriptionSchema,
+  refundSchema,
+  updateWalletSchema,
+  validateCouponSchema,
+  verifyOrderSchema,
+  verifySubscriptionSchema,
+} from './billing.schemas.js';
 
 type RawBodyRequest = FastifyRequest & { rawBody?: string };
 
 export default async function billingRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const razorpayService = new RazorpayService(fastify);
   const billingService = new BillingService(razorpayService);
   const controller = new BillingController(billingService);
@@ -31,25 +45,66 @@ export default async function billingRoutes(fastify: FastifyInstance) {
     return Readable.from([raw]);
   });
 
-  fastify.post('/webhooks/razorpay', webhookController.handleRazorpay);
+  // Razorpay HMAC / always-200 after signature — do not add Zod body schema.
+  app.post('/webhooks/razorpay', webhookController.handleRazorpay);
 
-  fastify.get('/billing/plans', auth, controller.listPlans);
-  fastify.get('/billing/workspace', auth, controller.getWorkspaceBilling);
-  fastify.get('/billing/offers', auth, controller.listPendingOffers);
-  fastify.get('/billing/invoices', auth, controller.listTransactions);
-  fastify.get('/billing/usage', auth, controller.getUsageCost);
-  fastify.get('/billing/wallet', auth, controller.getWallet);
-  fastify.get('/billing/wallet/transactions', auth, controller.listWalletTransactions);
-  fastify.patch('/billing/wallet', billingWrite, controller.updateWallet);
+  app.get('/billing/plans', auth, controller.listPlans);
+  app.get('/billing/workspace', auth, controller.getWorkspaceBilling);
+  app.get('/billing/offers', auth, controller.listPendingOffers);
+  app.get(
+    '/billing/invoices',
+    { ...auth, schema: { querystring: billingLimitQuerySchema } },
+    controller.listTransactions
+  );
+  app.get(
+    '/billing/usage',
+    { ...auth, schema: { querystring: billingMonthQuerySchema } },
+    controller.getUsageCost
+  );
+  app.get('/billing/wallet', auth, controller.getWallet);
+  app.get(
+    '/billing/wallet/transactions',
+    { ...auth, schema: { querystring: billingLimitQuerySchema } },
+    controller.listWalletTransactions
+  );
+  app.patch(
+    '/billing/wallet',
+    { ...billingWrite, schema: { body: updateWalletSchema } },
+    controller.updateWallet
+  );
   // AUTO_RECHARGE_DISABLED — re-enable later
   // fastify.post('/billing/wallet/auto-recharge/setup', billingWrite, controller.createAutoRechargeSetup);
-  fastify.post('/billing/order/create', billingWrite, controller.createOrder);
-  fastify.post('/billing/order/verify', billingWrite, controller.verifyOrder);
-  fastify.post('/billing/subscription/create', billingWrite, controller.createSubscription);
-  fastify.post('/billing/coupon/validate', auth, controller.validateCoupon);
-  fastify.post('/billing/subscription/verify', billingWrite, controller.verifySubscription);
-  fastify.post('/billing/subscription/cancel', billingWrite, controller.cancelSubscription);
-  fastify.post('/billing/subscription/pause', billingWrite, controller.pauseSubscription);
-  fastify.post('/billing/subscription/resume', billingWrite, controller.resumeSubscription);
-  fastify.post('/billing/refund', billingWrite, controller.refund);
+  app.post(
+    '/billing/order/create',
+    { ...billingWrite, schema: { body: createOrderSchema } },
+    controller.createOrder
+  );
+  app.post(
+    '/billing/order/verify',
+    { ...billingWrite, schema: { body: verifyOrderSchema } },
+    controller.verifyOrder
+  );
+  app.post(
+    '/billing/subscription/create',
+    { ...billingWrite, schema: { body: createSubscriptionSchema } },
+    controller.createSubscription
+  );
+  app.post(
+    '/billing/coupon/validate',
+    { ...auth, schema: { body: validateCouponSchema } },
+    controller.validateCoupon
+  );
+  app.post(
+    '/billing/subscription/verify',
+    { ...billingWrite, schema: { body: verifySubscriptionSchema } },
+    controller.verifySubscription
+  );
+  app.post(
+    '/billing/subscription/cancel',
+    { ...billingWrite, schema: { body: cancelSubscriptionSchema } },
+    controller.cancelSubscription
+  );
+  app.post('/billing/subscription/pause', billingWrite, controller.pauseSubscription);
+  app.post('/billing/subscription/resume', billingWrite, controller.resumeSubscription);
+  app.post('/billing/refund', { ...billingWrite, schema: { body: refundSchema } }, controller.refund);
 }

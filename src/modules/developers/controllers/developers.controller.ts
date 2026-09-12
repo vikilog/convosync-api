@@ -1,12 +1,12 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getJwtUser } from '../../../middleware/auth.js';
 import type { DevelopersContainer } from '../container.js';
-import {
-  createOutgoingWebhookSchema,
-  updateIncomingWebhookSchema,
-  updateOutgoingWebhookSchema,
-  upsertActionSchema,
-  webhookLogsQuerySchema,
+import type {
+  CreateOutgoingWebhookDto,
+  UpdateIncomingWebhookDto,
+  UpdateOutgoingWebhookDto,
+  UpsertActionDto,
+  WebhookLogsQueryDto,
 } from '../dto/developers.dto.js';
 
 export class DevelopersController {
@@ -19,7 +19,7 @@ export class DevelopersController {
 
   updateIncomingWebhook = async (request: FastifyRequest) => {
     const { workspaceId } = getJwtUser(request);
-    const body = updateIncomingWebhookSchema.parse(request.body);
+    const body = request.body as UpdateIncomingWebhookDto;
     return this.c.webhooksService.updateIncomingWebhook(workspaceId, body);
   };
 
@@ -30,7 +30,7 @@ export class DevelopersController {
 
   createOutgoingWebhook = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = createOutgoingWebhookSchema.parse(request.body);
+    const body = request.body as CreateOutgoingWebhookDto;
     const created = await this.c.webhooksService.createOutgoingWebhook(workspaceId, body);
     return reply.code(201).send(created);
   };
@@ -38,7 +38,7 @@ export class DevelopersController {
   updateOutgoingWebhook = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const body = updateOutgoingWebhookSchema.parse(request.body);
+    const body = request.body as UpdateOutgoingWebhookDto;
     const updated = await this.c.webhooksService.updateOutgoingWebhook(workspaceId, id, body);
     if (!updated) return reply.code(404).send({ error: 'Webhook not found' });
     return updated;
@@ -54,7 +54,7 @@ export class DevelopersController {
 
   listWebhookLogs = async (request: FastifyRequest) => {
     const { workspaceId } = getJwtUser(request);
-    const query = webhookLogsQuerySchema.parse(request.query);
+    const query = request.query as WebhookLogsQueryDto;
     return this.c.webhooksService.listWebhookLogs(workspaceId, query);
   };
 
@@ -65,7 +65,7 @@ export class DevelopersController {
 
   upsertAction = async (request: FastifyRequest) => {
     const { workspaceId } = getJwtUser(request);
-    const body = upsertActionSchema.parse(request.body);
+    const body = request.body as UpsertActionDto;
     return this.c.actionsService.upsertAction(workspaceId, body);
   };
 

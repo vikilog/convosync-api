@@ -19,7 +19,7 @@ export function initDevelopersModule(db: PrismaClient): DevelopersContainer {
   if (container) return container;
 
   const repo = new DevelopersRepository(db);
-  const webhooksService = new WebhooksService(repo);
+  const webhooksService = new WebhooksService(repo, db);
   const actionsService = new ActionsService(repo);
   const { aiKnowledgeService } = initAiKnowledgeModule(db);
   const aiSyncDashboardService = new AiSyncDashboardService(repo, aiKnowledgeService);

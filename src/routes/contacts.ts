@@ -1,6 +1,15 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
+import {
+  contactAutomationPauseSchema,
+  contactCreateSchema,
+  contactImportSchema,
+  contactLinkBodySchema,
+  contactTagBodySchema,
+  contactUpdateSchema,
+} from './contacts.schemas.js';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth, companyScopedData, scopedUpdateData } from '../middleware/workspaceScope.js';
@@ -12,6 +21,12 @@ import {
 import { eventBus } from '../modules/journey/events/event-bus.js';
 import { getIo } from '../socket.js';
 import { contactChannelWhere, type ContactChannelFilter } from '../lib/channelContact.js';
+import {
+  andWhere,
+  channelListWhere,
+  listTagWhere,
+  normalizeListFilter,
+} from '../lib/contactListQuery.js';
 import { getContactAudits } from '../services/contact-audit.service.js';
 import { getContactLeadJourney } from '../services/leadJourney.js';
 import {
@@ -43,14 +58,6 @@ const LIST_TAGS = {
   blocklist: 'Blocked',
 } as const;
 
-type ContactListFilter = keyof typeof LIST_TAGS | 'all';
-
-function listWhere(workspaceId: string, list?: string) {
-  const base = { workspaceId } as { workspaceId: string; tags?: { has: string } };
-  if (list === 'unsubscribe') return { ...base, tags: { has: LIST_TAGS.unsubscribe } };
-  if (list === 'blocklist') return { ...base, tags: { has: LIST_TAGS.blocklist } };
-  return base;
-}
 
 function encodeContactCursor(updatedAt: Date, id: string): string {
   return `${updatedAt.toISOString()}|${id}`;
@@ -71,9 +78,10 @@ function parseDayBound(ymd: string | undefined, end: boolean): Date | undefined 
 }
 
 export default async function contactRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
-  fastify.get('/stats', auth, async (request) => {
+  app.get('/stats', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
 
     const [
@@ -164,7 +172,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
   });
 
   /** New-contacts series for dashboard chart (bucketed in client timezone). */
-  fastify.get('/growth', auth, async (request) => {
+  app.get('/growth', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const { range, dateFrom, dateTo, tz } = request.query as {
       range?: GrowthRangeKey | string;
@@ -195,13 +203,13 @@ export default async function contactRoutes(fastify: FastifyInstance) {
   });
 
   /** Sourced from the WorkspaceTag registry (Settings → Automation → Tags), folder-grouped order. */
-  fastify.get('/tags', auth, async (request) => {
+  app.get('/tags', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const { tags } = await listWorkspaceTags(workspaceId);
     return { tags };
   });
 
-  fastify.get('/campaign-audience', auth, async (request) => {
+  app.get('/campaign-audience', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const { channel } = request.query as { channel?: string };
     const resolvedChannel: CampaignAudienceChannel =
@@ -209,7 +217,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     return getCampaignAudienceSegments(workspaceId, resolvedChannel);
   });
 
-  fastify.get('/campaign-audience/contacts', auth, async (request) => {
+  app.get('/campaign-audience/contacts', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const { channel, segmentId, segmentIds: segmentIdsRaw, matchMode } = request.query as {
       channel?: string;
@@ -234,7 +242,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     return listCampaignAudienceContacts(workspaceId, resolvedChannel, resolvedSegment, resolvedMatchMode);
   });
 
-  fastify.get('/segments', auth, async (request) => {
+  app.get('/segments', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const total = await prisma.contact.count({ where: { workspaceId } });
     return [
@@ -254,26 +262,48 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     ];
   });
 
-  fastify.get('/', auth, async (request) => {
+  app.get('/', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const { search, tag, list, channel, cursor, limit: limitRaw, dateFrom, dateTo } =
-      request.query as {
-        search?: string;
-        tag?: string;
-        list?: ContactListFilter;
-        channel?: ContactChannelFilter;
-        cursor?: string;
-        limit?: string;
-        dateFrom?: string;
-        dateTo?: string;
-      };
+    const {
+      search,
+      tag,
+      tags: tagsRaw,
+      tagsMatch,
+      list: listRaw,
+      channel,
+      cursor,
+      limit: limitRaw,
+      dateFrom,
+      dateTo,
+    } = request.query as {
+      search?: string;
+      /** @deprecated single-tag filter — kept for older clients, superseded by `tags`. */
+      tag?: string;
+      /** Comma-separated tag names. */
+      tags?: string;
+      /** 'all' = every tag must be present (AND); 'any' = at least one (OR, default). */
+      tagsMatch?: 'all' | 'any';
+      list?: string | string[];
+      channel?: ContactChannelFilter;
+      cursor?: string;
+      limit?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    };
+
+    const tagList = (tagsRaw ?? '')
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const tagsFilter =
+      tagList.length > 0
+        ? { tags: tagsMatch === 'all' ? { hasEvery: tagList } : { hasSome: tagList } }
+        : tag
+          ? { tags: { has: tag } }
+          : undefined;
 
     const limit = Math.min(100, Math.max(1, Number(limitRaw) || 25));
-    const listFilter = listWhere(workspaceId, list);
-    const channelFilter =
-      channel === 'whatsapp' || channel === 'instagram' || channel === 'messenger'
-        ? contactChannelWhere(channel)
-        : undefined;
+    const list = normalizeListFilter(listRaw);
 
     const createdFrom = parseDayBound(dateFrom, false);
     const createdTo = parseDayBound(dateTo, true);
@@ -302,18 +332,16 @@ export default async function contactRoutes(fastify: FastifyInstance) {
         ]
       : undefined;
 
-    const and: object[] = [];
-    if (searchOr) and.push({ OR: searchOr });
-    if (cursorOr) and.push({ OR: cursorOr });
-
     const rows = await prisma.contact.findMany({
-      where: {
-        ...listFilter,
-        ...(channelFilter ?? {}),
-        ...(createdAt ? { createdAt } : {}),
-        ...(tag && { tags: { has: tag } }),
-        ...(and.length ? { AND: and } : {}),
-      },
+      where: andWhere([
+        { workspaceId },
+        listTagWhere(list),
+        channelListWhere(channel),
+        createdAt ? { createdAt } : undefined,
+        tagsFilter,
+        searchOr ? { OR: searchOr } : undefined,
+        cursorOr ? { OR: cursorOr } : undefined,
+      ]),
       orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
     });
@@ -327,18 +355,9 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     return { items, nextCursor, hasMore };
   });
 
-  fastify.post('/', auth, async (request, reply) => {
+  app.post('/', { ...auth, schema: { body: contactCreateSchema } }, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const schema = z.object({
-      name: z.string().min(1),
-      phone: z.string().min(5),
-      email: z.union([z.string().email(), z.literal('')]).optional(),
-      source: z.string().optional(),
-      tags: z.array(z.string()).optional(),
-      customFields: z.record(z.string()).optional(),
-      ownerId: z.string().optional(),
-    });
-    const body = schema.parse(request.body);
+    const body = request.body;
     const { ownerId, email, ...rest } = body;
     const customFields = {
       ...(rest.customFields ?? {}),
@@ -373,20 +392,9 @@ export default async function contactRoutes(fastify: FastifyInstance) {
   });
 
   /** Bulk upsert by phone+workspace. Client may chunk large CSVs. */
-  fastify.post('/import', auth, async (request, reply) => {
+  app.post('/import', { ...auth, schema: { body: contactImportSchema } }, async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const rowSchema = z.object({
-      name: z.string().min(1),
-      phone: z.string().min(5),
-      email: z.string().optional(),
-      source: z.string().optional(),
-      tags: z.array(z.string()).optional(),
-    });
-    const body = z
-      .object({
-        contacts: z.array(rowSchema).min(1).max(5000),
-      })
-      .parse(request.body);
+    const body = request.body;
 
     let created = 0;
     let updated = 0;
@@ -488,7 +496,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
   });
 
   /** Count contacts that have the given tag (for delete-by-tag confirm). Must be before /:id. */
-  fastify.get('/by-tag/count', auth, async (request, reply) => {
+  app.get('/by-tag/count', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const tag = normalizeContactTag(String((request.query as { tag?: string }).tag ?? ''));
     if (!tag) return reply.code(400).send({ error: 'tag is required' });
@@ -497,17 +505,15 @@ export default async function contactRoutes(fastify: FastifyInstance) {
   });
 
   /** Hard-delete every contact in the workspace that has this tag. Does not delete the tag registry. */
-  fastify.delete('/by-tag', auth, async (request, reply) => {
+  app.delete('/by-tag', { ...auth, schema: { body: contactTagBodySchema } }, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = z.object({ tag: z.string() }).safeParse(request.body ?? {});
-    if (!body.success) return reply.code(400).send({ error: 'tag is required' });
-    const tag = normalizeContactTag(body.data.tag);
+    const tag = normalizeContactTag(request.body.tag);
     if (!tag) return reply.code(400).send({ error: 'tag is required' });
     const { deleted, failed, errors } = await deleteContactsByTag(workspaceId, tag);
     return { success: failed === 0, tag, deleted, failed, errors };
   });
 
-  fastify.get('/:id', auth, async (request, reply) => {
+  app.get('/:id', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const contact = await prisma.contact.findFirst({ where: { id, workspaceId } });
@@ -515,7 +521,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     return contact;
   });
 
-  fastify.get('/:id/lead-journey', auth, async (request, reply) => {
+  app.get('/:id/lead-journey', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const contact = await prisma.contact.findFirst({
@@ -527,7 +533,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     return { journey };
   });
 
-  fastify.get('/:id/links', auth, async (request, reply) => {
+  app.get('/:id/links', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const links = await listContactLinks(workspaceId, id);
@@ -535,10 +541,10 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     return links;
   });
 
-  fastify.post('/:id/links', auth, async (request, reply) => {
+  app.post('/:id/links', { ...auth, schema: { body: contactLinkBodySchema } }, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const body = z.object({ otherContactId: z.string().min(1) }).parse(request.body);
+    const body = request.body;
     try {
       const links = await linkContacts(workspaceId, id, body.otherContactId);
       if (!links) return reply.code(404).send({ error: 'Not found' });
@@ -550,7 +556,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.delete('/:id/links/:otherContactId', auth, async (request, reply) => {
+  app.delete('/:id/links/:otherContactId', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id, otherContactId } = request.params as {
       id: string;
@@ -567,7 +573,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/:id/overview', auth, async (request, reply) => {
+  app.get('/:id/overview', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const overview = await getContactOverview(workspaceId, id);
@@ -575,26 +581,21 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     return overview;
   });
 
-  fastify.post('/:id/automation-pause', auth, async (request, reply) => {
+  app.post('/:id/automation-pause', { ...auth, schema: { body: contactAutomationPauseSchema } }, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const schema = z.object({ paused: z.boolean() });
-    const parsed = schema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
-    }
-    const updated = await setContactAutomationsPaused(workspaceId, id, parsed.data.paused);
+    const updated = await setContactAutomationsPaused(workspaceId, id, request.body.paused);
     if (!updated) return reply.code(404).send({ error: 'Not found' });
 
     getIo().to(workspaceId).emit('contact_updated', {
       contactId: id,
-      automationsPaused: parsed.data.paused,
+      automationsPaused: request.body.paused,
     });
 
-    return { id, automationsPaused: parsed.data.paused };
+    return { id, automationsPaused: request.body.paused };
   });
 
-  fastify.get('/:id/audits', auth, async (request, reply) => {
+  app.get('/:id/audits', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const audits = await getContactAudits(workspaceId, id);
@@ -602,7 +603,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     return audits;
   });
 
-  fastify.get('/:id/insights/latest', auth, async (request, reply) => {
+  app.get('/:id/insights/latest', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const contact = await prisma.contact.findFirst({
@@ -621,7 +622,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
   });
 
   /** Manual prepare — force recompute past the 6h gap (existing calls/chats). */
-  fastify.post('/:id/insights/compute', auth, async (request, reply) => {
+  app.post('/:id/insights/compute', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
     const contact = await prisma.contact.findFirst({
@@ -655,26 +656,14 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.put('/:id', auth, async (request, reply) => {
+  app.put('/:id', { ...auth, schema: { body: contactUpdateSchema } }, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const schema = z.object({
-      name: z.string().min(1).optional(),
-      phone: z.string().min(5).optional(),
-      email: z.union([z.string().email(), z.null(), z.literal('')]).optional(),
-      tags: z.array(z.string()).optional(),
-      excludeFromInsights: z.boolean().optional(),
-      customFields: z.record(z.string()).optional(),
-    });
     // Whitelisted, not just deny-listed: linkGroupId in particular must go
     // through linkContacts/unlinkContact, which enforce the
     // one-contact-per-channel-per-group invariant — a raw PUT here would
     // silently corrupt it.
-    const parsed = schema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? 'Invalid request body' });
-    }
-    const data: Record<string, unknown> = { ...parsed.data };
+    const data: Record<string, unknown> = { ...request.body };
     if ('email' in data && data.email === '') data.email = null;
 
     const before = await prisma.contact.findFirst({ where: { id, workspaceId }, select: { tags: true } });
@@ -691,6 +680,12 @@ export default async function contactRoutes(fastify: FastifyInstance) {
         tags: contact.tags,
         name: contact.name,
       });
+      void eventBus.emit('contact.updated', {
+        workspaceId,
+        event: 'contact.updated',
+        contactId: id,
+        payload: {},
+      });
       const addedTags = contact.tags.filter((t) => !before.tags.includes(t));
       if (addedTags.length) {
         void eventBus.emit('contact.tag_added', {
@@ -704,7 +699,7 @@ export default async function contactRoutes(fastify: FastifyInstance) {
     return contact;
   });
 
-  fastify.delete('/:id', auth, async (request, reply) => {
+  app.delete('/:id', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
 

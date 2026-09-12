@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { authenticatePlatformAdmin } from '../../middleware/platformAuth.js';
 import { RazorpayService } from '../../modules/billing/razorpay.service.js';
@@ -56,11 +57,15 @@ const planWriteSchema = z.object({
   razorpayPlanIdAnnualUsd: z.string().trim().min(1).nullable().optional(),
 });
 
+const slugParamsSchema = z.object({ slug: z.string() });
+const planActiveBodySchema = z.object({ isActive: z.boolean() });
+
 export default async function platformPlanRoutes(fastify: FastifyInstance) {
-  fastify.addHook('preHandler', authenticatePlatformAdmin);
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+  app.addHook('preHandler', authenticatePlatformAdmin);
   const razorpay = new RazorpayService(fastify);
 
-  fastify.get('/', async () => {
+  app.get('/', async () => {
     const plans = await listSubscriptionPlans({
       includeCustom: true,
       includeInactive: true,
@@ -68,8 +73,8 @@ export default async function platformPlanRoutes(fastify: FastifyInstance) {
     return { plans: plans.map(serializeSubscriptionPlan) };
   });
 
-  fastify.get('/:slug', async (request, reply) => {
-    const { slug } = request.params as { slug: string };
+  app.get('/:slug', { schema: { params: slugParamsSchema } }, async (request, reply) => {
+    const { slug } = request.params;
     const plan = await getSubscriptionPlanBySlug(slug);
     if (!plan) {
       return reply.code(404).send({ error: 'Plan not found' });
@@ -77,11 +82,13 @@ export default async function platformPlanRoutes(fastify: FastifyInstance) {
     return { plan: serializeSubscriptionPlan(plan) };
   });
 
-  fastify.patch('/:slug/active', async (request, reply) => {
-    const { slug } = request.params as { slug: string };
-    const body = z.object({ isActive: z.boolean() }).parse(request.body);
+  app.patch(
+    '/:slug/active',
+    { schema: { params: slugParamsSchema, body: planActiveBodySchema } },
+    async (request, reply) => {
+    const body = request.body;
     try {
-      const plan = await setSubscriptionPlanActive(slug, body.isActive);
+      const plan = await setSubscriptionPlanActive(request.params.slug, body.isActive);
       return { plan: serializeSubscriptionPlan(plan) };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to update plan status';
@@ -89,8 +96,8 @@ export default async function platformPlanRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/', async (request, reply) => {
-    const body = planWriteSchema.parse(request.body);
+  app.post('/', { schema: { body: planWriteSchema } }, async (request, reply) => {
+    const body = request.body;
     try {
       const features = {
         ...body.features,
@@ -134,9 +141,9 @@ export default async function platformPlanRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.patch('/:slug', async (request, reply) => {
-    const { slug } = request.params as { slug: string };
-    const body = planWriteSchema.parse(request.body);
+  app.patch('/:slug', { schema: { params: slugParamsSchema, body: planWriteSchema } }, async (request, reply) => {
+    const { slug } = request.params;
+    const body = request.body;
     try {
       const features = {
         ...body.features,

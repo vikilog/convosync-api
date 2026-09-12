@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { prisma } from '../../index.js';
 import { getJwtUser } from '../../middleware/auth.js';
@@ -41,48 +42,119 @@ import {
 } from '../../services/billingOffers.js';
 import { extractRazorpayErrorDetails } from '../../utils/razorpay-error.utils.js';
 
-export default async function platformOrganizationRoutes(fastify: FastifyInstance) {
-  fastify.addHook('preHandler', authenticatePlatformAdmin);
+const orgIdParams = z.object({ id: z.string() });
+const orgOfferParams = z.object({ id: z.string(), offerId: z.string() });
+const orgAgentParams = z.object({ id: z.string(), agentId: z.string() });
 
-  fastify.get('/stats', async () => {
+const orgListQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.string().optional(),
+});
+
+const usageCostQuery = z.object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional() });
+
+const trialExtendBody = z.object({
+  days: z.coerce.number().int().min(1).max(365),
+  reason: z.string().trim().min(3).max(500),
+});
+
+const impersonateBody = z.object({ userId: z.string().min(1).optional() });
+
+const limitsBody = z.object({
+  contactsLimit: z.coerce.number().int().min(0).optional(),
+  teamMembersLimit: z.coerce.number().int().min(1).optional(),
+  aiAgentsLimit: z.coerce.number().int().min(0).optional(),
+  channelsLimit: z.coerce.number().int().min(1).optional(),
+  aiTokensIncluded: z.coerce.number().int().min(0).optional(),
+  campaignsLimit: z.coerce.number().int().min(0).optional(),
+  emailsLimit: z.coerce.number().int().min(0).optional(),
+});
+
+const assignPlanBody = z.object({ planSlug: z.string().trim().min(1) });
+
+const billingOffersQuery = z.object({
+  status: z.enum(['pending', 'paid', 'cancelled', 'all']).optional(),
+});
+
+const billingOfferBody = z.object({
+  planId: z.string().trim().min(1),
+  billingCycle: z.enum(['monthly', 'annual']).default('monthly'),
+  currency: z.enum(['INR', 'USD']),
+  amountMinor: z.number().int().positive().nullable().optional(),
+  note: z.string().trim().max(500).nullable().optional(),
+  checkoutKind: z.enum(['subscription', 'payment_link']).default('subscription'),
+  allowPaymentLinkFallback: z.boolean().optional().default(false),
+});
+
+const companyUpdateSchema = z.object({
+  name: z.string().min(2).optional(),
+  legalName: z.string().optional().nullable(),
+  industry: z.string().optional().nullable(),
+  website: z.string().max(500).optional().nullable(),
+  email: z.union([z.string().email(), z.literal(''), z.null()]).optional(),
+  phone: z.string().optional().nullable(),
+  address: z.string().optional().nullable(),
+  city: z.string().optional().nullable(),
+  state: z.string().optional().nullable(),
+  country: z.string().optional().nullable(),
+  postalCode: z.string().optional().nullable(),
+  timezone: z.string().optional().nullable(),
+  taxId: z.string().optional().nullable(),
+  logoUrl: z.union([z.string(), z.null()]).optional(),
+  companySize: z.string().optional().nullable(),
+});
+
+const ownerUpdateSchema = z.object({
+  name: z.string().min(2).optional(),
+  phone: z.string().optional().nullable(),
+  email: z.string().email().optional(),
+});
+
+const agentEnabledBody = z.object({ isEnabled: z.boolean() });
+
+const creditWalletBody = z.object({
+  amountCc: z.coerce.number().positive().max(1_000_000),
+  note: z.string().trim().max(500).optional(),
+  idempotencyKey: z.string().trim().min(8).max(128).optional(),
+});
+
+export default async function platformOrganizationRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+  app.addHook('preHandler', authenticatePlatformAdmin);
+
+  app.get('/stats', async () => {
     return getPlatformOrganizationStats();
   });
 
-  fastify.get('/', async (request) => {
-    const query = z
-      .object({
-        page: z.coerce.number().int().min(1).default(1),
-        pageSize: z.coerce.number().int().min(1).max(100).default(20),
-        search: z.string().optional(),
-      })
-      .parse(request.query);
-
-    return listPlatformOrganizations(query);
+  app.get('/', { schema: { querystring: orgListQuery } }, async (request) => {
+    return listPlatformOrganizations(request.query);
   });
 
-  fastify.get('/:id/usage-cost', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const query = z.object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional() }).parse(request.query);
+  app.get(
+    '/:id/usage-cost',
+    { schema: { params: orgIdParams, querystring: usageCostQuery } },
+    async (request, reply) => {
+    const { id } = request.params;
+    const query = request.query;
     const data = await getPlatformOrganizationUsageCost(id, query.month);
     if (!data) return reply.code(404).send({ error: 'Organization not found' });
     return data;
   });
 
-  fastify.get('/:id', async (request, reply) => {
-    const { id } = request.params as { id: string };
+  app.get('/:id', { schema: { params: orgIdParams } }, async (request, reply) => {
+    const { id } = request.params;
     const org = await getPlatformOrganizationById(id);
     if (!org) return reply.code(404).send({ error: 'Organization not found' });
     return org;
   });
 
-  fastify.post('/:id/trial/extend', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = z
-      .object({
-        days: z.coerce.number().int().min(1).max(365),
-        reason: z.string().trim().min(3).max(500),
-      })
-      .parse(request.body);
+  app.post(
+    '/:id/trial/extend',
+    { schema: { params: orgIdParams, body: trialExtendBody } },
+    async (request, reply) => {
+    const { id } = request.params;
+    const body = request.body;
 
     const admin = getJwtUser(request);
 
@@ -105,8 +177,8 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.post('/:id/activate', async (request, reply) => {
-    const { id } = request.params as { id: string };
+  app.post('/:id/activate', { schema: { params: orgIdParams } }, async (request, reply) => {
+    const { id } = request.params;
 
     try {
       const workspace = await activateWorkspaceSubscription(id);
@@ -122,8 +194,8 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.post('/:id/suspend', async (request, reply) => {
-    const { id } = request.params as { id: string };
+  app.post('/:id/suspend', { schema: { params: orgIdParams } }, async (request, reply) => {
+    const { id } = request.params;
     try {
       const workspace = await suspendWorkspace(id);
       return {
@@ -137,8 +209,8 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.post('/:id/reactivate', async (request, reply) => {
-    const { id } = request.params as { id: string };
+  app.post('/:id/reactivate', { schema: { params: orgIdParams } }, async (request, reply) => {
+    const { id } = request.params;
     try {
       const workspace = await reactivateWorkspace(id);
       return {
@@ -153,8 +225,8 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.post('/:id/whatsapp-flow/enable', async (request, reply) => {
-    const { id } = request.params as { id: string };
+  app.post('/:id/whatsapp-flow/enable', { schema: { params: orgIdParams } }, async (request, reply) => {
+    const { id } = request.params;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
 
@@ -181,9 +253,12 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.post('/:id/impersonate', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = z.object({ userId: z.string().min(1).optional() }).parse(request.body ?? {});
+  app.post(
+    '/:id/impersonate',
+    { schema: { params: orgIdParams, body: impersonateBody } },
+    async (request, reply) => {
+    const { id } = request.params;
+    const body = request.body;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
     try {
@@ -219,19 +294,12 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.patch('/:id/limits', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = z
-      .object({
-        contactsLimit: z.coerce.number().int().min(0).optional(),
-        teamMembersLimit: z.coerce.number().int().min(1).optional(),
-        aiAgentsLimit: z.coerce.number().int().min(0).optional(),
-        channelsLimit: z.coerce.number().int().min(1).optional(),
-        aiTokensIncluded: z.coerce.number().int().min(0).optional(),
-        campaignsLimit: z.coerce.number().int().min(0).optional(),
-        emailsLimit: z.coerce.number().int().min(0).optional(),
-      })
-      .parse(request.body);
+  app.patch(
+    '/:id/limits',
+    { schema: { params: orgIdParams, body: limitsBody } },
+    async (request, reply) => {
+    const { id } = request.params;
+    const body = request.body;
 
     try {
       const limits = await updateWorkspaceLimits(id, body);
@@ -242,9 +310,12 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.post('/:id/assign-plan', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = z.object({ planSlug: z.string().trim().min(1) }).parse(request.body);
+  app.post(
+    '/:id/assign-plan',
+    { schema: { params: orgIdParams, body: assignPlanBody } },
+    async (request, reply) => {
+    const { id } = request.params;
+    const body = request.body;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
 
@@ -272,11 +343,12 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.get('/:id/billing-offers', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const query = z
-      .object({ status: z.enum(['pending', 'paid', 'cancelled', 'all']).optional() })
-      .parse(request.query ?? {});
+  app.get(
+    '/:id/billing-offers',
+    { schema: { params: orgIdParams, querystring: billingOffersQuery } },
+    async (request, reply) => {
+    const { id } = request.params;
+    const query = request.query;
     try {
       const offers = await listBillingOffersForWorkspace(id, {
         status: query.status ?? 'all',
@@ -288,19 +360,12 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.post('/:id/billing-offers', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = z
-      .object({
-        planId: z.string().trim().min(1),
-        billingCycle: z.enum(['monthly', 'annual']).default('monthly'),
-        currency: z.enum(['INR', 'USD']),
-        amountMinor: z.number().int().positive().nullable().optional(),
-        note: z.string().trim().max(500).nullable().optional(),
-        checkoutKind: z.enum(['subscription', 'payment_link']).default('subscription'),
-        allowPaymentLinkFallback: z.boolean().optional().default(false),
-      })
-      .parse(request.body);
+  app.post(
+    '/:id/billing-offers',
+    { schema: { params: orgIdParams, body: billingOfferBody } },
+    async (request, reply) => {
+    const { id } = request.params;
+    const body = request.body;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
 
@@ -355,8 +420,11 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.post('/:id/billing-offers/:offerId/cancel', async (request, reply) => {
-    const { id, offerId } = request.params as { id: string; offerId: string };
+  app.post(
+    '/:id/billing-offers/:offerId/cancel',
+    { schema: { params: orgOfferParams } },
+    async (request, reply) => {
+    const { id, offerId } = request.params;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
     try {
@@ -382,8 +450,11 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.delete('/:id/billing-offers/:offerId', async (request, reply) => {
-    const { id, offerId } = request.params as { id: string; offerId: string };
+  app.delete(
+    '/:id/billing-offers/:offerId',
+    { schema: { params: orgOfferParams } },
+    async (request, reply) => {
+    const { id, offerId } = request.params;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
     try {
@@ -411,27 +482,9 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  const companyUpdateSchema = z.object({
-    name: z.string().min(2).optional(),
-    legalName: z.string().optional().nullable(),
-    industry: z.string().optional().nullable(),
-    website: z.string().max(500).optional().nullable(),
-    email: z.union([z.string().email(), z.literal(''), z.null()]).optional(),
-    phone: z.string().optional().nullable(),
-    address: z.string().optional().nullable(),
-    city: z.string().optional().nullable(),
-    state: z.string().optional().nullable(),
-    country: z.string().optional().nullable(),
-    postalCode: z.string().optional().nullable(),
-    timezone: z.string().optional().nullable(),
-    taxId: z.string().optional().nullable(),
-    logoUrl: z.union([z.string(), z.null()]).optional(),
-    companySize: z.string().optional().nullable(),
-  });
-
-  fastify.patch('/:id', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = companyUpdateSchema.parse(request.body ?? {});
+  app.patch('/:id', { schema: { params: orgIdParams, body: companyUpdateSchema } }, async (request, reply) => {
+    const { id } = request.params;
+    const body = request.body;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
 
@@ -458,15 +511,12 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.patch('/:id/owner', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = z
-      .object({
-        name: z.string().min(2).optional(),
-        phone: z.string().optional().nullable(),
-        email: z.string().email().optional(),
-      })
-      .parse(request.body ?? {});
+  app.patch(
+    '/:id/owner',
+    { schema: { params: orgIdParams, body: ownerUpdateSchema } },
+    async (request, reply) => {
+    const { id } = request.params;
+    const body = request.body;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
 
@@ -494,8 +544,8 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.post('/:id/remove-plan', async (request, reply) => {
-    const { id } = request.params as { id: string };
+  app.post('/:id/remove-plan', { schema: { params: orgIdParams } }, async (request, reply) => {
+    const { id } = request.params;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
 
@@ -547,9 +597,12 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.patch('/:id/agents/:agentId', async (request, reply) => {
-    const { id, agentId } = request.params as { id: string; agentId: string };
-    const body = z.object({ isEnabled: z.boolean() }).parse(request.body);
+  app.patch(
+    '/:id/agents/:agentId',
+    { schema: { params: orgAgentParams, body: agentEnabledBody } },
+    async (request, reply) => {
+    const { id, agentId } = request.params;
+    const body = request.body;
 
     try {
       const agent = await setWorkspaceAgentEnabled(id, agentId, body.isEnabled);
@@ -560,8 +613,8 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.get('/:id/audit', async (request, reply) => {
-    const { id } = request.params as { id: string };
+  app.get('/:id/audit', { schema: { params: orgIdParams } }, async (request, reply) => {
+    const { id } = request.params;
     try {
       return await getWorkspaceAuditTrail(id);
     } catch (err) {
@@ -570,15 +623,12 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
     }
   });
 
-  fastify.post('/:id/credit-wallet', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = z
-      .object({
-        amountCc: z.coerce.number().positive().max(1_000_000),
-        note: z.string().trim().max(500).optional(),
-        idempotencyKey: z.string().trim().min(8).max(128).optional(),
-      })
-      .parse(request.body);
+  app.post(
+    '/:id/credit-wallet',
+    { schema: { params: orgIdParams, body: creditWalletBody } },
+    async (request, reply) => {
+    const { id } = request.params;
+    const body = request.body;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
 
@@ -617,8 +667,8 @@ export default async function platformOrganizationRoutes(fastify: FastifyInstanc
   });
 
   /** Push tenant owner into ConvoSync sales CRM as a Contact (WhatsApp/IG follow-up). */
-  fastify.post('/:id/push-crm-contact', async (request, reply) => {
-    const { id } = request.params as { id: string };
+  app.post('/:id/push-crm-contact', { schema: { params: orgIdParams } }, async (request, reply) => {
+    const { id } = request.params;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
 

@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { getJwtUser, type JwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import { config } from '../config.js';
@@ -10,12 +11,20 @@ import {
   listInstagramBusinessLoginAccounts,
   replyToInstagramBusinessComment,
 } from '../services/instagramBusinessLogin.service.js';
+import {
+  igBusinessCommentParamsSchema,
+  igBusinessConnectBodySchema,
+  igBusinessDeleteBodySchema,
+  igBusinessHideBodySchema,
+  igBusinessReplyBodySchema,
+} from './instagramBusinessLogin.schemas.js';
 
 export default async function instagramBusinessLoginRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
   /** Returns a ready-to-open Instagram (not Facebook) OAuth dialog URL for the Instagram Login track. */
-  fastify.get('/connect', auth, async (request, reply) => {
+  app.get('/connect', auth, async (request, reply) => {
     if (!config.instagramBusinessLogin.appId) {
       return reply.code(500).send({ error: 'INSTAGRAM_BUSINESS_APP_ID is not configured' });
     }
@@ -37,9 +46,12 @@ export default async function instagramBusinessLoginRoutes(fastify: FastifyInsta
     };
   });
 
-  fastify.post('/connect', auth, async (request, reply) => {
+  app.post(
+    '/connect',
+    { ...auth, schema: { body: igBusinessConnectBodySchema } },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const body = request.body as { code?: string; redirectUri?: string };
+    const body = request.body;
     if (!body.code) return reply.code(400).send({ error: 'Missing Instagram authorization code' });
 
     try {
@@ -62,16 +74,19 @@ export default async function instagramBusinessLoginRoutes(fastify: FastifyInsta
     }
   });
 
-  fastify.get('/accounts', auth, async (request) => {
+  app.get('/accounts', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const accounts = await listInstagramBusinessLoginAccounts(workspaceId);
     return { accounts };
   });
 
-  fastify.post('/comments/:commentId/reply', auth, async (request, reply) => {
+  app.post(
+    '/comments/:commentId/reply',
+    { ...auth, schema: { params: igBusinessCommentParamsSchema, body: igBusinessReplyBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { commentId } = request.params as { commentId: string };
-    const body = request.body as { message?: string; instagramUserId?: string };
+    const { commentId } = request.params;
+    const body = request.body;
     if (!body.message?.trim()) return reply.code(400).send({ error: 'message is required' });
     try {
       const result = await replyToInstagramBusinessComment(
@@ -89,10 +104,13 @@ export default async function instagramBusinessLoginRoutes(fastify: FastifyInsta
     }
   });
 
-  fastify.post('/comments/:commentId/hide', auth, async (request, reply) => {
+  app.post(
+    '/comments/:commentId/hide',
+    { ...auth, schema: { params: igBusinessCommentParamsSchema, body: igBusinessHideBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { commentId } = request.params as { commentId: string };
-    const body = request.body as { hidden?: boolean; instagramUserId?: string };
+    const { commentId } = request.params;
+    const body = request.body;
     try {
       const result = await hideInstagramBusinessComment(
         workspaceId,
@@ -109,10 +127,13 @@ export default async function instagramBusinessLoginRoutes(fastify: FastifyInsta
     }
   });
 
-  fastify.delete('/comments/:commentId', auth, async (request, reply) => {
+  app.delete(
+    '/comments/:commentId',
+    { ...auth, schema: { params: igBusinessCommentParamsSchema, body: igBusinessDeleteBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { commentId } = request.params as { commentId: string };
-    const body = (request.body || {}) as { instagramUserId?: string };
+    const { commentId } = request.params;
+    const body = request.body;
     try {
       const result = await deleteInstagramBusinessComment(workspaceId, commentId, body.instagramUserId);
       return reply.send(result);

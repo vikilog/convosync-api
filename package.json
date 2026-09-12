@@ -5,6 +5,10 @@
   "scripts": {
     "dev": "prisma generate --schema=src/prisma/schema.prisma && tsx watch --import ./src/instrumentation.ts src/index.ts",
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test:unit": "vitest run",
+    "test": "tsx src/lib/prismaTenant.check.ts && tsx src/lib/workspaceAccessCache.check.ts && tsx src/lib/pinoRedact.check.ts && tsx src/lib/errorHandler.check.ts && tsx src/lib/webhookRedact.check.ts && tsx src/routes/workspace.schemas.check.ts && tsx src/routes/contacts.schemas.check.ts && tsx src/routes/leads.schemas.check.ts && tsx src/routes/leadFunnels.schemas.check.ts && tsx src/routes/campaigns.schemas.check.ts && tsx src/routes/templates.schemas.check.ts && tsx src/routes/agents.schemas.check.ts && tsx src/routes/whatsappFlows.schemas.check.ts && tsx src/routes/dataTables.schemas.check.ts && tsx src/routes/canned-responses.schemas.check.ts && tsx src/routes/teamChat.schemas.check.ts && tsx src/routes/inAppNotifications.schemas.check.ts && tsx src/routes/support-requests.schemas.check.ts && tsx src/routes/demo-requests.schemas.check.ts && tsx src/routes/media-gallery.schemas.check.ts && tsx src/routes/webWidget.schemas.check.ts && tsx src/modules/journey/journey.schemas.check.ts && tsx src/modules/instagram-journey/ig-journey.schemas.check.ts && tsx src/modules/developers/developers.schemas.check.ts && tsx src/modules/ai-chat/ai-chat.schemas.check.ts && tsx src/modules/ai-knowledge/ai-knowledge.schemas.check.ts && tsx src/modules/email/email.schemas.check.ts && tsx src/modules/billing/billing.schemas.check.ts && tsx src/routes/whatsappPay.schemas.check.ts && tsx src/modules/ai-agent/ai-provider.schemas.check.ts && tsx src/routes/onboarding.schemas.check.ts && tsx src/lib/routeSchemaCheck.check.ts && tsx src/routes/webWidgetPublic.schemas.check.ts && tsx src/modules/identity/identity.helpers.check.ts && tsx src/routes/auth.schemas.check.ts && tsx src/routes/conversations.schemas.check.ts && tsx src/routes/analytics.schemas.check.ts && tsx src/routes/installedApps.schemas.check.ts && tsx src/routes/emailUnsubscribe.schemas.check.ts && tsx src/routes/telegram.schemas.check.ts && tsx src/routes/messenger.schemas.check.ts && tsx src/routes/meta.schemas.check.ts && tsx src/routes/instagramBusinessLogin.schemas.check.ts && tsx src/routes/metaAds.schemas.check.ts && tsx src/routes/whatsapp.schemas.check.ts && tsx src/routes/facebook.schemas.check.ts && tsx src/routes/instagram.schemas.check.ts && tsx src/routes/socialListening.schemas.check.ts && tsx src/queue/whatsapp-inbound.queue.check.ts && tsx src/queue/instagram-inbound.queue.check.ts && tsx src/queue/messenger-inbound.queue.check.ts",
     "build:prod": "NODE_OPTIONS='--max-old-space-size=4096' prisma generate --schema=src/prisma/schema.prisma && NODE_OPTIONS='--max-old-space-size=4096' tsc",
     "start": "node --import ./dist/instrumentation.js dist/index.js",
     "db:push": "prisma db push --schema=src/prisma/schema.prisma",
@@ -32,8 +36,10 @@
     "@aws-sdk/s3-request-presigner": "^3.1075.0",
     "@fastify/cors": "^10.0.0",
     "@fastify/formbody": "^8.0.2",
+    "@fastify/helmet": "^13.1.1",
     "@fastify/jwt": "^9.0.0",
     "@fastify/multipart": "^9.0.0",
+    "@fastify/rate-limit": "^11.2.0",
     "@langchain/core": "^1.2.3",
     "@langchain/langgraph": "^1.4.8",
     "@opentelemetry/api": "^1.9.1",
@@ -55,6 +61,7 @@
     "dotenv": "^16.4.0",
     "fastify": "^5.2.0",
     "fastify-plugin": "^6.0.0",
+    "fastify-type-provider-zod": "^4.0.2",
     "googleapis": "^173.0.0",
     "ioredis": "^5.4.0",
     "livekit-server-sdk": "^2.17.0",
@@ -74,11 +81,15 @@
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "^12.1.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/ioredis": "^4.28.10",
     "@types/node": "^22.0.0",
     "@types/nodemailer": "^8.0.0",
     "@types/sns-validator": "^0.3.3",
-    "typescript": "^5.6.0"
+    "eslint": "^9.39.5",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^3.2.7"
   }
 }

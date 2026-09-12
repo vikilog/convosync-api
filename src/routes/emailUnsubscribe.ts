@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { markContactUnsubscribed } from '../services/contactOptOut.service.js';
 import { verifyUnsubscribeToken } from '../services/unsubscribeToken.service.js';
+import { emailUnsubscribeQuerySchema } from './emailUnsubscribe.schemas.js';
 
 function unsubscribePage(opts: { title: string; message: string }): string {
   return `<!DOCTYPE html>
@@ -33,8 +35,13 @@ function unsubscribePage(opts: { title: string; message: string }): string {
  * unsubscribe (RFC 8058).
  */
 export default async function emailUnsubscribeRoutes(fastify: FastifyInstance) {
-  fastify.get('/unsubscribe', async (request, reply) => {
-    const { t } = request.query as { t?: string };
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  app.get(
+    '/unsubscribe',
+    { schema: { querystring: emailUnsubscribeQuerySchema } },
+    async (request, reply) => {
+    const { t } = request.query;
     if (!t) {
       return reply
         .code(400)

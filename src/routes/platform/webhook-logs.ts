@@ -1,20 +1,22 @@
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { authenticatePlatformAdmin } from '../../middleware/platformAuth.js';
 import { listWebhookEventLogs } from '../../services/webhookEventLog.service.js';
 
-export default async function platformWebhookLogRoutes(fastify: FastifyInstance) {
-  fastify.addHook('preHandler', authenticatePlatformAdmin);
+const listQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(50),
+  source: z.string().trim().min(1).optional(),
+  eventType: z.string().trim().min(1).optional(),
+});
 
-  fastify.get('/', async (request) => {
-    const query = z
-      .object({
-        page: z.coerce.number().int().min(1).default(1),
-        pageSize: z.coerce.number().int().min(1).max(100).default(50),
-        source: z.string().trim().min(1).optional(),
-        eventType: z.string().trim().min(1).optional(),
-      })
-      .parse(request.query);
+export default async function platformWebhookLogRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+  app.addHook('preHandler', authenticatePlatformAdmin);
+
+  app.get('/', { schema: { querystring: listQuerySchema } }, async (request) => {
+    const query = request.query;
 
     return listWebhookEventLogs({
       page: query.page,

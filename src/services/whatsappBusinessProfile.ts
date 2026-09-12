@@ -110,7 +110,7 @@ async function graphGetBusinessProfile(phoneNumberId: string, accessToken: strin
   return (res.data?.data?.[0] || {}) as Record<string, unknown>;
 }
 
-async function graphGetPhoneMeta(phoneNumberId: string, accessToken: string) {
+export async function graphGetPhoneMeta(phoneNumberId: string, accessToken: string) {
   try {
     const res = await axios.get(`${GRAPH}/${phoneNumberId}`, {
       params: {

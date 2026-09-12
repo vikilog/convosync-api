@@ -1,7 +1,20 @@
-import { FastifyInstance, FastifyReply } from 'fastify';
+import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { randomUUID } from 'node:crypto';
 import multipart from '@fastify/multipart';
 import { prisma } from '../index.js';
+import {
+  conversationAttachmentQuerySchema,
+  conversationEmailSendBodySchema,
+  conversationIdParamsSchema,
+  conversationListQuerySchema,
+  conversationMessageIdParamsSchema,
+  conversationMessagesQuerySchema,
+  conversationOpenBodySchema,
+  conversationSendMessageBodySchema,
+  conversationSendTemplateBodySchema,
+  conversationUpdateBodySchema,
+} from './conversations.schemas.js';
 import { getIo } from '../socket.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth, scopedUpdateData } from '../middleware/workspaceScope.js';
@@ -98,6 +111,13 @@ import { contentDisposition } from '../utils/contentDisposition.js';
 import { sendInboxEmailToContact } from '../services/inboxEmailSend.js';
 import { recordFlowSend } from '../services/whatsappFlowToken.service.js';
 
+function skipJsonBodyIfMultipart(request: FastifyRequest) {
+  if (request.isMultipart()) {
+    // ponytail: placeholder so Zod JSON body schema does not 400 multipart template sends
+    request.body = {};
+  }
+}
+
 function denyInboxScope(reply: FastifyReply) {
   return reply.code(403).send({
     error: 'You do not have access to this inbox',
@@ -118,19 +138,16 @@ function assertConversationInScope(
 }
 
 export default async function conversationRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
   await fastify.register(multipart, {
     limits: { fileSize: 16 * 1024 * 1024 },
   });
 
-  fastify.get('/', auth, async (request) => {
+  app.get('/', { ...auth, schema: { querystring: conversationListQuerySchema } }, async (request) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { status, assignedTo, channel } = request.query as {
-      status?: string;
-      assignedTo?: string;
-      channel?: string;
-    };
+    const { status, assignedTo, channel } = request.query;
     const access = await resolveMembershipAccess(userId, workspaceId);
     const scopeWhere = buildConversationScopeWhere(access.inboxScope);
     const rows = await prisma.conversation.findMany({
@@ -153,9 +170,9 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     return deduped;
   });
 
-  fastify.get('/:id', auth, async (request, reply) => {
+  app.get('/:id', { ...auth, schema: { params: conversationIdParamsSchema } }, async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
     const access = await resolveMembershipAccess(userId, workspaceId);
     let conv = await prisma.conversation.findFirst({
       where: { id, workspaceId },
@@ -194,13 +211,10 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
   });
 
   /** Start or resume an open WhatsApp thread with an existing contact */
-  fastify.post('/open', auth, async (request, reply) => {
+  app.post('/open', { ...auth, schema: { body: conversationOpenBodySchema } }, async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
     const access = await resolveMembershipAccess(userId, workspaceId);
-    const { contactId, phoneNumberId } = request.body as {
-      contactId?: string;
-      phoneNumberId?: string;
-    };
+    const { contactId, phoneNumberId } = request.body;
 
     if (!contactId) {
       return reply.code(400).send({ error: 'contactId is required' });
@@ -278,16 +292,13 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
   });
 
   /** 1:1 email from Inbox New Conversation — creates/continues channel=email thread */
-  fastify.post('/email/send', auth, async (request, reply) => {
+  app.post(
+    '/email/send',
+    { ...auth, schema: { body: conversationEmailSendBodySchema } },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
     const access = await resolveMembershipAccess(userId, workspaceId);
-    const body = request.body as {
-      contactId?: string;
-      subject?: string;
-      text?: string;
-      html?: string;
-      templateId?: string;
-    };
+    const body = request.body;
 
     if (!body.contactId?.trim()) {
       return reply.code(400).send({ error: 'contactId is required' });
@@ -328,10 +339,16 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/:id/messages', auth, async (request, reply) => {
+  app.get(
+    '/:id/messages',
+    {
+      ...auth,
+      schema: { params: conversationIdParamsSchema, querystring: conversationMessagesQuerySchema },
+    },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
-    const query = request.query as { limit?: string; before?: string };
+    const { id } = request.params;
+    const query = request.query;
     const access = await resolveMembershipAccess(userId, workspaceId);
     const conv = await prisma.conversation.findFirst({ where: { id, workspaceId } });
     if (!conv) return reply.code(404).send({ error: 'Not found' });
@@ -413,9 +430,12 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.get('/:id/events', auth, async (request, reply) => {
+  app.get(
+    '/:id/events',
+    { ...auth, schema: { params: conversationIdParamsSchema } },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
     const access = await resolveMembershipAccess(userId, workspaceId);
     const conv = await prisma.conversation.findFirst({
       where: { id, workspaceId },
@@ -426,9 +446,12 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     return listConversationEvents(id);
   });
 
-  fastify.post('/:id/takeover', auth, async (request, reply) => {
+  app.post(
+    '/:id/takeover',
+    { ...auth, schema: { params: conversationIdParamsSchema } },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
     const access = await resolveMembershipAccess(userId, workspaceId);
     const conv = await prisma.conversation.findFirst({
       where: { id, workspaceId },
@@ -492,9 +515,12 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     });
   });
 
-  fastify.post('/:id/release-to-ai', auth, async (request, reply) => {
+  app.post(
+    '/:id/release-to-ai',
+    { ...auth, schema: { params: conversationIdParamsSchema } },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
     const access = await resolveMembershipAccess(userId, workspaceId);
     const conv = await prisma.conversation.findFirst({
       where: { id, workspaceId },
@@ -563,10 +589,13 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     });
   });
 
-  fastify.post('/:id/messages', auth, async (request, reply) => {
+  app.post(
+    '/:id/messages',
+    { ...auth, schema: { params: conversationIdParamsSchema, body: conversationSendMessageBodySchema } },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
-    const { content } = request.body as { content: string };
+    const { id } = request.params;
+    const { content } = request.body;
     const text = typeof content === 'string' ? content.trim() : '';
 
     if (!text) {
@@ -838,9 +867,16 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     return reply.code(201).send(message);
   });
 
-  fastify.post('/:id/messages/template', auth, async (request, reply) => {
+  app.post(
+    '/:id/messages/template',
+    {
+      ...auth,
+      schema: { params: conversationIdParamsSchema, body: conversationSendTemplateBodySchema },
+      preValidation: skipJsonBodyIfMultipart,
+    },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
 
     let templateId: string | undefined;
     let variables: string[] = [];
@@ -870,10 +906,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
         }
       }
     } else {
-      const body = request.body as {
-        templateId?: string;
-        variables?: string[];
-      };
+      const body = request.body;
       templateId = body.templateId;
       variables = Array.isArray(body.variables) ? body.variables.map((v) => String(v)) : [];
     }
@@ -1067,9 +1100,12 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     return reply.code(201).send(message);
   });
 
-  fastify.post('/messages/:messageId/resend', auth, async (request, reply) => {
+  app.post(
+    '/messages/:messageId/resend',
+    { ...auth, schema: { params: conversationMessageIdParamsSchema } },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { messageId } = request.params as { messageId: string };
+    const { messageId } = request.params;
     const access = await resolveMembershipAccess(userId, workspaceId);
 
     const existing = await prisma.message.findFirst({
@@ -1099,9 +1135,18 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/messages/:messageId/attachment', auth, async (request, reply) => {
+  app.get(
+    '/messages/:messageId/attachment',
+    {
+      ...auth,
+      schema: {
+        params: conversationMessageIdParamsSchema,
+        querystring: conversationAttachmentQuerySchema,
+      },
+    },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { messageId } = request.params as { messageId: string };
+    const { messageId } = request.params;
     const access = await resolveMembershipAccess(userId, workspaceId);
 
     const message = await prisma.message.findFirst({
@@ -1118,7 +1163,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     if (!assertConversationInScope(message.conversation, access.inboxScope, reply)) return;
 
     const metadata = (message.metadata ?? {}) as MessageMediaMetadata;
-    const { index } = request.query as { index?: string };
+    const { index } = request.query;
 
     // Carousel/album messages hold multiple files under metadata.items — pick
     // one by ?index=N; single-media messages ignore the param.
@@ -1144,9 +1189,12 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/:id/messages/media', auth, async (request, reply) => {
+  app.post(
+    '/:id/messages/media',
+    { ...auth, schema: { params: conversationIdParamsSchema } },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
     const access = await resolveMembershipAccess(userId, workspaceId);
 
     const conv = await prisma.conversation.findFirst({
@@ -1587,9 +1635,12 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
   });
 
   /** Telegram-only album/carousel — sendMediaGroup. 2-10 photos/videos, one shared caption. */
-  fastify.post('/:id/messages/carousel', auth, async (request, reply) => {
+  app.post(
+    '/:id/messages/carousel',
+    { ...auth, schema: { params: conversationIdParamsSchema } },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
     const access = await resolveMembershipAccess(userId, workspaceId);
 
     const conv = await prisma.conversation.findFirst({
@@ -1717,9 +1768,9 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     return reply.code(201).send(message);
   });
 
-  fastify.delete('/:id', auth, async (request, reply) => {
+  app.delete('/:id', { ...auth, schema: { params: conversationIdParamsSchema } }, async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
     const access = await resolveMembershipAccess(userId, workspaceId);
     const conv = await prisma.conversation.findFirst({
       where: { id, workspaceId },
@@ -1737,9 +1788,12 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     return { success: true };
   });
 
-  fastify.put('/:id', auth, async (request, reply) => {
+  app.put(
+    '/:id',
+    { ...auth, schema: { params: conversationIdParamsSchema, body: conversationUpdateBodySchema } },
+    async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
     const access = await resolveMembershipAccess(userId, workspaceId);
     const existing = await prisma.conversation.findFirst({
       where: { id, workspaceId },
@@ -1748,7 +1802,7 @@ export default async function conversationRoutes(fastify: FastifyInstance) {
     if (!existing) return reply.code(404).send({ error: 'Not found' });
     if (!assertConversationInScope(existing, access.inboxScope, reply)) return;
 
-    const body = (request.body ?? {}) as Record<string, unknown>;
+    const body = request.body;
     const data = scopedUpdateData(body);
 
     const hasAssigneePatch =

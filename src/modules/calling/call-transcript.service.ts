@@ -7,6 +7,7 @@ import type { CallSession, Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { getIo } from '../../socket.js';
 import { config } from '../../config.js';
+import { internalAuthHeaders } from '../../lib/internalAuth.js';
 import { getObject } from '../../services/objectStorage.js';
 import { CallingError } from './calling.types.js';
 
@@ -161,6 +162,7 @@ async function runFasterWhisperHttp(
 
   const res = await fetch(`${config.callStt.url}/transcribe`, {
     method: 'POST',
+    headers: internalAuthHeaders(config.voiceAgent.internalSecret),
     body: form,
     // ponytail: Whisper medium on CPU can take many minutes; fail clean vs hang forever
     signal: AbortSignal.timeout(18 * 60 * 1000),

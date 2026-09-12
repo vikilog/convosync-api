@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { Prisma } from '@prisma/client';
+import { invalidateWorkspaceSubscriptionCache } from '../lib/workspaceAccessCache.js';
 import { prisma } from '../index.js';
 import { ccToDebitPaise } from './usageCost.constants.js';
 import { creditWallet, getWalletSummary } from './wallet.service.js';
@@ -43,10 +44,12 @@ export async function suspendWorkspace(workspaceId: string) {
     throw new Error('Workspace is already suspended');
   }
 
-  return prisma.workspace.update({
+  const updated = await prisma.workspace.update({
     where: { id: workspaceId },
     data: { subscriptionStatus: 'suspended' },
   });
+  await invalidateWorkspaceSubscriptionCache(workspaceId);
+  return updated;
 }
 
 export async function reactivateWorkspace(workspaceId: string) {
@@ -116,6 +119,7 @@ export async function assignPlanToWorkspace(workspaceId: string, planSlug: strin
   });
 
   await syncWorkspaceLimitsFromPlanFeatures(workspaceId, plan.features as PlanFeatures);
+  await invalidateWorkspaceSubscriptionCache(workspaceId);
 
   return {
     workspaceId,
@@ -280,6 +284,7 @@ export async function removePlanFromWorkspace(workspaceId: string) {
       subscriptionStatus: nextStatus,
     },
   });
+  await invalidateWorkspaceSubscriptionCache(workspaceId);
 
   return {
     workspaceId,

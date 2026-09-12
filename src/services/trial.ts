@@ -1,4 +1,5 @@
 import type { SubscriptionPlan, Workspace } from '@prisma/client';
+import { invalidateWorkspaceSubscriptionCache } from '../lib/workspaceAccessCache.js';
 import { prisma } from '../lib/prisma.js';
 
 export const DEFAULT_TRIAL_DAYS = 14;
@@ -172,12 +173,14 @@ export async function expireTrialIfNeeded(workspaceId: string) {
     where: { id: workspaceId },
     data: { subscriptionStatus: 'past_due' },
   });
+  await invalidateWorkspaceSubscriptionCache(workspaceId);
 
   return 'past_due' as const;
 }
 
 export async function expireDueTrials() {
   const now = new Date();
+  // ponytail: bulk expire does not DEL ws:sub:* (no id list). Ceiling = WORKSPACE_SUB_TTL_SEC; per-workspace expireTrialIfNeeded invalidates.
   const result = await prisma.workspace.updateMany({
     where: {
       subscriptionStatus: 'trial',
@@ -244,10 +247,12 @@ export async function activateWorkspaceSubscription(workspaceId: string) {
   const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
   if (!workspace) throw new Error('Workspace not found');
 
-  return prisma.workspace.update({
+  const updated = await prisma.workspace.update({
     where: { id: workspaceId },
     data: paidActivationWorkspaceFields(),
   });
+  await invalidateWorkspaceSubscriptionCache(workspaceId);
+  return updated;
 }
 
 export async function backfillWorkspaceTrials(defaultDays = DEFAULT_TRIAL_DAYS) {

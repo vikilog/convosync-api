@@ -1,10 +1,11 @@
 /**
  * Internal service-to-service routes (Pipecat voice agent, etc.).
- * Auth: X-ConvoSync-Internal header when CONVOSYNC_INTERNAL_SECRET is set.
+ * Auth: X-ConvoSync-Internal must match CONVOSYNC_INTERNAL_SECRET (fail closed if unset).
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config.js';
+import { internalAuthCode } from '../lib/internalAuth.js';
 import { saveCallTranscriptFromExternal } from '../modules/calling/call-transcript.service.js';
 import { CallingError } from '../modules/calling/calling.types.js';
 import {
@@ -13,14 +14,13 @@ import {
 } from '../services/ai-agent-respond.service.js';
 
 function assertInternalAuth(request: FastifyRequest, reply: FastifyReply): boolean {
-  const expected = config.voiceAgent.internalSecret;
-  if (!expected) return true;
-  const got = String(request.headers['x-convosync-internal'] || '');
-  if (got !== expected) {
-    reply.code(401).send({ error: 'Unauthorized' });
-    return false;
-  }
-  return true;
+  const code = internalAuthCode(
+    config.voiceAgent.internalSecret,
+    String(request.headers['x-convosync-internal'] || '')
+  );
+  if (code === 204) return true;
+  reply.code(code).send({ error: code === 503 ? 'Internal auth unconfigured' : 'Unauthorized' });
+  return false;
 }
 
 const transcriptBodySchema = z.object({

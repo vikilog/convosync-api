@@ -1,6 +1,10 @@
 import crypto from 'crypto';
 import axios from 'axios';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { config } from '../../../config.js';
+import { normalizeWhatsAppContactPhone } from '../../../lib/whatsappContact.js';
+import { registerWorkspaceTags } from '../../../services/workspaceTags.service.js';
+import { eventBus } from '../../journey/events/event-bus.js';
 import type { DevelopersRepository } from '../repositories/developers.repository.js';
 import type {
   IncomingWebhookRecord,
@@ -13,8 +17,22 @@ import type {
   UpdateOutgoingWebhookDto,
 } from '../dto/developers.dto.js';
 
+/** Resource events the incoming webhook can act on (beyond just logging). */
+const CONTACT_EVENTS = new Set(['contact.created', 'contact.updated']);
+
+type IncomingContactData = {
+  phone?: unknown;
+  name?: unknown;
+  email?: unknown;
+  tags?: unknown;
+  customFields?: unknown;
+};
+
 export class WebhooksService {
-  constructor(private readonly repo: DevelopersRepository) {}
+  constructor(
+    private readonly repo: DevelopersRepository,
+    private readonly db: PrismaClient
+  ) {}
 
   async getIncomingWebhook(workspaceId: string): Promise<IncomingWebhookRecord> {
     const row = await this.repo.ensureIncomingWebhook(workspaceId);
@@ -102,17 +120,115 @@ export class WebhooksService {
 
     const eventType = body.event ?? body.type ?? 'unknown';
 
+    let dispatchError: string | undefined;
+    if (CONTACT_EVENTS.has(eventType) && hook.subscribedEvents.includes(eventType)) {
+      const result = await this.dispatchContactEvent(
+        hook.workspaceId,
+        (body.data ?? {}) as IncomingContactData
+      );
+      if (!result.ok) dispatchError = result.error;
+    }
+
     await this.repo.createWebhookLog({
       workspaceId: hook.workspaceId,
       direction: 'incoming',
       eventType,
       payload: body,
-      status: 'success',
+      status: dispatchError ? 'failed' : 'success',
       statusCode: 200,
+      errorMessage: dispatchError,
     });
     await this.repo.touchIncomingLastEvent(hook.workspaceId);
 
+    // Always ack a validly-signed webhook — a bad payload is a logged
+    // business-level failure (see Event Logs), not a transport error the
+    // sender should retry forever.
     return { ok: true };
+  }
+
+  /**
+   * Create-or-update a contact from an incoming webhook payload, keyed by
+   * phone (same upsert convention as the CSV import path in routes/contacts.ts).
+   * Emits the same contact.created/contact.updated events as the REST API so
+   * outgoing webhooks and journeys react identically regardless of source.
+   */
+  private async dispatchContactEvent(
+    workspaceId: string,
+    data: IncomingContactData
+  ): Promise<{ ok: boolean; error?: string }> {
+    const rawPhone = typeof data.phone === 'string' ? data.phone.trim() : '';
+    if (!rawPhone) return { ok: false, error: 'data.phone is required' };
+    const phone = normalizeWhatsAppContactPhone(rawPhone);
+    if (phone.length < 10 || phone.length > 15) {
+      return { ok: false, error: 'data.phone is not a valid phone number' };
+    }
+
+    const email = typeof data.email === 'string' && data.email.trim() ? data.email.trim() : undefined;
+    const name = typeof data.name === 'string' && data.name.trim() ? data.name.trim() : undefined;
+    const tags = Array.isArray(data.tags) ? data.tags.filter((t): t is string => typeof t === 'string') : [];
+    const customFields =
+      data.customFields && typeof data.customFields === 'object' && !Array.isArray(data.customFields)
+        ? (data.customFields as Record<string, unknown>)
+        : undefined;
+
+    try {
+      const existing = await this.db.contact.findUnique({
+        where: { phone_workspaceId: { phone, workspaceId } },
+        select: { id: true, tags: true, customFields: true },
+      });
+
+      if (existing) {
+        const mergedTags = tags.length ? [...new Set([...existing.tags, ...tags])] : undefined;
+        const mergedCustomFields = customFields
+          ? { ...(existing.customFields as Record<string, unknown> | null), ...customFields }
+          : undefined;
+        await this.db.contact.update({
+          where: { id: existing.id },
+          data: {
+            ...(name ? { name } : {}),
+            ...(email ? { email } : {}),
+            ...(mergedTags ? { tags: mergedTags } : {}),
+            ...(mergedCustomFields
+              ? { customFields: mergedCustomFields as Prisma.InputJsonValue }
+              : {}),
+          },
+        });
+        if (mergedTags?.length) void registerWorkspaceTags(workspaceId, mergedTags);
+        void eventBus.emit('contact.updated', {
+          workspaceId,
+          event: 'contact.updated',
+          contactId: existing.id,
+          payload: { source: 'webhook' },
+        });
+        return { ok: true };
+      }
+
+      if (!name) return { ok: false, error: 'data.name is required to create a new contact' };
+      const created = await this.db.contact.create({
+        data: {
+          workspaceId,
+          phone,
+          name,
+          email,
+          source: 'developer_webhook',
+          tags,
+          customFields: customFields as Prisma.InputJsonValue | undefined,
+        },
+      });
+      if (tags.length) void registerWorkspaceTags(workspaceId, tags);
+      void eventBus.emit('contact.created', {
+        workspaceId,
+        event: 'contact.created',
+        contactId: created.id,
+        payload: { source: 'webhook' },
+      });
+      return { ok: true };
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        return { ok: false, error: 'A contact with this phone number already exists' };
+      }
+      return { ok: false, error: err instanceof Error ? err.message : 'Contact upsert failed' };
+    }
   }
 
   /** Dispatch outbound webhooks for platform events (with retries). */

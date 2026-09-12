@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +25,7 @@ process.on('unhandledRejection', (reason) => logCrash('unhandledRejection', reas
 process.on('uncaughtException', (err) => logCrash('uncaughtException', err));
 
 import Fastify from 'fastify';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import { assertSafeDatabaseUrlForDev } from './lib/prodDbGuard.js';
@@ -32,9 +34,11 @@ import { config } from './config.js';
 assertSafeDatabaseUrlForDev(process.env.DATABASE_URL);
 import { corsOriginDelegate } from './lib/cors.js';
 import { createOtelJsonLogStream } from './lib/pino-otel-json-stream.js';
+import { pinoRedactOptions } from './lib/pinoRedact.js';
 import { authenticate } from './middleware/auth.js';
+import { registerErrorHandler } from './lib/errorHandler.js';
 
-import authRoutes from './routes/auth.js';
+import authRoutes from './modules/identity/auth.routes.js';
 import contactRoutes from './routes/contacts.js';
 import conversationRoutes from './routes/conversations.js';
 import campaignRoutes from './routes/campaigns.js';
@@ -59,10 +63,10 @@ import metaRoutes from './routes/meta.js';
 import facebookRoutes from './routes/facebook.js';
 import metaAdsRoutes from './routes/metaAds.js';
 import whatsappPayRoutes from './routes/whatsappPay.js';
-import workspaceRoutes from './routes/workspace.js';
+import workspaceRoutes from './modules/identity/workspace.routes.js';
 import inAppNotificationRoutes from './routes/inAppNotifications.js';
 import teamChatRoutes from './routes/teamChat.js';
-import onboardingRoutes from './routes/onboarding.js';
+import onboardingRoutes from './modules/identity/onboarding.routes.js';
 import platformAuthRoutes from './routes/platform/auth.js';
 import platformOrganizationRoutes from './routes/platform/organizations.js';
 import platformPlanRoutes from './routes/platform/plans.js';
@@ -74,6 +78,7 @@ import platformSettingsRoutes from './routes/platform/settings.js';
 import platformDemoRequestRoutes from './routes/platform/demo-requests.js';
 import platformSupportRequestRoutes from './routes/platform/support-requests.js';
 import platformInfrastructureRoutes from './routes/platform/infrastructure.js';
+import platformVirtualNumberRequestRoutes from './routes/platform/virtual-number-requests.js';
 import demoRequestRoutes from './routes/demo-requests.js';
 import supportRequestRoutes from './routes/support-requests.js';
 import aiKnowledgeRoutes from './modules/ai-knowledge/routes/ai-knowledge.routes.js';
@@ -82,6 +87,7 @@ import developersRoutes from './modules/developers/routes/developers.routes.js';
 import emailRoutes from './modules/email/routes/email.routes.js';
 import emailUnsubscribeRoutes from './routes/emailUnsubscribe.js';
 import whatsappFlowIntegrationRoutes from './routes/whatsappFlowIntegration.js';
+import virtualNumberRoutes from './routes/virtualNumber.js';
 import whatsappFlowRoutes from './routes/whatsappFlows.js';
 import dataTableRoutes from './routes/dataTables.js';
 import webWidgetRoutes from './routes/webWidget.js';
@@ -90,6 +96,9 @@ import webWidgetScriptRoutes from './routes/webWidgetScript.js';
 import googleRoutes from './modules/google/routes/google.routes.js';
 import mediaRoutes from './routes/media.js';
 import { startCampaignWorker } from './workers/campaign.worker.js';
+import { startWhatsAppInboundWorker } from './workers/whatsapp-inbound.worker.js';
+import { startInstagramInboundWorker } from './workers/instagram-inbound.worker.js';
+import { startMessengerInboundWorker } from './workers/messenger-inbound.worker.js';
 import { startJourneyWorker } from './modules/journey/workers/journey-delay.worker.js';
 import { startIgJourneyWorker } from './modules/instagram-journey/workers/ig-journey-delay.worker.js';
 import { startDeveloperSyncWorker } from './modules/developers/workers/sync-event.worker.js';
@@ -130,9 +139,12 @@ async function start() {
   const fastify = Fastify({
     // Needed so request.ip / request.ips honour X-Forwarded-For behind reverse proxies.
     trustProxy: true,
+    requestIdLogLabel: 'requestId',
+    genReqId: () => randomUUID(),
     logger: {
       level: process.env.LOG_LEVEL || 'warn',
       stream: loggerStream,
+      redact: pinoRedactOptions,
       mixin() {
         const span = trace.getSpan(context.active());
         if (!span) return {};
@@ -142,7 +154,23 @@ async function start() {
       },
     },
   });
+  fastify.setValidatorCompiler(validatorCompiler);
+  fastify.setSerializerCompiler(serializerCompiler);
 
+  await fastify.register(import('@fastify/helmet'), {
+    global: true,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'none'"],
+        formAction: ["'none'"],
+      },
+    },
+    // widget JS is loaded cross-origin via <script src>
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false,
+  });
   await fastify.register(cors, {
     origin: corsOriginDelegate,
     credentials: true,
@@ -154,8 +182,25 @@ async function start() {
   await fastify.register(import('./plugins/prisma.js'));
   await fastify.register(import('./plugins/redis.plugin.js'));
   await fastify.register(import('./plugins/razorpay.plugin.js'));
+  await fastify.register(import('@fastify/rate-limit'), {
+    max: 300,
+    timeWindow: '1 minute',
+    redis: fastify.redis,
+    nameSpace: 'rl:',
+    skipOnError: true,
+    // Meta webhooks + voice-agent ingest must not share the browser IP bucket
+    allowList: (request) => {
+      const path = request.url.split('?')[0];
+      return path.startsWith('/api/webhook') || path.startsWith('/api/internal');
+    },
+  });
 
   fastify.decorate('authenticate', authenticate);
+  registerErrorHandler(fastify);
+  fastify.addHook('preHandler', async (request) => {
+    const workspaceId = (request.user as { workspaceId?: string } | undefined)?.workspaceId;
+    if (workspaceId) request.log = request.log.child({ workspaceId });
+  });
 
   await fastify.register(authRoutes, { prefix: '/api/auth' });
   await fastify.register(contactRoutes, { prefix: '/api/contacts' });
@@ -198,6 +243,9 @@ async function start() {
   await fastify.register(platformDemoRequestRoutes, { prefix: '/api/platform/demo-requests' });
   await fastify.register(platformSupportRequestRoutes, { prefix: '/api/platform/support-requests' });
   await fastify.register(platformInfrastructureRoutes, { prefix: '/api/platform/infrastructure' });
+  await fastify.register(platformVirtualNumberRequestRoutes, {
+    prefix: '/api/platform/virtual-number-requests',
+  });
   await fastify.register(demoRequestRoutes, { prefix: '/api/demo-requests' });
   await fastify.register(supportRequestRoutes, { prefix: '/api/support-requests' });
   await fastify.register(publicPlanRoutes, { prefix: '/api/public/plans' });
@@ -206,6 +254,7 @@ async function start() {
   await fastify.register(developersRoutes, { prefix: '/api/developers' });
   await fastify.register(emailRoutes, { prefix: '/api/email' });
   await fastify.register(whatsappFlowIntegrationRoutes, { prefix: '/api/integrations/whatsapp-flow' });
+  await fastify.register(virtualNumberRoutes, { prefix: '/api/virtual-number' });
   await fastify.register(whatsappFlowRoutes, { prefix: '/api/whatsapp-flows' });
   await fastify.register(dataTableRoutes, { prefix: '/api/data-tables' });
   await fastify.register(webWidgetRoutes, { prefix: '/api/web-widget' });
@@ -239,6 +288,9 @@ async function start() {
   initEmailModule(prisma);
   initGoogleModule(prisma);
   startCampaignWorker();
+  startWhatsAppInboundWorker();
+  startInstagramInboundWorker();
+  startMessengerInboundWorker();
   startCampaignReaperSweeper();
   startKnowledgeRefreshSweeper();
   startJourneyWorker();

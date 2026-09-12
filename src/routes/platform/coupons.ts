@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { authenticatePlatformAdmin } from '../../middleware/platformAuth.js';
 import { getJwtUser } from '../../middleware/auth.js';
@@ -28,6 +29,10 @@ const couponWriteSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+const couponPatchSchema = couponWriteSchema.partial();
+const idParamsSchema = z.object({ id: z.string() });
+const couponActiveBodySchema = z.object({ isActive: z.boolean() });
+
 function parseCouponDate(value: string): Date {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return new Date(`${value}T00:00:00.000Z`);
@@ -36,22 +41,23 @@ function parseCouponDate(value: string): Date {
 }
 
 export default async function platformCouponRoutes(fastify: FastifyInstance) {
-  fastify.addHook('preHandler', authenticatePlatformAdmin);
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+  app.addHook('preHandler', authenticatePlatformAdmin);
 
-  fastify.get('/', async () => {
+  app.get('/', async () => {
     const coupons = await listDiscountCoupons();
     return { coupons };
   });
 
-  fastify.get('/:id', async (request, reply) => {
-    const { id } = request.params as { id: string };
+  app.get('/:id', { schema: { params: idParamsSchema } }, async (request, reply) => {
+    const { id } = request.params;
     const coupon = await getDiscountCouponDetail(id);
     if (!coupon) return reply.code(404).send({ error: 'Coupon not found' });
     return { coupon };
   });
 
-  fastify.post('/', async (request, reply) => {
-    const body = couponWriteSchema.parse(request.body);
+  app.post('/', { schema: { body: couponWriteSchema } }, async (request, reply) => {
+    const body = request.body;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
     try {
@@ -89,9 +95,9 @@ export default async function platformCouponRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.patch('/:id', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = couponWriteSchema.partial().parse(request.body);
+  app.patch('/:id', { schema: { params: idParamsSchema, body: couponPatchSchema } }, async (request, reply) => {
+    const { id } = request.params;
+    const body = request.body;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
     try {
@@ -136,9 +142,12 @@ export default async function platformCouponRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.patch('/:id/active', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = z.object({ isActive: z.boolean() }).parse(request.body);
+  app.patch(
+    '/:id/active',
+    { schema: { params: idParamsSchema, body: couponActiveBodySchema } },
+    async (request, reply) => {
+    const { id } = request.params;
+    const body = request.body;
     const admin = getJwtUser(request);
     const ip = getRequestIp(request);
     try {

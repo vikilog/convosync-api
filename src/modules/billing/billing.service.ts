@@ -45,6 +45,7 @@ import {
   MIN_CHECKOUT_AMOUNT_PAISE,
   validateDiscountCoupon,
 } from '../../services/discountCoupons.js';
+import { invalidateWorkspaceSubscriptionCache } from '../../lib/workspaceAccessCache.js';
 import { paidActivationWorkspaceFields } from '../../services/trial.js';
 import {
   countryToCurrency,
@@ -1381,6 +1382,7 @@ export class BillingService {
       this.razorpay
     );
 
+    await invalidateWorkspaceSubscriptionCache(workspaceId);
     return { ok: true, subscriptionStatus: 'active', planId: billingSub.planId };
   }
 
@@ -1406,6 +1408,7 @@ export class BillingService {
           where: { id: workspaceId },
           data: { subscriptionStatus: 'cancelled', planId: null },
         });
+        await invalidateWorkspaceSubscriptionCache(workspaceId);
         return { ok: true, status: 'cancelled', cancelAtPeriodEnd: false };
       }
       throw new Error('No active billing subscription found');
@@ -1424,6 +1427,7 @@ export class BillingService {
         where: { id: workspaceId },
         data: { subscriptionStatus: 'cancelled', planId: null },
       });
+      await invalidateWorkspaceSubscriptionCache(workspaceId);
       return { ok: true, status: 'cancelled', cancelAtPeriodEnd: false };
     }
 
@@ -1447,6 +1451,7 @@ export class BillingService {
         data: { subscriptionStatus: 'cancelled', planId: null },
       });
     }
+    await invalidateWorkspaceSubscriptionCache(workspaceId);
 
     return { ok: true, status: rzSub.status, cancelAtPeriodEnd };
   }
@@ -1485,6 +1490,7 @@ export class BillingService {
       where: { id: workspaceId },
       data: paidActivationWorkspaceFields(),
     });
+    await invalidateWorkspaceSubscriptionCache(workspaceId);
 
     return { ok: true, status: rzSub.status };
   }
@@ -1876,6 +1882,7 @@ export class BillingService {
         })
       );
     }
+    await invalidateWorkspaceSubscriptionCache(workspaceId);
   }
 
   async handleSubscriptionCharged(payload: Record<string, unknown>) {
@@ -1939,6 +1946,7 @@ export class BillingService {
         tx,
       });
     });
+    await invalidateWorkspaceSubscriptionCache(billingSub.workspaceId);
 
     console.log('[billing.handleSubscriptionCharged] workspace plan activated', {
       workspaceId: billingSub.workspaceId,
@@ -2065,6 +2073,7 @@ export class BillingService {
         ...paidActivationWorkspaceFields(),
       },
     });
+    await invalidateWorkspaceSubscriptionCache(billingSub.workspaceId);
     if (billingSub.plan) {
       await syncWorkspaceLimitsFromPlanFeatures(
         billingSub.workspaceId,

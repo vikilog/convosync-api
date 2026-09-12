@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { prisma } from '../index.js';
 import { decryptSecret } from '../lib/field-encryption.js';
 import { getJwtUser } from '../middleware/auth.js';
@@ -15,12 +16,22 @@ import {
 } from '../services/messengerSync.js';
 import { planGatePayload } from '../services/planUsageGuards.js';
 import { disconnectMessengerAccounts } from '../services/channelDisconnectCleanup.service.js';
+import {
+  messengerConnectBodySchema,
+  messengerDisconnectBodySchema,
+  messengerDisconnectQuerySchema,
+  messengerSyncBodySchema,
+} from './messenger.schemas.js';
 
 export default async function messengerRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
-  fastify.post('/connect', auth, async (request, reply) => {
-    const body = (request.body || {}) as { pageId?: string };
+  app.post(
+    '/connect',
+    { ...auth, schema: { body: messengerConnectBodySchema } },
+    async (request, reply) => {
+    const body = request.body;
     const { workspaceId } = getJwtUser(request);
 
     try {
@@ -106,7 +117,7 @@ export default async function messengerRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/accounts', auth, async (request) => {
+  app.get('/accounts', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const accounts = await listMessengerAccounts(workspaceId);
 
@@ -124,10 +135,16 @@ export default async function messengerRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.delete('/disconnect', auth, async (request) => {
+  app.delete(
+    '/disconnect',
+    {
+      ...auth,
+      schema: { querystring: messengerDisconnectQuerySchema, body: messengerDisconnectBodySchema },
+    },
+    async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { pageId?: string };
-    const body = (request.body || {}) as { pageId?: string };
+    const query = request.query;
+    const body = request.body;
     const pageId = query.pageId || body.pageId;
 
     const cleanup = await disconnectMessengerAccounts(
@@ -139,9 +156,12 @@ export default async function messengerRoutes(fastify: FastifyInstance) {
     return { success: true, cleanup };
   });
 
-  fastify.post('/sync', auth, async (request, reply) => {
+  app.post(
+    '/sync',
+    { ...auth, schema: { body: messengerSyncBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = (request.body || {}) as { maxPages?: number };
+    const body = request.body;
 
     const syncOptions = { maxPages: body.maxPages ?? DEFAULT_MAX_CONVERSATION_PAGES, workspaceId };
 

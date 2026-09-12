@@ -1,11 +1,11 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getJwtUser } from '../../../middleware/auth.js';
 import type { JourneyContainer } from '../container.js';
-import {
-  createJourneySchema,
-  saveGraphSchema,
-  triggerJourneySchema,
-  updateJourneySchema,
+import type {
+  CreateJourneyDto,
+  SaveGraphDto,
+  TriggerJourneyDto,
+  UpdateJourneyDto,
 } from '../dto/journey.dto.js';
 
 export class JourneyController {
@@ -26,7 +26,7 @@ export class JourneyController {
 
   create = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = createJourneySchema.parse(request.body);
+    const body = request.body as CreateJourneyDto;
     const journey = await this.c.journeyService.create(workspaceId, body);
     return reply.code(201).send(journey);
   };
@@ -34,7 +34,7 @@ export class JourneyController {
   update = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const body = updateJourneySchema.parse(request.body);
+    const body = request.body as UpdateJourneyDto;
     const journey = await this.c.journeyService.update(workspaceId, id, body);
     if (!journey) return reply.code(404).send({ error: 'Not found' });
     return journey;
@@ -59,7 +59,7 @@ export class JourneyController {
   saveGraph = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const body = saveGraphSchema.parse(request.body);
+    const body = request.body as SaveGraphDto;
     try {
       const graph = await this.c.graphService.saveGraph(workspaceId, id, body);
       if (!graph) return reply.code(404).send({ error: 'Not found' });
@@ -83,9 +83,9 @@ export class JourneyController {
     }
   };
 
-  trigger = async (request: FastifyRequest, reply: FastifyReply) => {
+  trigger = async (request: FastifyRequest) => {
     const { workspaceId } = getJwtUser(request);
-    const body = triggerJourneySchema.parse(request.body);
+    const body = request.body as TriggerJourneyDto;
     return this.c.triggerService.triggerManual(workspaceId, body.event, body.contactId, body.payload);
   };
 

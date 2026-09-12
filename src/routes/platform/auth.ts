@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import bcrypt from 'bcryptjs';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { prisma } from '../../index.js';
 import { authenticatePlatformAdmin } from '../../middleware/platformAuth.js';
@@ -10,14 +11,19 @@ import {
   recordAuditEvent,
 } from '../../services/platformAudit.js';
 
+export const platformLoginBodySchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+
 export default async function platformAuthRoutes(fastify: FastifyInstance) {
-  fastify.post('/login', async (request, reply) => {
-    const body = z
-      .object({
-        email: z.string().email(),
-        password: z.string().min(1),
-      })
-      .parse(request.body);
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  app.post(
+    '/login',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } }, schema: { body: platformLoginBodySchema } },
+    async (request, reply) => {
+    const body = request.body;
 
     const ip = getRequestIp(request);
     const admin = await prisma.platformAdmin.findUnique({
@@ -68,7 +74,7 @@ export default async function platformAuthRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.get(
+  app.get(
     '/me',
     { preHandler: [authenticatePlatformAdmin] },
     async (request, reply) => {

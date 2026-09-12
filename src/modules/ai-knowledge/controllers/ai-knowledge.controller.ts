@@ -1,12 +1,12 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getJwtUser } from '../../../middleware/auth.js';
 import type { AiKnowledgeContainer } from '../container.js';
-import {
-  aiContextQuerySchema,
-  listCollectionsSchema,
-  saveAiKnowledgeConfigSchema,
-  syncAiKnowledgeSchema,
-  syncCollectionSchema,
+import type {
+  AiContextQueryDto,
+  ListCollectionsDto,
+  SaveAiKnowledgeConfigDto,
+  SyncAiKnowledgeDto,
+  SyncCollectionDto,
 } from '../dto/ai-knowledge.dto.js';
 
 export class AiKnowledgeController {
@@ -19,7 +19,7 @@ export class AiKnowledgeController {
 
   saveConfig = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = saveAiKnowledgeConfigSchema.parse(request.body);
+    const body = request.body as SaveAiKnowledgeConfigDto;
     try {
       const config = await this.c.aiKnowledgeService.saveConfig(
         workspaceId,
@@ -35,14 +35,14 @@ export class AiKnowledgeController {
 
   sync = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = syncAiKnowledgeSchema.parse(request.body);
+    const body = request.body as SyncAiKnowledgeDto;
     const result = await this.c.aiKnowledgeService.sync(workspaceId, body);
     return reply.code(200).send(result);
   };
 
   listCollections = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = listCollectionsSchema.parse(request.body);
+    const body = request.body as ListCollectionsDto;
     try {
       const result = await this.c.aiKnowledgeService.listCollections(workspaceId, body);
       return reply.code(200).send(result);
@@ -54,7 +54,7 @@ export class AiKnowledgeController {
 
   syncCollection = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = syncCollectionSchema.parse(request.body);
+    const body = request.body as SyncCollectionDto;
     try {
       const result = await this.c.aiKnowledgeService.syncCollection(workspaceId, body);
       return reply.code(200).send(result);
@@ -76,7 +76,7 @@ export class AiKnowledgeController {
 
   getContextForQuery = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = aiContextQuerySchema.parse(request.body);
+    const body = request.body as AiContextQueryDto;
     const result = await this.c.aiContextService.getContextForQuery(
       body.query,
       body.venueId,

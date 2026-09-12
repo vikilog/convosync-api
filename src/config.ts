@@ -185,6 +185,11 @@ export const config = {
         );
       }),
   },
+  plivo: {
+    authId: process.env.PLIVO_AUTH_ID || '',
+    authToken: process.env.PLIVO_AUTH_TOKEN || '',
+    enabled: Boolean(process.env.PLIVO_AUTH_ID && process.env.PLIVO_AUTH_TOKEN),
+  },
   aws: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',

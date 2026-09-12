@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import axios from 'axios';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
@@ -14,11 +15,18 @@ import {
   setCampaignStatus,
 } from '../services/metaAdsConnect.js';
 import { assertPlanFeature, PlanGateError } from '../services/planUsageGuards.js';
+import {
+  metaAdsCampaignParamsSchema,
+  metaAdsConnectBodySchema,
+  metaAdsCtwaCreateBodySchema,
+  metaAdsSelectAccountBodySchema,
+} from './metaAds.schemas.js';
 
 export default async function metaAdsRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
-  fastify.get('/oauth/state', auth, async (request) => {
+  app.get('/oauth/state', auth, async (request) => {
     const user = getJwtUser(request);
     const state = fastify.jwt.sign(
       {
@@ -42,14 +50,14 @@ export default async function metaAdsRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.get('/account', auth, async (request) => {
+  app.get('/account', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const result = await getConnectedMetaAdsAccount(workspaceId);
     if (!result.connected) return { connected: false };
     return { connected: true, account: result.account };
   });
 
-  fastify.get('/accounts', auth, async (request, reply) => {
+  app.get('/accounts', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
 
     try {
@@ -61,9 +69,12 @@ export default async function metaAdsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/account/select', auth, async (request, reply) => {
+  app.post(
+    '/account/select',
+    { ...auth, schema: { body: metaAdsSelectAccountBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = request.body as { adAccountId?: string };
+    const body = request.body;
 
     if (!body.adAccountId) {
       return reply.code(400).send({ error: 'Missing adAccountId' });
@@ -83,8 +94,11 @@ export default async function metaAdsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/connect', auth, async (request, reply) => {
-    const body = request.body as { code?: string; redirectUri?: string; adAccountId?: string };
+  app.post(
+    '/connect',
+    { ...auth, schema: { body: metaAdsConnectBodySchema } },
+    async (request, reply) => {
+    const body = request.body;
     const { workspaceId } = getJwtUser(request);
 
     if (!body.code) {
@@ -115,7 +129,7 @@ export default async function metaAdsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.delete('/disconnect', auth, async (request) => {
+  app.delete('/disconnect', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     await prisma.workspace.update({
       where: { id: workspaceId },
@@ -124,7 +138,7 @@ export default async function metaAdsRoutes(fastify: FastifyInstance) {
     return { success: true };
   });
 
-  fastify.get('/campaigns', auth, async (request, reply) => {
+  app.get('/campaigns', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
 
     try {
@@ -136,9 +150,12 @@ export default async function metaAdsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/campaigns/:id/pause', auth, async (request, reply) => {
+  app.post(
+    '/campaigns/:id/pause',
+    { ...auth, schema: { params: metaAdsCampaignParamsSchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
 
     try {
       await setCampaignStatus(workspaceId, id, 'PAUSED');
@@ -154,9 +171,12 @@ export default async function metaAdsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/campaigns/:id/resume', auth, async (request, reply) => {
+  app.post(
+    '/campaigns/:id/resume',
+    { ...auth, schema: { params: metaAdsCampaignParamsSchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
 
     try {
       await setCampaignStatus(workspaceId, id, 'ACTIVE');
@@ -172,9 +192,12 @@ export default async function metaAdsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.delete('/campaigns/:id', auth, async (request, reply) => {
+  app.delete(
+    '/campaigns/:id',
+    { ...auth, schema: { params: metaAdsCampaignParamsSchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
 
     try {
       await setCampaignStatus(workspaceId, id, 'DELETED');
@@ -190,17 +213,12 @@ export default async function metaAdsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/ctwa/create', auth, async (request, reply) => {
+  app.post(
+    '/ctwa/create',
+    { ...auth, schema: { body: metaAdsCtwaCreateBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = request.body as {
-      campaignName?: string;
-      dailyBudget?: number;
-      startDate?: string;
-      endDate?: string;
-      headline?: string;
-      description?: string;
-      targeting?: { ageMin?: number; ageMax?: number; locations?: string[] };
-    };
+    const body = request.body;
 
     if (!body.campaignName || !body.dailyBudget || !body.startDate || !body.headline) {
       return reply.code(400).send({ error: 'Missing required CTWA ad fields' });

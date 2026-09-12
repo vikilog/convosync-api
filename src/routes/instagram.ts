@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { prisma } from '../index.js';
 import { config } from '../config.js';
 import { decryptSecret } from '../lib/field-encryption.js';
@@ -29,11 +30,24 @@ import {
   triggerClassifyAfterUpsert,
   upsertListeningCommentsForPost,
 } from '../services/socialCommentSync.service.js';
+import {
+  instagramCommentParamsSchema,
+  instagramConnectBodySchema,
+  instagramDisconnectBodySchema,
+  instagramDisconnectQuerySchema,
+  instagramListeningListQuerySchema,
+  instagramMediaParamsSchema,
+  instagramPreviewBodySchema,
+  instagramReplyBodySchema,
+  instagramSyncBodySchema,
+  instagramUserQuerySchema,
+} from './instagram.schemas.js';
 
 export default async function instagramRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
-  fastify.get('/oauth/state', auth, async (request) => {
+  app.get('/oauth/state', auth, async (request) => {
     const user = getJwtUser(request);
     const state = fastify.jwt.sign(
       {
@@ -61,7 +75,7 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
   });
 
   /** Convenience: returns ready-to-open Facebook OAuth dialog URL (scopes include comments + messages). */
-  fastify.get('/connect', auth, async (request, reply) => {
+  app.get('/connect', auth, async (request, reply) => {
     if (!config.meta.appId) {
       return reply.code(500).send({ error: 'META_APP_ID is not configured' });
     }
@@ -100,11 +114,11 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.post('/connect/preview', auth, async (request, reply) => {
-    const body = request.body as {
-      code?: string;
-      redirectUri?: string;
-    };
+  app.post(
+    '/connect/preview',
+    { ...auth, schema: { body: instagramPreviewBodySchema } },
+    async (request, reply) => {
+    const body = request.body;
     const { workspaceId } = getJwtUser(request);
 
     if (!body.code) {
@@ -154,13 +168,11 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/connect', auth, async (request, reply) => {
-    const body = request.body as {
-      code?: string;
-      redirectUri?: string;
-      pageId?: string;
-      connectToken?: string;
-    };
+  app.post(
+    '/connect',
+    { ...auth, schema: { body: instagramConnectBodySchema } },
+    async (request, reply) => {
+    const body = request.body;
     const { workspaceId, userId } = getJwtUser(request);
 
     try {
@@ -272,7 +284,7 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/accounts', auth, async (request) => {
+  app.get('/accounts', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const accounts = await listInstagramAccounts(workspaceId);
 
@@ -293,9 +305,12 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.get('/listening/profile', auth, async (request, reply) => {
+  app.get(
+    '/listening/profile',
+    { ...auth, schema: { querystring: instagramUserQuerySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { instagramUserId?: string };
+    const query = request.query;
 
     try {
       const profile = await getListeningProfile(workspaceId, query.instagramUserId);
@@ -310,13 +325,12 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/listening/media', auth, async (request, reply) => {
+  app.get(
+    '/listening/media',
+    { ...auth, schema: { querystring: instagramListeningListQuerySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as {
-      instagramUserId?: string;
-      after?: string;
-      limit?: string;
-    };
+    const query = request.query;
     const limit = query.limit ? Number(query.limit) : undefined;
 
     try {
@@ -336,10 +350,13 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/listening/media/:mediaId', auth, async (request, reply) => {
+  app.get(
+    '/listening/media/:mediaId',
+    { ...auth, schema: { params: instagramMediaParamsSchema, querystring: instagramUserQuerySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { mediaId } = request.params as { mediaId: string };
-    const query = request.query as { instagramUserId?: string };
+    const { mediaId } = request.params;
+    const query = request.query;
 
     try {
       const media = await getListeningMediaDetail(workspaceId, mediaId, query.instagramUserId);
@@ -354,14 +371,16 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/listening/media/:mediaId/comments', auth, async (request, reply) => {
+  app.get(
+    '/listening/media/:mediaId/comments',
+    {
+      ...auth,
+      schema: { params: instagramMediaParamsSchema, querystring: instagramListeningListQuerySchema },
+    },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { mediaId } = request.params as { mediaId: string };
-    const query = request.query as {
-      instagramUserId?: string;
-      after?: string;
-      limit?: string;
-    };
+    const { mediaId } = request.params;
+    const query = request.query;
     const limit = query.limit ? Number(query.limit) : undefined;
 
     try {
@@ -410,10 +429,13 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/listening/comments/:commentId/reply', auth, async (request, reply) => {
+  app.post(
+    '/listening/comments/:commentId/reply',
+    { ...auth, schema: { params: instagramCommentParamsSchema, body: instagramReplyBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { commentId } = request.params as { commentId: string };
-    const body = (request.body || {}) as { message?: string; instagramUserId?: string };
+    const { commentId } = request.params;
+    const body = request.body;
 
     if (!body.message?.trim()) {
       return reply.code(400).send({ error: 'Reply message is required' });
@@ -437,10 +459,16 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.delete('/disconnect', auth, async (request) => {
+  app.delete(
+    '/disconnect',
+    {
+      ...auth,
+      schema: { querystring: instagramDisconnectQuerySchema, body: instagramDisconnectBodySchema },
+    },
+    async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { instagramUserId?: string };
-    const body = (request.body || {}) as { instagramUserId?: string };
+    const query = request.query;
+    const body = request.body;
     const instagramUserId = query.instagramUserId || body.instagramUserId;
 
     const cleanup = await disconnectInstagramAccounts(
@@ -452,9 +480,12 @@ export default async function instagramRoutes(fastify: FastifyInstance) {
     return { success: true, cleanup };
   });
 
-  fastify.post('/sync', auth, async (request, reply) => {
+  app.post(
+    '/sync',
+    { ...auth, schema: { body: instagramSyncBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = (request.body || {}) as { maxPages?: number; loadMore?: boolean };
+    const body = request.body;
 
     const syncOptions = {
       maxPages: body.maxPages ?? DEFAULT_MAX_CONVERSATION_PAGES,

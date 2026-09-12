@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import axios from 'axios';
 import { prisma } from '../index.js';
 import { encryptSecret } from '../lib/field-encryption.js';
@@ -19,6 +20,12 @@ import {
   resolveFacebookRedirectUri,
   type FacebookPageSessionCandidate,
 } from '../services/facebookConnect.js';
+import {
+  facebookConnectBodySchema,
+  facebookCreatePostBodySchema,
+  facebookOauthCodeBodySchema,
+  facebookPostParamsSchema,
+} from './facebook.schemas.js';
 
 const GRAPH_API = 'https://graph.facebook.com/v19.0';
 
@@ -222,9 +229,10 @@ async function getWorkspacePageToken(workspaceId: string) {
 }
 
 export default async function facebookRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
-  fastify.get('/oauth/state', auth, async (request) => {
+  app.get('/oauth/state', auth, async (request) => {
     const user = getJwtUser(request);
     const state = fastify.jwt.sign(
       {
@@ -247,7 +255,7 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.get('/pages', auth, async (request) => {
+  app.get('/pages', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const page = await getConnectedFacebookPage(workspaceId);
     if (!page.connected) {
@@ -269,7 +277,7 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.get('/token-info', auth, async (request, reply) => {
+  app.get('/token-info', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const workspace = await getWorkspacePageToken(workspaceId);
     if (!workspace?.fbPageToken) {
@@ -280,8 +288,11 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
   });
 
   /** Exchanges the OAuth code and lists every Page the user manages so the frontend can show a picker instead of silently connecting the first one. */
-  fastify.post('/connect/preview', auth, async (request, reply) => {
-    const body = request.body as { code?: string; redirectUri?: string };
+  app.post(
+    '/connect/preview',
+    { ...auth, schema: { body: facebookOauthCodeBodySchema } },
+    async (request, reply) => {
+    const body = request.body;
     const { workspaceId } = getJwtUser(request);
 
     if (!body.code) {
@@ -321,15 +332,11 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/connect', auth, async (request, reply) => {
-    const body = request.body as {
-      code?: string;
-      redirectUri?: string;
-      pageId?: string;
-      pageAccessToken?: string;
-      pageName?: string;
-      connectToken?: string;
-    };
+  app.post(
+    '/connect',
+    { ...auth, schema: { body: facebookConnectBodySchema } },
+    async (request, reply) => {
+    const body = request.body;
     const { workspaceId } = getJwtUser(request);
 
     if (body.connectToken) {
@@ -454,7 +461,7 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
     return reply.code(400).send({ error: 'Missing Meta authorization code' });
   });
 
-  fastify.delete('/disconnect', auth, async (request) => {
+  app.delete('/disconnect', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     await prisma.workspace.update({
       where: { id: workspaceId },
@@ -463,7 +470,7 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
     return { success: true };
   });
 
-  fastify.get('/posts', auth, async (request, reply) => {
+  app.get('/posts', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const workspace = await getWorkspacePageToken(workspaceId);
     if (!workspace?.fbPageId || !workspace.fbPageToken) {
@@ -490,9 +497,12 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/posts/:postId/comments', auth, async (request, reply) => {
+  app.get(
+    '/posts/:postId/comments',
+    { ...auth, schema: { params: facebookPostParamsSchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { postId } = request.params as { postId: string };
+    const { postId } = request.params;
     const workspace = await getWorkspacePageToken(workspaceId);
     if (!workspace?.fbPageToken) return reply.code(400).send({ error: 'Not connected' });
 
@@ -572,12 +582,12 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
   // facebookListening.service.ts. Read-only post/comment browsing above
   // stays here, reused directly by Social Listening's Content tab.
 
-  fastify.post('/posts', auth, async (request, reply) => {
+  app.post(
+    '/posts',
+    { ...auth, schema: { body: facebookCreatePostBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { message, scheduledTime } = request.body as {
-      message?: string;
-      scheduledTime?: string;
-    };
+    const { message, scheduledTime } = request.body;
     const workspace = await getWorkspacePageToken(workspaceId);
     if (!workspace?.fbPageId || !workspace.fbPageToken) {
       return reply.code(400).send({ error: 'Page not connected' });
@@ -602,7 +612,7 @@ export default async function facebookRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/insights', auth, async (request, reply) => {
+  app.get('/insights', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const workspace = await getWorkspacePageToken(workspaceId);
     if (!workspace?.fbPageId || !workspace.fbPageToken) {

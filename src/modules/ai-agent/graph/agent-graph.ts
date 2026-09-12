@@ -151,15 +151,15 @@ export async function runAgentGraph(input: RunAgentGraphInput): Promise<RunAgent
     llm: input.llm,
   });
 
-  console.log(
-    '[agent-graph] turn done',
-    JSON.stringify({
+  input.fastify.log.info(
+    {
       path: result.retrievalPath,
       intent: result.intent,
       llmCallCount: result.llmCallCount ?? null,
       suggestedResolved: result.suggestedActionsResolved,
       llmActions: (result.llmActions || []).map((a) => a.type),
-    })
+    },
+    '[agent-graph] turn done'
   );
 
   return {

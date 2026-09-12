@@ -1,9 +1,19 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { authenticatePlatformAdmin } from '../../middleware/platformAuth.js';
 import { prisma } from '../../lib/prisma.js';
 
 const STATUS = z.enum(['new', 'contacted', 'closed']);
+
+const listQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  status: STATUS.optional(),
+});
+
+const idParamsSchema = z.object({ id: z.string() });
+const statusBodySchema = z.object({ status: STATUS });
 
 function serialize(row: {
   id: string;
@@ -34,16 +44,11 @@ function serialize(row: {
 }
 
 export default async function platformSupportRequestRoutes(fastify: FastifyInstance) {
-  fastify.addHook('preHandler', authenticatePlatformAdmin);
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+  app.addHook('preHandler', authenticatePlatformAdmin);
 
-  fastify.get('/', async (request) => {
-    const query = z
-      .object({
-        page: z.coerce.number().int().min(1).default(1),
-        pageSize: z.coerce.number().int().min(1).max(100).default(20),
-        status: STATUS.optional(),
-      })
-      .parse(request.query);
+  app.get('/', { schema: { querystring: listQuerySchema } }, async (request) => {
+    const query = request.query;
 
     const where = query.status ? { status: query.status } : {};
     const [total, items] = await Promise.all([
@@ -69,16 +74,19 @@ export default async function platformSupportRequestRoutes(fastify: FastifyInsta
     };
   });
 
-  fastify.get('/:id', async (request, reply) => {
-    const { id } = request.params as { id: string };
+  app.get('/:id', { schema: { params: idParamsSchema } }, async (request, reply) => {
+    const { id } = request.params;
     const row = await prisma.supportRequest.findUnique({ where: { id } });
     if (!row) return reply.code(404).send({ error: 'Support request not found' });
     return { item: serialize(row) };
   });
 
-  fastify.patch('/:id', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = z.object({ status: STATUS }).parse(request.body ?? {});
+  app.patch(
+    '/:id',
+    { schema: { params: idParamsSchema, body: statusBodySchema } },
+    async (request, reply) => {
+    const { id } = request.params;
+    const body = request.body;
 
     const existing = await prisma.supportRequest.findUnique({ where: { id } });
     if (!existing) return reply.code(404).send({ error: 'Support request not found' });

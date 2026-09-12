@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { randomBytes } from 'node:crypto';
-import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
+import { webWidgetUpdateSchema } from './webWidget.schemas.js';
 
 /**
  * Dashboard-side settings for the embeddable AI chat widget: one row per
@@ -14,18 +15,6 @@ import { companyAuth } from '../middleware/workspaceScope.js';
 function generateToken(): string {
   return `wgt_${randomBytes(24).toString('hex')}`;
 }
-
-const updateSchema = z.object({
-  enabled: z.boolean().optional(),
-  botName: z.string().trim().min(1).max(60).optional(),
-  greeting: z.string().trim().min(1).max(300).optional(),
-  accentColor: z
-    .string()
-    .trim()
-    .regex(/^#[0-9a-fA-F]{6}$/, 'Use a hex color like #16a34a')
-    .optional(),
-  agentId: z.string().min(1).nullable().optional(),
-});
 
 function serialize(row: {
   token: string;
@@ -54,15 +43,17 @@ async function getOrCreateWidget(workspaceId: string) {
 }
 
 export default async function webWidgetRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+
   fastify.get('/', companyAuth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const widget = await getOrCreateWidget(workspaceId);
     return { item: serialize(widget) };
   });
 
-  fastify.put('/', companyAuth, async (request, reply) => {
+  app.put('/', { ...companyAuth, schema: { body: webWidgetUpdateSchema } }, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = updateSchema.parse(request.body ?? {});
+    const body = request.body;
 
     if (body.agentId) {
       const agent = await prisma.aiAgent.findFirst({

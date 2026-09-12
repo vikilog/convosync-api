@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { authenticatePlatformAdmin } from '../../middleware/platformAuth.js';
 import {
@@ -10,24 +11,43 @@ import {
   updatePlatformMessageTemplate,
 } from '../../services/platformSettings.service.js';
 
-export default async function platformSettingsRoutes(fastify: FastifyInstance) {
-  fastify.addHook('preHandler', authenticatePlatformAdmin);
+const configUpdateSchema = z.object({
+  platformName: z.string().trim().min(1).max(80).optional(),
+  supportEmail: z.string().email().nullable().optional(),
+  platformPhone: z.string().trim().max(32).nullable().optional(),
+  platformPhoneNumberId: z.string().trim().max(64).nullable().optional(),
+  platformWabaId: z.string().trim().max(64).nullable().optional(),
+  platformWaToken: z.string().trim().max(512).nullable().optional(),
+});
 
-  fastify.get('/config', async () => {
+const templateCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  category: z.enum(['utility', 'marketing', 'authentication']).optional(),
+  language: z.string().trim().min(2).max(10).optional(),
+  body: z.string().trim().min(1).max(4096),
+  status: z.enum(['draft', 'approved']).optional(),
+});
+
+const templateUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  category: z.enum(['utility', 'marketing', 'authentication']).optional(),
+  language: z.string().trim().min(2).max(10).optional(),
+  body: z.string().trim().min(1).max(4096).optional(),
+  status: z.enum(['draft', 'approved']).optional(),
+});
+
+const idParamsSchema = z.object({ id: z.string() });
+
+export default async function platformSettingsRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+  app.addHook('preHandler', authenticatePlatformAdmin);
+
+  app.get('/config', async () => {
     return getPlatformConfig();
   });
 
-  fastify.put('/config', async (request, reply) => {
-    const body = z
-      .object({
-        platformName: z.string().trim().min(1).max(80).optional(),
-        supportEmail: z.string().email().nullable().optional(),
-        platformPhone: z.string().trim().max(32).nullable().optional(),
-        platformPhoneNumberId: z.string().trim().max(64).nullable().optional(),
-        platformWabaId: z.string().trim().max(64).nullable().optional(),
-        platformWaToken: z.string().trim().max(512).nullable().optional(),
-      })
-      .parse(request.body);
+  app.put('/config', { schema: { body: configUpdateSchema } }, async (request, reply) => {
+    const body = request.body;
 
     try {
       return await updatePlatformConfig(body);
@@ -37,21 +57,13 @@ export default async function platformSettingsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/templates', async () => {
+  app.get('/templates', async () => {
     const templates = await listPlatformMessageTemplates();
     return { templates };
   });
 
-  fastify.post('/templates', async (request, reply) => {
-    const body = z
-      .object({
-        name: z.string().trim().min(1).max(120),
-        category: z.enum(['utility', 'marketing', 'authentication']).optional(),
-        language: z.string().trim().min(2).max(10).optional(),
-        body: z.string().trim().min(1).max(4096),
-        status: z.enum(['draft', 'approved']).optional(),
-      })
-      .parse(request.body);
+  app.post('/templates', { schema: { body: templateCreateSchema } }, async (request, reply) => {
+    const body = request.body;
 
     try {
       const template = await createPlatformMessageTemplate(body);
@@ -62,17 +74,12 @@ export default async function platformSettingsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.put('/templates/:id', async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = z
-      .object({
-        name: z.string().trim().min(1).max(120).optional(),
-        category: z.enum(['utility', 'marketing', 'authentication']).optional(),
-        language: z.string().trim().min(2).max(10).optional(),
-        body: z.string().trim().min(1).max(4096).optional(),
-        status: z.enum(['draft', 'approved']).optional(),
-      })
-      .parse(request.body);
+  app.put(
+    '/templates/:id',
+    { schema: { params: idParamsSchema, body: templateUpdateSchema } },
+    async (request, reply) => {
+    const { id } = request.params;
+    const body = request.body;
 
     try {
       const template = await updatePlatformMessageTemplate(id, body);
@@ -82,8 +89,8 @@ export default async function platformSettingsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.delete('/templates/:id', async (request, reply) => {
-    const { id } = request.params as { id: string };
+  app.delete('/templates/:id', { schema: { params: idParamsSchema } }, async (request, reply) => {
+    const { id } = request.params;
     try {
       return await deletePlatformMessageTemplate(id);
     } catch {

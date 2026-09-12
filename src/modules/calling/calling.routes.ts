@@ -1,8 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
-import { z } from 'zod';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { getJwtUser } from '../../middleware/auth.js';
 import { companyAuth } from '../../middleware/workspaceScope.js';
+import {
+  callAnalyticsBodySchema,
+  createCallBodySchema,
+  guestTokenSchema,
+  listCallsQuerySchema,
+  transcribeBodySchema,
+} from './calling.schemas.js';
 import {
   acceptCall,
   createAndRingCall,
@@ -50,12 +57,13 @@ function requireIds(
 }
 
 export default async function callingRoutes(fastify: FastifyInstance) {
-  await fastify.register(multipart, {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+  await app.register(multipart, {
     limits: { fileSize: 50 * 1024 * 1024 }, // 50MB sample audio
   });
 
   /** Public guest APIs — no companyAuth */
-  fastify.get('/calls/guest/r/:code', async (request, reply) => {
+  app.get('/calls/guest/r/:code', async (request, reply) => {
     try {
       const { code } = request.params as { code: string };
       const resolved = await resolveGuestShortCode(code);
@@ -69,26 +77,21 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/calls/guest/session', async (request, reply) => {
+  app.get('/calls/guest/session', { schema: { querystring: guestTokenSchema } }, async (request, reply) => {
     try {
-      const q = z.object({ token: z.string().min(10) }).parse(request.query);
-      return await getGuestCallSession(q.token);
+      return await getGuestCallSession(request.query.token);
     } catch (err) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
-      }
-      if (err instanceof z.ZodError) {
-        return reply.code(400).send({ error: 'Invalid request' });
       }
       request.log.error(err);
       return reply.code(500).send({ error: 'Failed to load guest session' });
     }
   });
 
-  fastify.post('/calls/guest/token', async (request, reply) => {
+  app.post('/calls/guest/token', { schema: { body: guestTokenSchema } }, async (request, reply) => {
     try {
-      const body = z.object({ token: z.string().min(10) }).parse(request.body);
-      const session = await mintGuestCallToken(body.token);
+      const session = await mintGuestCallToken(request.body.token);
       return {
         token: session.token,
         url: session.url,
@@ -98,35 +101,27 @@ export default async function callingRoutes(fastify: FastifyInstance) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
       }
-      if (err instanceof z.ZodError) {
-        return reply.code(400).send({ error: 'Invalid request' });
-      }
       request.log.error(err);
       return reply.code(500).send({ error: 'Failed to mint guest token' });
     }
   });
 
-  fastify.post('/calls/guest/connected', async (request, reply) => {
+  app.post('/calls/guest/connected', { schema: { body: guestTokenSchema } }, async (request, reply) => {
     try {
-      const body = z.object({ token: z.string().min(10) }).parse(request.body);
-      const call = await markGuestCallConnected(body.token);
+      const call = await markGuestCallConnected(request.body.token);
       return { call: await publicCallPayloadEnriched(call) };
     } catch (err) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
-      }
-      if (err instanceof z.ZodError) {
-        return reply.code(400).send({ error: 'Invalid request' });
       }
       request.log.error(err);
       return reply.code(500).send({ error: 'Failed to mark guest connected' });
     }
   });
 
-  fastify.post('/calls/guest/end', async (request, reply) => {
+  app.post('/calls/guest/end', { schema: { body: guestTokenSchema } }, async (request, reply) => {
     try {
-      const body = z.object({ token: z.string().min(10) }).parse(request.body);
-      const call = await endCallAsGuest(body.token);
+      const call = await endCallAsGuest(request.body.token);
       return { call: await publicCallPayloadEnriched(call) };
     } catch (err) {
       if (err instanceof CallingError) {
@@ -137,21 +132,15 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/calls', companyAuth, async (request, reply) => {
+  app.post('/calls', { ...companyAuth, schema: { body: createCallBodySchema } }, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
-      const body = z
-        .object({
-          conversationId: z.string().min(1),
-          direction: z.enum(['inbound', 'outbound']).optional(),
-        })
-        .parse(request.body);
 
       const { call, guestUrl } = await createAndRingCall({
         workspaceId: ids.workspaceId,
-        conversationId: body.conversationId,
-        direction: body.direction ?? 'outbound',
+        conversationId: request.body.conversationId,
+        direction: request.body.direction ?? 'outbound',
         initiatedByUserId: ids.userId,
       });
 
@@ -164,16 +153,13 @@ export default async function callingRoutes(fastify: FastifyInstance) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
       }
-      if (err instanceof z.ZodError) {
-        return reply.code(400).send({ error: 'Invalid request', details: err.flatten() });
-      }
       request.log.error(err);
       return reply.code(500).send({ error: 'Failed to create call' });
     }
   });
 
   /** Manual sample/upload recording for STT testing */
-  fastify.post('/calls/upload-recording', companyAuth, async (request, reply) => {
+  app.post('/calls/upload-recording', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -226,7 +212,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/calls/:callId/guest-link', companyAuth, async (request, reply) => {
+  app.post('/calls/:callId/guest-link', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -245,32 +231,23 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/calls', companyAuth, async (request, reply) => {
+  app.get('/calls', { ...companyAuth, schema: { querystring: listCallsQuerySchema } }, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
-      const query = z
-        .object({
-          conversationId: z.string().optional(),
-          limit: z.coerce.number().int().positive().max(100).optional(),
-        })
-        .parse(request.query);
 
       const calls = await listCallsForWorkspace(ids.workspaceId, {
-        conversationId: query.conversationId,
-        limit: query.limit,
+        conversationId: request.query.conversationId,
+        limit: request.query.limit,
       });
       return { calls: calls.map(publicCallPayload) };
     } catch (err) {
-      if (err instanceof z.ZodError) {
-        return reply.code(400).send({ error: 'Invalid query', details: err.flatten() });
-      }
       request.log.error(err);
       return reply.code(500).send({ error: 'Failed to list calls' });
     }
   });
 
-  fastify.get('/calls/:callId', companyAuth, async (request, reply) => {
+  app.get('/calls/:callId', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -286,7 +263,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/calls/:callId/accept', companyAuth, async (request, reply) => {
+  app.post('/calls/:callId/accept', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -306,7 +283,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/calls/:callId/decline', companyAuth, async (request, reply) => {
+  app.post('/calls/:callId/decline', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -326,7 +303,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/calls/:callId/end', companyAuth, async (request, reply) => {
+  app.post('/calls/:callId/end', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -346,7 +323,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/calls/:callId/connected', companyAuth, async (request, reply) => {
+  app.post('/calls/:callId/connected', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -366,7 +343,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/calls/:callId/token', companyAuth, async (request, reply) => {
+  app.post('/calls/:callId/token', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -392,7 +369,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
   });
 
   /** Subscribe-only while AI is on the call. */
-  fastify.post('/calls/:callId/listen', companyAuth, async (request, reply) => {
+  app.post('/calls/:callId/listen', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -419,7 +396,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
   });
 
   /** Stop AI voice agent (LiveKit data + remove) and mint publish token for human. */
-  fastify.post('/calls/:callId/take-over', companyAuth, async (request, reply) => {
+  app.post('/calls/:callId/take-over', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -444,7 +421,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/calls/:callId/resend-link', companyAuth, async (request, reply) => {
+  app.post('/calls/:callId/resend-link', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -463,31 +440,30 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/calls/:callId/analytics', companyAuth, async (request, reply) => {
+  app.post(
+    '/calls/:callId/analytics',
+    { ...companyAuth, schema: { body: callAnalyticsBodySchema } },
+    async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
       const { callId } = request.params as { callId: string };
-      const body = z.record(z.unknown()).parse(request.body ?? {});
       const call = await saveCallAnalytics({
         workspaceId: ids.workspaceId,
         callId,
-        analytics: body,
+        analytics: request.body,
       });
       return { call: await publicCallPayloadEnriched(call) };
     } catch (err) {
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
       }
-      if (err instanceof z.ZodError) {
-        return reply.code(400).send({ error: 'Invalid analytics payload' });
-      }
       request.log.error(err);
       return reply.code(500).send({ error: 'Failed to save analytics' });
     }
   });
 
-  fastify.get('/calls/:callId/recording', companyAuth, async (request, reply) => {
+  app.get('/calls/:callId/recording', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -505,7 +481,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.delete('/calls/:callId/recording', companyAuth, async (request, reply) => {
+  app.delete('/calls/:callId/recording', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -524,7 +500,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/calls/:callId/transcript', companyAuth, async (request, reply) => {
+  app.get('/calls/:callId/transcript', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
@@ -542,16 +518,14 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/calls/:callId/transcribe', companyAuth, async (request, reply) => {
+  app.post(
+    '/calls/:callId/transcribe',
+    { ...companyAuth, schema: { body: transcribeBodySchema } },
+    async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;
       const { callId } = request.params as { callId: string };
-      const body = z
-        .object({
-          language: z.string().min(2).max(16).optional(),
-        })
-        .parse(request.body ?? {});
       const call = await getCallForWorkspace(ids.workspaceId, callId);
       if (!call) {
         return reply.code(404).send({ error: 'Call not found', code: 'call_not_found' });
@@ -563,14 +537,11 @@ export default async function callingRoutes(fastify: FastifyInstance) {
         where: { id: callId },
         data: { transcriptStatus: 'pending', transcriptError: null },
       });
-      const language = body.language?.trim().toLowerCase() || undefined;
+      const language = request.body.language?.trim().toLowerCase() || undefined;
       // Allow re-queue even if a prior jobId completed
       await enqueueCallTranscript({ callId, workspaceId: ids.workspaceId, language });
       return { queued: true, callId, language: language ?? null };
     } catch (err) {
-      if (err instanceof z.ZodError) {
-        return reply.code(400).send({ error: 'Invalid body', details: err.flatten() });
-      }
       if (err instanceof CallingError) {
         return reply.code(err.statusCode).send({ error: err.message, code: err.code });
       }
@@ -579,7 +550,7 @@ export default async function callingRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/calls/:callId/recording/file', companyAuth, async (request, reply) => {
+  app.get('/calls/:callId/recording/file', companyAuth, async (request, reply) => {
     try {
       const ids = requireIds(request, reply);
       if (!ids) return;

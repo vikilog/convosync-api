@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { prisma } from '../index.js';
 import { config } from '../config.js';
 import { decryptSecret } from '../lib/field-encryption.js';
@@ -15,6 +16,7 @@ import {
 import { purgeWhatsAppPhoneAccountData } from '../services/whatsappDisconnectCleanup.service.js';
 import {
   getWhatsAppBusinessProfile,
+  graphGetPhoneMeta,
   updateWhatsAppBusinessProfile,
   WHATSAPP_PROFILE_VERTICALS,
 } from '../services/whatsappBusinessProfile.js';
@@ -24,12 +26,24 @@ import {
   refreshWhatsAppPaymentConfiguration,
   setWhatsAppPaymentMode,
 } from '../services/whatsappPaymentConfig.js';
+import {
+  whatsappBusinessProfileBodySchema,
+  whatsappConnectBodySchema,
+  whatsappDisconnectBodySchema,
+  whatsappDisconnectQuerySchema,
+  whatsappPaymentAckBodySchema,
+  whatsappPaymentModeBodySchema,
+  whatsappPaymentQuerySchema,
+  whatsappPaymentRefreshBodySchema,
+  whatsappPhoneParamsSchema,
+} from './whatsapp.schemas.js';
 
 export default async function whatsappRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
   /** Signed state for Meta OAuth redirect (add redirect URI in Meta dashboard). */
-  fastify.get('/oauth/state', auth, async (request) => {
+  app.get('/oauth/state', auth, async (request) => {
     const user = getJwtUser(request);
     const state = fastify.jwt.sign(
       {
@@ -107,17 +121,11 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
    * POST /api/whatsapp/connect
    * After Embedded Signup: code from FB.login + optional IDs from WA_EMBEDDED_SIGNUP postMessage
    */
-  fastify.post('/connect', auth, async (request, reply) => {
-    const body = request.body as {
-      code?: string;
-      redirectUri?: string;
-      wabaId?: string;
-      phoneNumberId?: string;
-      phoneNumber?: string;
-      displayName?: string;
-      businessId?: string;
-      connectionMode?: 'business_api' | 'app_coexistence';
-    };
+  app.post(
+    '/connect',
+    { ...auth, schema: { body: whatsappConnectBodySchema } },
+    async (request, reply) => {
+    const body = request.body;
     const { workspaceId } = getJwtUser(request);
 
     if (!body.code) {
@@ -228,7 +236,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/accounts', auth, async (request) => {
+  app.get('/accounts', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const accounts = await listWhatsAppAccounts(workspaceId);
 
@@ -251,7 +259,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.get('/status', auth, async (request) => {
+  app.get('/status', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const [workspace, accounts] = await Promise.all([
       prisma.workspace.findUnique({
@@ -262,6 +270,37 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     ]);
 
     const connected = accounts.length > 0 || !!workspace?.waNumberId;
+
+    // Some accounts (e.g. connected before this field was backfilled) are missing their
+    // display phone number/name — fetch it live from Meta once and persist it.
+    const needsBackfill = accounts.filter((a) => !a.phoneNumber || !a.displayName);
+    if (needsBackfill.length > 0) {
+      await Promise.all(
+        needsBackfill.map(async (a) => {
+          try {
+            const { accessToken } = await getWorkspaceWhatsAppCredentials(workspaceId, a.phoneNumberId);
+            if (!accessToken) return;
+            const meta = await graphGetPhoneMeta(a.phoneNumberId, accessToken);
+            const displayPhoneNumber =
+              typeof meta.display_phone_number === 'string' ? meta.display_phone_number : null;
+            const verifiedName = typeof meta.verified_name === 'string' ? meta.verified_name : null;
+            if (!displayPhoneNumber && !verifiedName) return;
+
+            await prisma.whatsAppPhoneAccount.update({
+              where: { id: a.id },
+              data: {
+                ...(displayPhoneNumber && !a.phoneNumber ? { phoneNumber: displayPhoneNumber } : {}),
+                ...(verifiedName && !a.displayName ? { displayName: verifiedName } : {}),
+              },
+            });
+            if (displayPhoneNumber && !a.phoneNumber) a.phoneNumber = displayPhoneNumber;
+            if (verifiedName && !a.displayName) a.displayName = verifiedName;
+          } catch (err) {
+            request.log.warn({ err, phoneNumberId: a.phoneNumberId }, 'Could not backfill WhatsApp phone number');
+          }
+        })
+      );
+    }
 
     let webhookSubscription: Awaited<ReturnType<typeof getWebhookSubscriptionStatus>> | null =
       null;
@@ -323,7 +362,7 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
   });
 
   /** Re-run Meta webhook subscribe for the connected WABA (e.g. after tunnel URL change). */
-  fastify.post('/webhooks/subscribe', auth, async (request, reply) => {
+  app.post('/webhooks/subscribe', auth, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
 
     try {
@@ -357,9 +396,12 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/accounts/:phoneNumberId/business-profile', auth, async (request, reply) => {
+  app.get(
+    '/accounts/:phoneNumberId/business-profile',
+    { ...auth, schema: { params: whatsappPhoneParamsSchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { phoneNumberId } = request.params as { phoneNumberId: string };
+    const { phoneNumberId } = request.params;
     if (!phoneNumberId?.trim()) {
       return reply.code(400).send({ error: 'phoneNumberId is required' });
     }
@@ -372,17 +414,13 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/accounts/:phoneNumberId/business-profile', auth, async (request, reply) => {
+  app.post(
+    '/accounts/:phoneNumberId/business-profile',
+    { ...auth, schema: { params: whatsappPhoneParamsSchema, body: whatsappBusinessProfileBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { phoneNumberId } = request.params as { phoneNumberId: string };
-    const body = (request.body || {}) as {
-      about?: string;
-      address?: string;
-      description?: string;
-      email?: string;
-      websites?: string[];
-      vertical?: string;
-    };
+    const { phoneNumberId } = request.params;
+    const body = request.body;
     if (!phoneNumberId?.trim()) {
       return reply.code(400).send({ error: 'phoneNumberId is required' });
     }
@@ -411,9 +449,12 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
    * GET /api/whatsapp/payment-mode
    * Stored payment mode + billingCheckStatus (confirmed|missing|unknown).
    */
-  fastify.get('/payment-mode', auth, async (request, reply) => {
+  app.get(
+    '/payment-mode',
+    { ...auth, schema: { querystring: whatsappPaymentQuerySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { phoneNumberId?: string };
+    const query = request.query;
     try {
       const status = await getWhatsAppPaymentStatus(workspaceId, query.phoneNumberId);
       return status;
@@ -427,13 +468,12 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
    * POST /api/whatsapp/payment-mode
    * Choose Self Pay (platform is Coming soon — rejected).
    */
-  fastify.post('/payment-mode', auth, async (request, reply) => {
+  app.post(
+    '/payment-mode',
+    { ...auth, schema: { body: whatsappPaymentModeBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = (request.body || {}) as {
-      paymentMode?: string;
-      phoneNumberId?: string;
-      businessId?: string;
-    };
+    const body = request.body;
     if (body.paymentMode !== 'self_pay' && body.paymentMode !== 'platform') {
       return reply.code(400).send({ error: 'paymentMode must be self_pay or platform' });
     }
@@ -455,9 +495,12 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
    * POST /api/whatsapp/payment-mode/refresh
    * Re-probe Meta: owner_business_info (BM URL) + primary_funding_id (BSP-gated; #10 → unknown).
    */
-  fastify.post('/payment-mode/refresh', auth, async (request, reply) => {
+  app.post(
+    '/payment-mode/refresh',
+    { ...auth, schema: { body: whatsappPaymentRefreshBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = (request.body || {}) as { phoneNumberId?: string; businessId?: string };
+    const body = request.body;
     try {
       const status = await refreshWhatsAppPaymentConfiguration(
         workspaceId,
@@ -475,9 +518,12 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
    * POST /api/whatsapp/payment-mode/acknowledge
    * User confirms they added a Meta payment method when auto-check is unknown (Tech Provider).
    */
-  fastify.post('/payment-mode/acknowledge', auth, async (request, reply) => {
+  app.post(
+    '/payment-mode/acknowledge',
+    { ...auth, schema: { body: whatsappPaymentAckBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = (request.body || {}) as { phoneNumberId?: string };
+    const body = request.body;
     try {
       const status = await acknowledgeWhatsAppPaymentSetup(workspaceId, body.phoneNumberId);
       return { success: true, ...status };
@@ -487,10 +533,16 @@ export default async function whatsappRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.delete('/disconnect', auth, async (request) => {
+  app.delete(
+    '/disconnect',
+    {
+      ...auth,
+      schema: { querystring: whatsappDisconnectQuerySchema, body: whatsappDisconnectBodySchema },
+    },
+    async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { phoneNumberId?: string };
-    const body = (request.body || {}) as { phoneNumberId?: string };
+    const query = request.query;
+    const body = request.body;
     const phoneNumberId = query.phoneNumberId || body.phoneNumberId;
 
     const cleanup = await purgeWhatsAppPhoneAccountData(workspaceId, {

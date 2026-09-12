@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { planFeatureAuth } from '../middleware/planFeatureAuth.js';
@@ -39,15 +40,28 @@ import {
   updatePostSettings,
 } from '../services/socialListeningPostSetting.service.js';
 import type { SocialListeningPlatform } from '../services/socialCommentSync.service.js';
+import {
+  socialListeningActionBodySchema,
+  socialListeningAutomationQuerySchema,
+  socialListeningCommentParamsSchema,
+  socialListeningCommentsQuerySchema,
+  socialListeningLimitQuerySchema,
+  socialListeningPostParamsSchema,
+  socialListeningRangeQuerySchema,
+  socialListeningRetryDmBodySchema,
+  socialListeningSettingsBodySchema,
+  socialListeningTopPostsQuerySchema,
+} from './socialListening.schemas.js';
 
 function parsePlatform(raw: string | undefined): SocialListeningPlatform | undefined {
   return raw === 'instagram' || raw === 'facebook' ? raw : undefined;
 }
 
 export default async function socialListeningRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = planFeatureAuth('socialListening');
 
-  fastify.get('/settings', auth, async (request) => {
+  app.get('/settings', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const settings = await getOrCreateSocialListeningSettings(workspaceId);
     const skills = await prisma.aiSkill.findMany({
@@ -72,9 +86,12 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.patch('/settings', auth, async (request, reply) => {
+  app.patch(
+    '/settings',
+    { ...auth, schema: { body: socialListeningSettingsBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = (request.body || {}) as Record<string, unknown>;
+    const body = request.body;
     const validated = validateSettingsPatch(body);
     if (!validated.ok) {
       return reply.code(400).send({ error: validated.error });
@@ -100,23 +117,32 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.get('/dashboard/stats', auth, async (request) => {
+  app.get(
+    '/dashboard/stats',
+    { ...auth, schema: { querystring: socialListeningRangeQuerySchema } },
+    async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { range?: string; platform?: string };
+    const query = request.query;
     const range = parseDashboardRange(query.range);
     return getDashboardStats(workspaceId, range, parsePlatform(query.platform));
   });
 
-  fastify.get('/dashboard/intent-breakdown', auth, async (request) => {
+  app.get(
+    '/dashboard/intent-breakdown',
+    { ...auth, schema: { querystring: socialListeningRangeQuerySchema } },
+    async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { range?: string; platform?: string };
+    const query = request.query;
     const range = parseDashboardRange(query.range);
     return getIntentBreakdown(workspaceId, range, parsePlatform(query.platform));
   });
 
-  fastify.get('/dashboard/needs-attention', auth, async (request) => {
+  app.get(
+    '/dashboard/needs-attention',
+    { ...auth, schema: { querystring: socialListeningLimitQuerySchema } },
+    async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { limit?: string; platform?: string };
+    const query = request.query;
     const limit = query.limit ? Number(query.limit) : 25;
     return getNeedsAttention(
       workspaceId,
@@ -125,9 +151,12 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
     );
   });
 
-  fastify.get('/dashboard/activity', auth, async (request) => {
+  app.get(
+    '/dashboard/activity',
+    { ...auth, schema: { querystring: socialListeningLimitQuerySchema } },
+    async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { limit?: string; platform?: string };
+    const query = request.query;
     const limit = query.limit ? Number(query.limit) : 30;
     const events = await listSocialListeningActivity(
       workspaceId,
@@ -137,9 +166,12 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
     return { events };
   });
 
-  fastify.get('/dashboard/top-posts', auth, async (request) => {
+  app.get(
+    '/dashboard/top-posts',
+    { ...auth, schema: { querystring: socialListeningTopPostsQuerySchema } },
+    async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { range?: string; limit?: string; platform?: string };
+    const query = request.query;
     const range = parseDashboardRange(query.range);
     const limit = query.limit ? Number(query.limit) : 8;
     return getTopPosts(
@@ -151,15 +183,18 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
   });
 
   /** Page-level reach/engagement analytics — surfaces the connected Facebook Page's Insights in the Dashboard. */
-  fastify.get('/dashboard/facebook-insights', auth, async (request) => {
+  app.get('/dashboard/facebook-insights', auth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     return getFacebookPageInsightsForWorkspace(workspaceId);
   });
 
   /** Batch: agent on/off + funnel per post (missing = agent off). */
-  fastify.get('/posts/automation', auth, async (request) => {
+  app.get(
+    '/posts/automation',
+    { ...auth, schema: { querystring: socialListeningAutomationQuerySchema } },
+    async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { postIds?: string };
+    const query = request.query;
     const postIds = (query.postIds || '')
       .split(',')
       .map((s) => s.trim())
@@ -168,9 +203,12 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
     return { posts };
   });
 
-  fastify.get('/posts/:postId/settings', auth, async (request, reply) => {
+  app.get(
+    '/posts/:postId/settings',
+    { ...auth, schema: { params: socialListeningPostParamsSchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { postId: rawPostId } = request.params as { postId: string };
+    const { postId: rawPostId } = request.params;
     let postId = rawPostId;
     try {
       postId = decodeURIComponent(rawPostId);
@@ -203,9 +241,12 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.patch('/posts/:postId/settings', auth, async (request, reply) => {
+  app.patch(
+    '/posts/:postId/settings',
+    { ...auth, schema: { params: socialListeningPostParamsSchema, body: socialListeningSettingsBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { postId: rawPostId } = request.params as { postId: string };
+    const { postId: rawPostId } = request.params;
     let postId = rawPostId;
     try {
       postId = decodeURIComponent(rawPostId);
@@ -215,7 +256,7 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
     if (!postId.trim()) {
       return reply.code(400).send({ error: 'postId required' });
     }
-    const body = (request.body || {}) as Record<string, unknown>;
+    const body = request.body;
     const {
       commentAutomationJourneyId: journeyRaw,
       ...settingsBody
@@ -255,9 +296,12 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
   });
 
   /** Review Queue — SocialComment rows with status=new (shared with Post Detail). */
-  fastify.get('/comments', auth, async (request) => {
+  app.get(
+    '/comments',
+    { ...auth, schema: { querystring: socialListeningCommentsQuerySchema } },
+    async (request) => {
     const { workspaceId } = getJwtUser(request);
-    const query = request.query as { status?: string; postId?: string; platform?: string };
+    const query = request.query;
     const platform = parsePlatform(query.platform);
 
     // Hide the page's own comments/replies from the human review queue.
@@ -346,9 +390,12 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
     };
   });
 
-  fastify.post('/comments/:id/classify', auth, async (request, reply) => {
+  app.post(
+    '/comments/:id/classify',
+    { ...auth, schema: { params: socialListeningCommentParamsSchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
+    const { id } = request.params;
 
     try {
       const result = await classifySocialCommentById(workspaceId, id);
@@ -371,22 +418,13 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.post('/comments/:id/action', auth, async (request, reply) => {
+  app.post(
+    '/comments/:id/action',
+    { ...auth, schema: { params: socialListeningCommentParamsSchema, body: socialListeningActionBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
-    const body = (request.body || {}) as {
-      action?:
-        | 'approve_dm'
-        | 'approve_reply'
-        | 'escalate'
-        | 'ignore'
-        | 'review'
-        | 'hide_comment'
-        | 'delete_comment';
-      message?: string;
-      instagramUserId?: string;
-      hidden?: boolean;
-    };
+    const { id } = request.params;
+    const body = request.body;
 
     const row = await prisma.socialComment.findFirst({
       where: { id, workspaceId },
@@ -497,10 +535,13 @@ export default async function socialListeningRoutes(fastify: FastifyInstance) {
   });
 
   /** Retry Private Reply DM only (public reply already sent). */
-  fastify.post('/comments/:id/retry-dm', auth, async (request, reply) => {
+  app.post(
+    '/comments/:id/retry-dm',
+    { ...auth, schema: { params: socialListeningCommentParamsSchema, body: socialListeningRetryDmBodySchema } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const { id } = request.params as { id: string };
-    const body = (request.body || {}) as { instagramUserId?: string };
+    const { id } = request.params;
+    const body = request.body;
 
     try {
       const result = await retryPrivateReplyDm({

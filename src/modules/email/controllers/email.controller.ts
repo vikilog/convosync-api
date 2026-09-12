@@ -3,19 +3,17 @@ import { getJwtUser } from '../../../middleware/auth.js';
 import { prisma } from '../../../lib/prisma.js';
 import { getRedis } from '../../../lib/redis.js';
 import type { EmailContainer } from '../container.js';
-import {
-  createDomainSchema,
-  createProviderSchema,
-  createSenderSchema,
-  setDefaultSenderSchema,
-  listLogsSchema,
-  sendEmailSchema,
-  sesCredentialsDraftSchema,
-  updateProviderSchema,
-  upsertEmailTemplateSchema,
-  updateEmailTemplateSchema,
-  aiGenerateEmailTemplateSchema,
-  verifyDomainSchema,
+import type {
+  CreateDomainDto,
+  CreateProviderDto,
+  CreateSenderDto,
+  ListLogsDto,
+  SendEmailDto,
+  SesCredentialsDraftDto,
+  UpdateEmailTemplateDto,
+  UpdateProviderDto,
+  UpsertEmailTemplateDto,
+  VerifyDomainDto,
 } from '../dto/email.dto.js';
 
 export class EmailController {
@@ -57,7 +55,7 @@ export class EmailController {
 
   createDomain = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = createDomainSchema.parse(request.body);
+    const body = request.body as CreateDomainDto;
     try {
       const domain = await this.container.domainService.addDomain(workspaceId, body);
       return reply.code(201).send(domain);
@@ -70,7 +68,7 @@ export class EmailController {
 
   verifyDomain = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = verifyDomainSchema.parse(request.body);
+    const body = request.body as VerifyDomainDto;
     try {
       const domain = await this.container.domainService.verifyDomain(workspaceId, body.domainId);
       return domain;
@@ -100,14 +98,9 @@ export class EmailController {
 
   createSender = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const parsed = createSenderSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: parsed.error.issues[0]?.message ?? 'Invalid sender request',
-      });
-    }
+    const body = request.body as CreateSenderDto;
     try {
-      const sender = await this.container.senderService.createSender(workspaceId, parsed.data);
+      const sender = await this.container.senderService.createSender(workspaceId, body);
       return reply.code(201).send(sender);
     } catch (err) {
       return reply.code(400).send({
@@ -118,17 +111,9 @@ export class EmailController {
 
   setDefaultSender = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const parsed = setDefaultSenderSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: parsed.error.issues[0]?.message ?? 'Invalid default sender request',
-      });
-    }
+    const body = request.body as { email: string };
     try {
-      return await this.container.senderService.setDefaultSender(
-        workspaceId,
-        parsed.data.email
-      );
+      return await this.container.senderService.setDefaultSender(workspaceId, body.email);
     } catch (err) {
       return reply.code(400).send({
         error: err instanceof Error ? err.message : 'Failed to set default sender',
@@ -138,13 +123,7 @@ export class EmailController {
 
   sendEmail = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const parsed = sendEmailSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: parsed.error.issues[0]?.message ?? 'Invalid send request',
-      });
-    }
-    const body = parsed.data;
+    const body = request.body as SendEmailDto;
     if (!body.templateId && !body.html && !body.text && !body.template) {
       return reply.code(400).send({ error: 'Provide html, text, template, or templateId' });
     }
@@ -160,7 +139,7 @@ export class EmailController {
 
   listLogs = async (request: FastifyRequest) => {
     const { workspaceId } = getJwtUser(request);
-    const query = listLogsSchema.parse(request.query ?? {});
+    const query = request.query as ListLogsDto;
     return this.container.emailService.listLogs(workspaceId, query.limit);
   };
 
@@ -171,17 +150,9 @@ export class EmailController {
 
   createProvider = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const parsed = createProviderSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: parsed.error.issues[0]?.message ?? 'Invalid provider request',
-      });
-    }
+    const body = request.body as CreateProviderDto;
     try {
-      const provider = await this.container.providerConfigService.createProvider(
-        workspaceId,
-        parsed.data
-      );
+      const provider = await this.container.providerConfigService.createProvider(workspaceId, body);
       return reply.code(201).send(provider);
     } catch (err) {
       return reply.code(400).send({
@@ -193,18 +164,9 @@ export class EmailController {
   updateProvider = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const parsed = updateProviderSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: parsed.error.issues[0]?.message ?? 'Invalid provider update',
-      });
-    }
+    const body = request.body as UpdateProviderDto;
     try {
-      return await this.container.providerConfigService.updateProvider(
-        workspaceId,
-        id,
-        parsed.data
-      );
+      return await this.container.providerConfigService.updateProvider(workspaceId, id, body);
     } catch (err) {
       return reply.code(400).send({
         error: err instanceof Error ? err.message : 'Failed to update provider',
@@ -251,15 +213,10 @@ export class EmailController {
 
   refreshSesIdentitiesPreview = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const parsed = sesCredentialsDraftSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: parsed.error.issues[0]?.message ?? 'Invalid SES credentials',
-      });
-    }
+    const draft = request.body as SesCredentialsDraftDto;
     try {
       return await this.container.providerConfigService.refreshSesIdentities(workspaceId, {
-        draft: parsed.data,
+        draft,
       });
     } catch (err) {
       return reply.code(400).send({
@@ -271,16 +228,11 @@ export class EmailController {
   refreshSesIdentities = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const parsed = sesCredentialsDraftSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: parsed.error.issues[0]?.message ?? 'Invalid SES credentials',
-      });
-    }
+    const draft = request.body as SesCredentialsDraftDto;
     try {
       return await this.container.providerConfigService.refreshSesIdentities(workspaceId, {
         providerId: id,
-        draft: parsed.data,
+        draft,
       });
     } catch (err) {
       return reply.code(400).send({
@@ -307,18 +259,13 @@ export class EmailController {
 
   testSesSendPreview = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const parsed = sesCredentialsDraftSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: parsed.error.issues[0]?.message ?? 'Invalid SES credentials',
-      });
-    }
+    const draft = request.body as SesCredentialsDraftDto;
     const to = await this.adminTestRecipient(request, reply);
     if (!to) return;
     try {
       const result = await this.container.providerConfigService.testSesSend(workspaceId, {
         to,
-        draft: parsed.data,
+        draft,
       });
       if (!result.ok) return reply.code(400).send(result);
       return result;
@@ -332,19 +279,14 @@ export class EmailController {
   testSesSend = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const parsed = sesCredentialsDraftSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: parsed.error.issues[0]?.message ?? 'Invalid SES credentials',
-      });
-    }
+    const draft = request.body as SesCredentialsDraftDto;
     const to = await this.adminTestRecipient(request, reply);
     if (!to) return;
     try {
       const result = await this.container.providerConfigService.testSesSend(workspaceId, {
         to,
         providerId: id,
-        draft: parsed.data,
+        draft,
       });
       if (!result.ok) return reply.code(400).send(result);
       return result;
@@ -370,14 +312,9 @@ export class EmailController {
 
   createEmailTemplate = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const parsed = upsertEmailTemplateSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: parsed.error.issues[0]?.message ?? 'Invalid template request',
-      });
-    }
+    const body = request.body as UpsertEmailTemplateDto;
     try {
-      const row = await this.container.templateService.createTemplate(workspaceId, parsed.data);
+      const row = await this.container.templateService.createTemplate(workspaceId, body);
       return reply.code(201).send(row);
     } catch (err) {
       return reply.code(400).send({
@@ -389,14 +326,9 @@ export class EmailController {
   updateEmailTemplate = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const parsed = updateEmailTemplateSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: parsed.error.issues[0]?.message ?? 'Invalid template update',
-      });
-    }
+    const body = request.body as UpdateEmailTemplateDto;
     try {
-      return await this.container.templateService.updateTemplate(workspaceId, id, parsed.data);
+      return await this.container.templateService.updateTemplate(workspaceId, id, body);
     } catch (err) {
       return reply.code(400).send({
         error: err instanceof Error ? err.message : 'Failed to update template',
@@ -418,12 +350,7 @@ export class EmailController {
   };
 
   aiGenerateEmailTemplate = async (request: FastifyRequest, reply: FastifyReply) => {
-    const parsed = aiGenerateEmailTemplateSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: parsed.error.issues[0]?.message ?? 'Invalid AI request',
-      });
-    }
+    const { prompt } = request.body as { prompt: string };
     const { workspaceId } = getJwtUser(request);
     // Reachable directly via the API regardless of whether the "Generate
     // with AI" UI is currently wired up — cap it per workspace so a script
@@ -441,7 +368,7 @@ export class EmailController {
       });
     }
     try {
-      return await this.container.templateService.generateWithAi(parsed.data.prompt);
+      return await this.container.templateService.generateWithAi(prompt);
     } catch (err) {
       return reply.code(400).send({
         error: err instanceof Error ? err.message : 'AI generation failed',

@@ -1,13 +1,17 @@
 import { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { config } from '../config.js';
 import { purgeMetaUserChannelData } from '../services/metaDeauth.service.js';
 import { parseMetaSignedRequest } from '../utils/metaSignedRequest.js';
+import { metaDataDeletionStatusQuerySchema } from './meta.schemas.js';
 
 type MetaCallbackBody = {
   signed_request?: string;
 };
 
 export default async function metaRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+
   /** Meta App Dashboard → Deauthorize callback URL */
   fastify.post('/deauthorize', async (request, reply) => {
     const body = (request.body || {}) as MetaCallbackBody;
@@ -73,8 +77,11 @@ export default async function metaRoutes(fastify: FastifyInstance) {
     });
   });
 
-  fastify.get('/data-deletion/status', async (request) => {
-    const code = (request.query as { code?: string }).code;
+  app.get(
+    '/data-deletion/status',
+    { schema: { querystring: metaDataDeletionStatusQuerySchema } },
+    async (request) => {
+    const code = request.query.code;
     return {
       status: 'completed',
       confirmation_code: code ?? null,

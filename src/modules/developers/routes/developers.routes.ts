@@ -1,31 +1,56 @@
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { prisma } from '../../../index.js';
 import { planFeatureAuth } from '../../../middleware/planFeatureAuth.js';
 import { DevelopersController, IncomingWebhookController } from '../controllers/developers.controller.js';
 import { initDevelopersModule } from '../container.js';
+import {
+  createOutgoingWebhookSchema,
+  updateIncomingWebhookSchema,
+  updateOutgoingWebhookSchema,
+  upsertActionSchema,
+  webhookLogsQuerySchema,
+} from '../developers.schemas.js';
 
 export default async function developersRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const container = initDevelopersModule(prisma);
   const controller = new DevelopersController(container);
   const incoming = new IncomingWebhookController(container);
   const auth = planFeatureAuth('developers');
 
   // Public incoming webhook endpoint (secret via header)
-  fastify.post('/incoming/:slug', incoming.receive);
+  app.post('/incoming/:slug', incoming.receive);
 
   // Authenticated developer console APIs
-  fastify.get('/webhooks/incoming', auth, controller.getIncomingWebhook);
-  fastify.put('/webhooks/incoming', auth, controller.updateIncomingWebhook);
-  fastify.get('/webhooks/outgoing', auth, controller.listOutgoingWebhooks);
-  fastify.post('/webhooks/outgoing', auth, controller.createOutgoingWebhook);
-  fastify.put('/webhooks/outgoing/:id', auth, controller.updateOutgoingWebhook);
-  fastify.delete('/webhooks/outgoing/:id', auth, controller.deleteOutgoingWebhook);
-  fastify.get('/webhooks/logs', auth, controller.listWebhookLogs);
+  app.get('/webhooks/incoming', auth, controller.getIncomingWebhook);
+  app.put(
+    '/webhooks/incoming',
+    { ...auth, schema: { body: updateIncomingWebhookSchema } },
+    controller.updateIncomingWebhook
+  );
+  app.get('/webhooks/outgoing', auth, controller.listOutgoingWebhooks);
+  app.post(
+    '/webhooks/outgoing',
+    { ...auth, schema: { body: createOutgoingWebhookSchema } },
+    controller.createOutgoingWebhook
+  );
+  app.put(
+    '/webhooks/outgoing/:id',
+    { ...auth, schema: { body: updateOutgoingWebhookSchema } },
+    controller.updateOutgoingWebhook
+  );
+  app.delete('/webhooks/outgoing/:id', auth, controller.deleteOutgoingWebhook);
+  app.get(
+    '/webhooks/logs',
+    { ...auth, schema: { querystring: webhookLogsQuerySchema } },
+    controller.listWebhookLogs
+  );
 
-  fastify.get('/actions', auth, controller.listActions);
-  fastify.put('/actions', auth, controller.upsertAction);
+  app.get('/actions', auth, controller.listActions);
+  app.put('/actions', { ...auth, schema: { body: upsertActionSchema } }, controller.upsertAction);
 
-  fastify.get('/ai-sync', auth, controller.getAiSyncDashboard);
-  fastify.get('/ai-sync/events', auth, controller.listAiSyncEvents);
-  fastify.post('/ai-sync/rebuild', auth, controller.rebuildKnowledge);
+  app.get('/ai-sync', auth, controller.getAiSyncDashboard);
+  app.get('/ai-sync/events', auth, controller.listAiSyncEvents);
+  app.post('/ai-sync/rebuild', auth, controller.rebuildKnowledge);
 }

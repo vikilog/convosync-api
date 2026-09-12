@@ -1,9 +1,14 @@
 import multipart from '@fastify/multipart';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { z } from 'zod';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { prisma } from '../index.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
+import {
+  mediaGalleryScopeSchema,
+  mediaGalleryTypeSchema,
+  mediaGalleryUpdateSchema,
+} from './media-gallery.schemas.js';
 import {
   MEDIA_MAX_BYTES,
   MEDIA_MAX_BYTES_CEILING,
@@ -30,21 +35,6 @@ import {
   storageLimitBytesFromPlan,
 } from '../services/planUsageGuards.js';
 import { contentDisposition } from '../utils/contentDisposition.js';
-
-const SCOPE = z.enum(['customer', 'partner', 'both']);
-const TYPE = z.enum(['image', 'pdf', 'video', 'audio', 'document']);
-
-const updateSchema = z.object({
-  title: z.string().min(1).max(200).optional(),
-  description: z.string().max(8000).optional(),
-  tags: z.array(z.string().max(40)).max(30).optional(),
-  scope: SCOPE.optional(),
-  usage: z.array(z.string().min(1).max(40)).min(1).max(20).optional(),
-  type: TYPE.optional(),
-  isActive: z.boolean().optional(),
-  filename: z.string().min(1).max(255).optional(),
-  url: z.string().url().optional(),
-});
 
 const ALLOWED_MIME_PREFIXES = ['image/', 'video/', 'audio/'];
 const ALLOWED_MIME_EXACT = new Set([
@@ -191,6 +181,7 @@ async function safeParseCreateMultipart(
 
 /** Top-level Media Gallery — workspace-scoped (tenant = workspaceId). */
 export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
   const galleryAuth = { onRequest: auth.onRequest, preHandler: guardMediaGallery };
 
@@ -359,7 +350,7 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
         throw err;
       }
 
-      const scopeParsed = SCOPE.safeParse(parsed.scope || 'customer');
+      const scopeParsed = mediaGalleryScopeSchema.safeParse(parsed.scope || 'customer');
       if (!scopeParsed.success) {
         return reply.code(400).send({ error: 'Invalid scope' });
       }
@@ -379,11 +370,11 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
         // `type: 'document'` on an actual video/mp4 upload) previously
         // passed straight through uncorrected.
         type = validation.type;
-      } else if (!TYPE.safeParse(type).success) {
+      } else if (!mediaGalleryTypeSchema.safeParse(type).success) {
         type = 'document';
       }
 
-      const typeParsed = TYPE.parse(type);
+      const typeParsed = mediaGalleryTypeSchema.parse(type);
 
       const created = await prisma.mediaAsset.create({
         data: {
@@ -445,7 +436,12 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
     }
   });
 
-  fastify.patch('/:mediaId', galleryAuth, async (request, reply) => {
+  // ponytail: same path is JSON (Activate) or multipart (file replace). Optional
+  // body lets multipart through (no JSON); split by content-type if Fastify starts rejecting form posts.
+  app.patch(
+    '/:mediaId',
+    { ...galleryAuth, schema: { body: mediaGalleryUpdateSchema.optional() } },
+    async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { mediaId } = request.params as { mediaId: string };
     const existing = await prisma.mediaAsset.findFirst({
@@ -464,7 +460,7 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
       if (parsed.description.trim()) data.description = parsed.description.trim();
       data.tags = parsed.tags;
       data.usage = parsed.usage.length ? parsed.usage : ['agent'];
-      const scopeParsed = SCOPE.safeParse(parsed.scope || 'customer');
+      const scopeParsed = mediaGalleryScopeSchema.safeParse(parsed.scope || 'customer');
       if (scopeParsed.success) data.scope = scopeParsed.data;
 
       let replacedOldStorageKey: string | null = null;
@@ -529,7 +525,7 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
             data.url = url;
             data.mimeType = mimeType;
             data.filename = filename;
-            data.type = TYPE.parse(type);
+            data.type = mediaGalleryTypeSchema.parse(type);
           } catch (err) {
             if (err instanceof MediaStorageError) {
               return reply.code(503).send({ error: err.message, code: err.code });
@@ -566,12 +562,13 @@ export default async function mediaGalleryRoutes(fastify: FastifyInstance) {
       }
     }
 
-    const body = updateSchema.parse(request.body ?? {});
+    const body = request.body ?? {};
     return prisma.mediaAsset.update({
       where: { id: mediaId },
       data: body,
     });
-  });
+  }
+  );
 
   /** Hard-delete: remove DB row + S3 object */
   fastify.delete('/:mediaId', galleryAuth, async (request, reply) => {

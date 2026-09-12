@@ -3,6 +3,7 @@
  * agent's selected providers (Cartesia / Deepgram / OpenAI), same as live calls.
  */
 import { config } from '../config.js';
+import { internalAuthHeaders } from '../lib/internalAuth.js';
 
 export class PreviewSttError extends Error {
   constructor(
@@ -24,11 +25,15 @@ function voiceAgentBase(): string {
 }
 
 function internalHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {};
-  if (config.voiceAgent.internalSecret) {
-    headers['X-ConvoSync-Internal'] = config.voiceAgent.internalSecret;
+  try {
+    return internalAuthHeaders(config.voiceAgent.internalSecret);
+  } catch {
+    throw new PreviewSttError(
+      'CONVOSYNC_INTERNAL_SECRET is not configured',
+      503,
+      'internal_auth_unconfigured'
+    );
   }
-  return headers;
 }
 
 async function readErrorDetail(res: Response): Promise<string> {

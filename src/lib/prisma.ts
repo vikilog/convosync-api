@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { applyPrismaExtensions } from './prismaTenant.js';
 import {
   queryLogEnabled,
   recordPrismaQuery,
@@ -68,7 +69,8 @@ function createPrismaClient(): PrismaClient {
     });
   }
 
-  return client;
+  // ponytail: $extends client is not assignable to PrismaClient; runtime is extended, types stay PrismaClient.
+  return applyPrismaExtensions(client) as unknown as PrismaClient;
 }
 
 function countParamsRedacted(params: string): number {

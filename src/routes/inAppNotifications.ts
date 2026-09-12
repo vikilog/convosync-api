@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { z } from 'zod';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { prisma } from '../lib/prisma.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
@@ -9,6 +9,10 @@ import {
   normalizeActivityRole,
 } from '../services/notifications/activityScope.js';
 import { resolveMembershipRole } from '../services/workspaceMemberAdmin.js';
+import {
+  inAppNotificationActivityQuerySchema,
+  inAppNotificationListQuerySchema,
+} from './inAppNotifications.schemas.js';
 
 function serializeNotification(
   row: {
@@ -49,17 +53,15 @@ function serializeNotification(
 }
 
 export default async function inAppNotificationRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = companyAuth;
 
-  fastify.get('/', { onRequest: auth.onRequest }, async (request) => {
+  app.get(
+    '/',
+    { onRequest: auth.onRequest, schema: { querystring: inAppNotificationListQuerySchema } },
+    async (request) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const q = z
-      .object({
-        category: z.string().optional(),
-        limit: z.coerce.number().int().min(1).max(100).optional(),
-        cursor: z.string().optional(),
-      })
-      .parse(request.query);
+    const q = request.query;
 
     const limit = q.limit ?? 40;
     // Bell inbox: only alert-worthy rows (activity feed has its own endpoint).
@@ -86,7 +88,7 @@ export default async function inAppNotificationRoutes(fastify: FastifyInstance) 
     };
   });
 
-  fastify.get('/unread-count', { onRequest: auth.onRequest }, async (request) => {
+  app.get('/unread-count', { onRequest: auth.onRequest }, async (request) => {
     const { workspaceId, userId } = getJwtUser(request);
     const bellWhere = { workspaceId, forBell: true };
     const total = await prisma.workspaceNotification.count({ where: bellWhere });
@@ -97,13 +99,12 @@ export default async function inAppNotificationRoutes(fastify: FastifyInstance) 
   });
 
   /** Role-scoped running log for dashboard Recent Activity. */
-  fastify.get('/activity', { onRequest: auth.onRequest }, async (request) => {
+  app.get(
+    '/activity',
+    { onRequest: auth.onRequest, schema: { querystring: inAppNotificationActivityQuerySchema } },
+    async (request) => {
     const { workspaceId, userId } = getJwtUser(request);
-    const q = z
-      .object({
-        limit: z.coerce.number().int().min(1).max(50).optional(),
-      })
-      .parse(request.query);
+    const q = request.query;
 
     const role = normalizeActivityRole(await resolveMembershipRole(userId, workspaceId));
     const where = activityWhereForRole({ workspaceId, userId, role });
@@ -120,7 +121,7 @@ export default async function inAppNotificationRoutes(fastify: FastifyInstance) 
     };
   });
 
-  fastify.post('/:id/read', { onRequest: auth.onRequest }, async (request, reply) => {
+  app.post('/:id/read', { onRequest: auth.onRequest }, async (request, reply) => {
     const { workspaceId, userId } = getJwtUser(request);
     const { id } = request.params as { id: string };
 
@@ -139,7 +140,7 @@ export default async function inAppNotificationRoutes(fastify: FastifyInstance) 
     return { ok: true };
   });
 
-  fastify.post('/read-all', { onRequest: auth.onRequest }, async (request) => {
+  app.post('/read-all', { onRequest: auth.onRequest }, async (request) => {
     const { workspaceId, userId } = getJwtUser(request);
 
     const unread = await prisma.workspaceNotification.findMany({

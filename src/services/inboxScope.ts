@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { prisma } from '../index.js';
+import { prisma } from '../lib/prisma.js';
 import type { WorkspaceMemberRole } from './workspaceMemberAdmin.js';
 
 export type InboxChannel = 'whatsapp' | 'instagram' | 'messenger' | 'email';

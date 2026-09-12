@@ -76,6 +76,15 @@ export function isTelegramSource(source: string | null | undefined): boolean {
 
 export type ContactChannelFilter = 'whatsapp' | 'instagram' | 'messenger' | 'telegram';
 
+export function isContactChannelFilter(value: string | undefined): value is ContactChannelFilter {
+  return (
+    value === 'whatsapp' ||
+    value === 'instagram' ||
+    value === 'messenger' ||
+    value === 'telegram'
+  );
+}
+
 /** Channel implied by how the contact's `phone` identity column is encoded. */
 export function resolveContactChannel(contact: { phone: string }): ContactChannelFilter {
   if (isInstagramPhone(contact.phone)) return 'instagram';

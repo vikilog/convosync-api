@@ -1,11 +1,8 @@
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { authenticatePlatformAdmin } from '../../middleware/platformAuth.js';
-import {
-  listPlatformAuditLogs,
-  type PlatformAuditCategory,
-  type PlatformAuditSeverity,
-} from '../../services/platformAudit.js';
+import { listPlatformAuditLogs } from '../../services/platformAudit.js';
 
 const categorySchema = z.enum([
   'auth',
@@ -18,28 +15,29 @@ const categorySchema = z.enum([
 
 const severitySchema = z.enum(['info', 'warning', 'danger']);
 
-export default async function platformAuditLogRoutes(fastify: FastifyInstance) {
-  fastify.addHook('preHandler', authenticatePlatformAdmin);
+const listQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(50),
+  category: categorySchema.optional(),
+  severity: severitySchema.optional(),
+  action: z.string().trim().min(1).optional(),
+  search: z.string().optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+});
 
-  fastify.get('/', async (request) => {
-    const query = z
-      .object({
-        page: z.coerce.number().int().min(1).default(1),
-        pageSize: z.coerce.number().int().min(1).max(100).default(50),
-        category: categorySchema.optional(),
-        severity: severitySchema.optional(),
-        action: z.string().trim().min(1).optional(),
-        search: z.string().optional(),
-        from: z.string().datetime().optional(),
-        to: z.string().datetime().optional(),
-      })
-      .parse(request.query);
+export default async function platformAuditLogRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+  app.addHook('preHandler', authenticatePlatformAdmin);
+
+  app.get('/', { schema: { querystring: listQuerySchema } }, async (request) => {
+    const query = request.query;
 
     return listPlatformAuditLogs({
       page: query.page,
       pageSize: query.pageSize,
-      category: query.category as PlatformAuditCategory | undefined,
-      severity: query.severity as PlatformAuditSeverity | undefined,
+      category: query.category,
+      severity: query.severity,
       action: query.action,
       search: query.search,
       from: query.from ? new Date(query.from) : undefined,

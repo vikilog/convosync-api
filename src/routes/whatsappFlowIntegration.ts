@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { prisma } from '../lib/prisma.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
 import { getJwtUser } from '../middleware/auth.js';
@@ -10,7 +11,9 @@ import { getJwtUser } from '../middleware/auth.js';
  * up in the existing Platform Admin support-requests panel).
  */
 export default async function whatsappFlowIntegrationRoutes(fastify: FastifyInstance) {
-  fastify.get('/', { onRequest: companyAuth.onRequest }, async (request, reply) => {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  app.get('/', { onRequest: companyAuth.onRequest }, async (request, reply) => {
     const user = getJwtUser(request);
     if (!user.workspaceId) return reply.code(401).send({ error: 'Unauthorized' });
 
@@ -26,7 +29,7 @@ export default async function whatsappFlowIntegrationRoutes(fastify: FastifyInst
     };
   });
 
-  fastify.post('/request-access', { onRequest: companyAuth.onRequest }, async (request, reply) => {
+  app.post('/request-access', { onRequest: companyAuth.onRequest }, async (request, reply) => {
     const user = getJwtUser(request);
     if (!user.workspaceId || !user.userId) return reply.code(401).send({ error: 'Unauthorized' });
 

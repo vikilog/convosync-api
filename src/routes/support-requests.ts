@@ -1,31 +1,13 @@
 import { FastifyInstance } from 'fastify';
-import { z } from 'zod';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { prisma } from '../lib/prisma.js';
-
-const createSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  email: z.string().trim().email().max(254),
-  phone: z
-    .string()
-    .trim()
-    .max(40)
-    .optional()
-    .nullable()
-    .transform((v) => (v && v.length > 0 ? v : null)),
-  subject: z
-    .string()
-    .trim()
-    .max(160)
-    .optional()
-    .nullable()
-    .transform((v) => (v && v.length > 0 ? v : null)),
-  message: z.string().trim().min(1).max(2000),
-  source: z.string().trim().max(40).optional().default('landing'),
-});
+import { supportRequestCreateSchema } from './support-requests.schemas.js';
 
 export default async function supportRequestRoutes(fastify: FastifyInstance) {
-  fastify.post('/', async (request, reply) => {
-    const body = createSchema.parse(request.body ?? {});
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  app.post('/', { schema: { body: supportRequestCreateSchema } }, async (request, reply) => {
+    const body = request.body;
 
     const row = await prisma.supportRequest.create({
       data: {

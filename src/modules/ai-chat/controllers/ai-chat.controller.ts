@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { getJwtUser } from '../../../middleware/auth.js';
 import type { AiChatContainer } from '../container.js';
-import { aiChatMessageSchema } from '../dto/ai-chat.dto.js';
+import type { AiChatMessageDto } from '../dto/ai-chat.dto.js';
 import { AiChatError } from '../services/ai-chat.service.js';
 
 export class AiChatController {
@@ -9,7 +9,7 @@ export class AiChatController {
 
   chat = async (request: FastifyRequest, reply: FastifyReply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = aiChatMessageSchema.parse(request.body);
+    const body = request.body as AiChatMessageDto;
 
     try {
       const result = await this.c.aiChatService.chat(workspaceId, body);

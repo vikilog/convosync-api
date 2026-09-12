@@ -1,8 +1,9 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
+import { createSchema, sendTestSchema, updateSchema } from './whatsappFlows.schemas.js';
 import { prisma } from '../lib/prisma.js';
 import { getJwtUser } from '../middleware/auth.js';
 import { companyAuth } from '../middleware/workspaceScope.js';
@@ -43,27 +44,6 @@ const flowAuth = {
   preHandler: requireWhatsAppFlowsEnabled,
 };
 
-// Light structural check, not full Meta Flow JSON schema validation — MVP guard
-// against obviously malformed JSON, not a spec-compliance validator.
-const flowJsonSchema = z
-  .object({
-    version: z.string().min(1),
-    screens: z.array(z.record(z.string(), z.unknown())).min(1),
-  })
-  .passthrough();
-
-const createSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  flowJson: flowJsonSchema,
-  categories: z.array(z.string()).optional().default([]),
-});
-
-const updateSchema = z.object({
-  name: z.string().trim().min(1).max(120).optional(),
-  flowJson: flowJsonSchema.optional(),
-  categories: z.array(z.string()).optional(),
-});
-
 function serialize(row: {
   id: string;
   name: string;
@@ -87,6 +67,8 @@ function serialize(row: {
 }
 
 export default async function whatsappFlowRoutes(fastify: FastifyInstance) {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+
   fastify.get('/', flowAuth, async (request) => {
     const { workspaceId } = getJwtUser(request);
     const rows = await prisma.whatsAppFlow.findMany({
@@ -104,9 +86,9 @@ export default async function whatsappFlowRoutes(fastify: FastifyInstance) {
     return { item: serialize(row) };
   });
 
-  fastify.post('/', flowAuth, async (request, reply) => {
+  app.post('/', { ...flowAuth, schema: { body: createSchema } }, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
-    const body = createSchema.parse(request.body ?? {});
+    const body = request.body;
 
     const existing = await prisma.whatsAppFlow.findFirst({
       where: { workspaceId, name: body.name },
@@ -127,10 +109,10 @@ export default async function whatsappFlowRoutes(fastify: FastifyInstance) {
     return reply.code(201).send({ item: serialize(row) });
   });
 
-  fastify.put('/:id', flowAuth, async (request, reply) => {
+  app.put('/:id', { ...flowAuth, schema: { body: updateSchema } }, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const body = updateSchema.parse(request.body ?? {});
+    const body = request.body;
 
     const existing = await prisma.whatsAppFlow.findFirst({ where: { id, workspaceId } });
     if (!existing) return reply.code(404).send({ error: 'Flow not found' });
@@ -244,16 +226,10 @@ export default async function whatsappFlowRoutes(fastify: FastifyInstance) {
 
   // Sends the published flow to one phone number outside of any journey/template —
   // for trying it out, not persisted to the inbox as a conversation message.
-  fastify.post('/:id/send-test', flowAuth, async (request, reply) => {
+  app.post('/:id/send-test', { ...flowAuth, schema: { body: sendTestSchema } }, async (request, reply) => {
     const { workspaceId } = getJwtUser(request);
     const { id } = request.params as { id: string };
-    const body = z
-      .object({
-        phone: z.string().trim().min(6),
-        bodyText: z.string().trim().min(1).max(1024).optional(),
-        ctaLabel: z.string().trim().min(1).max(30).optional(),
-      })
-      .parse(request.body ?? {});
+    const body = request.body;
 
     const flow = await prisma.whatsAppFlow.findFirst({ where: { id, workspaceId } });
     if (!flow) return reply.code(404).send({ error: 'Flow not found' });

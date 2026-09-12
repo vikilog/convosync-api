@@ -12,7 +12,8 @@ import { fileURLToPath } from 'node:url';
 const dir = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(dir, 'userSecurity.ts'), 'utf8');
 const authMw = readFileSync(join(dir, '../middleware/auth.ts'), 'utf8');
-const authRoutes = readFileSync(join(dir, '../routes/auth.ts'), 'utf8');
+const authRoutes = readFileSync(join(dir, '../modules/identity/auth.routes.ts'), 'utf8');
+const identityRepo = readFileSync(join(dir, '../modules/identity/identity.repository.ts'), 'utf8');
 const schema = readFileSync(join(dir, '../prisma/schema.prisma'), 'utf8');
 
 assert.match(src, /blacklist:jti:/);
@@ -28,8 +29,10 @@ assert.match(authMw, /fail-open|isJtiBlacklisted/);
 
 assert.match(authRoutes, /\/logout/);
 assert.match(authRoutes, /\/logout-all/);
-assert.match(authRoutes, /securityState:\s*\{\s*create:/);
 assert.match(authRoutes, /signSessionToken/);
+assert.match(identityRepo, /securityState:\s*\{\s*create:/);
+assert.match(identityRepo, /tokenVersion: 0/);
+assert.match(identityRepo, /updatedReason: 'signup'/);
 
 assert.match(schema, /model UserSecurityState/);
 assert.match(schema, /tokenVersion/);

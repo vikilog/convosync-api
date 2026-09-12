@@ -5,6 +5,8 @@ import {
   isInstagramSource,
   isMessengerPhone,
   isMessengerSource,
+  isTelegramPhone,
+  isTelegramSource,
   type ContactChannelFilter,
 } from '../lib/channelContact.js';
 import { getContactAudits } from './contact-audit.service.js';
@@ -19,6 +21,7 @@ export function channelForContact(contact: {
 }): ContactChannel {
   if (isInstagramPhone(contact.phone) || isInstagramSource(contact.source)) return 'instagram';
   if (isMessengerPhone(contact.phone) || isMessengerSource(contact.source)) return 'messenger';
+  if (isTelegramPhone(contact.phone) || isTelegramSource(contact.source)) return 'telegram';
   return 'whatsapp';
 }
 

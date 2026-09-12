@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
-import { prisma } from '../index.js';
+import { invalidateWorkspaceAccessCache } from '../lib/workspaceAccessCache.js';
+import { prisma } from '../lib/prisma.js';
 import { config } from '../config.js';
 import { isSuperAdminWorkspace } from './superAdminWorkspace.js';
 import {
@@ -541,5 +542,6 @@ export async function removeWorkspaceMember(input: {
   }
 
   await prisma.workspaceMembership.delete({ where: { id: membership.id } });
+  await invalidateWorkspaceAccessCache(membership.userId, input.workspaceId);
   return { success: true };
 }
