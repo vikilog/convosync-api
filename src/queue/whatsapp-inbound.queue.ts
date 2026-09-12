@@ -35,17 +35,27 @@ export function getWhatsAppInboundQueue(): Queue<WhatsAppInboundJobData> {
   return queue;
 }
 
-/** Stable BullMQ jobId (no `:`). Coalesces Meta retries of the same delivery. */
+/**
+ * Stable BullMQ jobId (no `:`). Coalesces Meta retries of the same delivery.
+ * Status webhooks reuse one wamid for sent → delivered → read — include status
+ * (+ timestamp) so later receipts still enqueue after the first completes.
+ */
 export function whatsappInboundJobId(body: WhatsAppInboundWebhookBody): string {
   const entry = body?.entry?.[0];
   const change = entry?.changes?.[0];
   const value = (change?.value ?? {}) as Record<string, unknown>;
   const messages = value.messages as Array<{ id?: string }> | undefined;
-  const statuses = value.statuses as Array<{ id?: string }> | undefined;
+  const statuses = value.statuses as
+    | Array<{ id?: string; status?: string; timestamp?: string }>
+    | undefined;
   const echoes = value.message_echoes as Array<{ id?: string }> | undefined;
+  const st = statuses?.[0];
+  const statusKey = st?.id
+    ? [st.id, st.status, st.timestamp].filter((p) => p != null && String(p) !== '').join('-')
+    : '';
   const raw =
     messages?.[0]?.id ||
-    statuses?.[0]?.id ||
+    statusKey ||
     echoes?.[0]?.id ||
     entry?.messaging?.[0]?.message?.mid ||
     (typeof entry?.id === 'string' && entry.id

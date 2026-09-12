@@ -31,9 +31,17 @@ assert.match(inbound, /<User>sip:csabc1234@phone\.plivo\.com<\/User>/);
 assert.doesNotMatch(inbound, /<Client>/);
 assert.match(inbound, /action="https:\/\/example\.com\/dial-callback\?requestId=abc&amp;from=%2B91"/);
 
-const outbound = plivoXmlDialNumber({ callerId: '912264231648', number: '919653573824' });
+const outbound = plivoXmlDialNumber({
+  callerId: '912264231648',
+  number: '919653573824',
+  actionUrl: 'https://example.com/dial-callback?requestId=abc&from=919653573824&side=user',
+});
 assert.match(outbound, /<Number>919653573824<\/Number>/);
 assert.doesNotMatch(outbound, /<Client>/);
+assert.match(
+  outbound,
+  /action="https:\/\/example\.com\/dial-callback\?requestId=abc&amp;from=919653573824&amp;side=user"/,
+);
 
 assert.equal(xmlEscape('a&b'), 'a&amp;b');
 assert.equal(extraHeaderCallerId({ 'X-PH-callerid': '912264231648' }), '912264231648');

@@ -57,4 +57,29 @@ assert.ok(
   }).includes(':')
 );
 
+assert.equal(
+  instagramInboundJobId({
+    entry: [{ messaging: [{ read: { mid: 'mid.STAT' }, timestamp: 1710000060 }] }],
+  }),
+  'ig-inbound-mid.STAT-read-1710000060'
+);
+
+assert.notEqual(
+  instagramInboundJobId({
+    entry: [{ messaging: [{ message: { mid: 'mid.STAT' } }] }],
+  }),
+  instagramInboundJobId({
+    entry: [{ messaging: [{ read: { mid: 'mid.STAT' }, timestamp: 1710000060 }] }],
+  })
+);
+
+assert.notEqual(
+  instagramInboundJobId({
+    entry: [{ messaging: [{ delivery: { mids: ['mid.STAT'] }, timestamp: 1710000060 }] }],
+  }),
+  instagramInboundJobId({
+    entry: [{ messaging: [{ read: { mid: 'mid.STAT' }, timestamp: 1710000060 }] }],
+  })
+);
+
 console.log('instagram-inbound.queue.check: ok');

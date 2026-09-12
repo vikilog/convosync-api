@@ -146,10 +146,23 @@ async function markResult(
     where: { id: message.id },
     data: {
       status,
+      // ponytail: in-place resend kept the original createdAt, so latest-50
+      // and the thread bottom never showed the retry — bump on success only.
+      ...(ok ? { createdAt: new Date() } : {}),
       ...(opts?.waMessageId ? { waMessageId: opts.waMessageId } : {}),
       metadata: metadata as object,
     },
   });
+  if (ok) {
+    await prisma.conversation.update({
+      where: { id: message.conversationId },
+      data: { lastMessage: message.content, lastMessageAt: updated.createdAt },
+    });
+    getIo().to(workspaceId).emit('new_message', {
+      conversationId: message.conversationId,
+      message: updated,
+    });
+  }
   emitStatus(workspaceId, updated.id, status, opts?.sendError);
   return updated;
 }

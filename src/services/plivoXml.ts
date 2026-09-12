@@ -85,10 +85,13 @@ export function plivoXmlDialUser(opts: {
 </Response>`;
 }
 
-export function plivoXmlDialNumber(opts: { callerId: string; number: string }): string {
+export function plivoXmlDialNumber(opts: { callerId: string; number: string; actionUrl?: string }): string {
+  const actionAttr = opts.actionUrl
+    ? ` action="${xmlEscape(opts.actionUrl)}" method="POST"`
+    : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Dial callerId="${xmlEscape(opts.callerId)}">
+  <Dial callerId="${xmlEscape(opts.callerId)}"${actionAttr}>
     <Number>${xmlEscape(opts.number)}</Number>
   </Dial>
 </Response>`;

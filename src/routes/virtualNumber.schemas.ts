@@ -37,4 +37,8 @@ export const numberSettingsBodySchema = z.object({
   description: z.string().trim().max(300).optional(),
   missedCallAutoReplyEnabled: z.boolean().optional(),
   missedCallMessage: z.string().trim().max(1000).optional(),
+  missedCallTemplateId: z.string().trim().max(64).nullable().optional(),
+  userMissedCallAutoReplyEnabled: z.boolean().optional(),
+  userMissedCallMessage: z.string().trim().max(1000).optional(),
+  userMissedCallTemplateId: z.string().trim().max(64).nullable().optional(),
 });

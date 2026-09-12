@@ -5,8 +5,16 @@ import assert from 'node:assert/strict';
 import {
   mergeWhatsAppStatusMetadata,
   normalizeWhatsAppStatusErrors,
+  shouldAdvanceWhatsAppStatus,
   whatsappStatusTimestampToIso,
 } from './whatsappStatusErrors.js';
+
+assert.equal(shouldAdvanceWhatsAppStatus('sent', 'delivered'), true);
+assert.equal(shouldAdvanceWhatsAppStatus('delivered', 'read'), true);
+assert.equal(shouldAdvanceWhatsAppStatus('read', 'delivered'), false);
+assert.equal(shouldAdvanceWhatsAppStatus('delivered', 'sent'), false);
+assert.equal(shouldAdvanceWhatsAppStatus('sent', 'failed'), true);
+assert.equal(shouldAdvanceWhatsAppStatus('failed', 'delivered'), false);
 
 const normalized = normalizeWhatsAppStatusErrors([
   {

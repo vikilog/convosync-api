@@ -20,6 +20,28 @@ export type WhatsAppStatusUpdate = {
   errors?: unknown;
 };
 
+/** sent < delivered < read. Failed always applies; never demote off failed. */
+const WA_STATUS_RANK: Record<string, number> = {
+  pending: 0,
+  sending: 0,
+  resend_pending: 0,
+  sent: 1,
+  resent: 1,
+  delivered: 2,
+  read: 3,
+  failed: 10,
+  bounced: 10,
+  rejected: 10,
+};
+
+export function shouldAdvanceWhatsAppStatus(current: string, incoming: string): boolean {
+  const next = incoming.toLowerCase();
+  const prev = current.toLowerCase();
+  if (next === 'failed' || next === 'bounced' || next === 'rejected') return true;
+  if (prev === 'failed' || prev === 'bounced' || prev === 'rejected') return false;
+  return (WA_STATUS_RANK[next] ?? 0) >= (WA_STATUS_RANK[prev] ?? 0);
+}
+
 export function normalizeWhatsAppStatusErrors(raw: unknown): WhatsAppStatusError[] {
   if (!Array.isArray(raw)) return [];
   const out: WhatsAppStatusError[] = [];

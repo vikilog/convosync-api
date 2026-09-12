@@ -2356,9 +2356,15 @@ model VirtualNumberRequest {
   purchaseError  String?
   releasedAt     DateTime?
 
-  // Missed-call handling — sent as a WhatsApp message to the caller when enabled.
+  // Platform miss (inbound, agent never answered) — WhatsApp text and/or template.
   missedCallAutoReplyEnabled Boolean @default(false)
   missedCallMessage          String?
+  missedCallTemplateId       String?
+
+  // User/callee miss (outbound, dest never answered) — same text-or-template shape.
+  userMissedCallAutoReplyEnabled Boolean @default(false)
+  userMissedCallMessage          String?
+  userMissedCallTemplateId       String?
 
   // Browser calling — a Plivo Endpoint is the SIP/WebRTC identity the workspace's
   // browser (Plivo Browser SDK) logs into so agents can talk over real audio.

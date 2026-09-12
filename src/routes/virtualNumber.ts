@@ -26,9 +26,13 @@ import {
   sipUriForEndpoint,
   endpointUsernameFromSip,
 } from '../services/plivoXml.js';
-import { getWorkspaceWhatsAppCredentials } from '../services/whatsappCredentials.js';
-import { sendWhatsAppMessage } from '../services/whatsapp.js';
 import { whatsappCanonicalDigits } from '../lib/whatsappContact.js';
+import {
+  missedCallReplyConfig,
+  sendMissedCallWhatsApp,
+  shouldSendUserMissReply,
+  wasDialAnswered,
+} from '../services/missedCallReply.service.js';
 import { emitNotification } from '../services/notifications/emitNotification.js';
 import { NOTIFICATION_TYPES } from '../services/notifications/types.js';
 import { getIo } from '../socket.js';
@@ -63,6 +67,11 @@ function withGst(baseInrPaise: number): number {
 /** Same fallback USD→INR rate used elsewhere for display-only conversions (workspaceTokenUsage.ts). */
 const USD_TO_INR = 85;
 const CALL_MARKUP_RATE = 0.1;
+
+function outboundPerMinInrPaise(usdPerMin: number): number {
+  const usd = Number.isFinite(usdPerMin) && usdPerMin > 0 ? usdPerMin : 0;
+  return Math.round(Math.round(usd * USD_TO_INR * 100) * (1 + CALL_MARKUP_RATE));
+}
 
 /** Answered / no-answer / busy / failed, derived from Plivo's call_state + hangup cause. */
 function statusFromPlivoCall(record: plivo.PlivoCallRecord): 'answered' | 'no-answer' | 'busy' | 'failed' {
@@ -190,6 +199,10 @@ function serialize(row: VirtualNumberRow) {
     releasedAt: row.releasedAt?.toISOString() ?? null,
     missedCallAutoReplyEnabled: row.missedCallAutoReplyEnabled,
     missedCallMessage: row.missedCallMessage,
+    missedCallTemplateId: row.missedCallTemplateId,
+    userMissedCallAutoReplyEnabled: row.userMissedCallAutoReplyEnabled,
+    userMissedCallMessage: row.userMissedCallMessage,
+    userMissedCallTemplateId: row.userMissedCallTemplateId,
   };
 }
 
@@ -206,6 +219,10 @@ function serializeNumber(row: VirtualNumberRow) {
     activatedAt: row.activatedAt?.toISOString() ?? null,
     missedCallAutoReplyEnabled: row.missedCallAutoReplyEnabled,
     missedCallMessage: row.missedCallMessage,
+    missedCallTemplateId: row.missedCallTemplateId,
+    userMissedCallAutoReplyEnabled: row.userMissedCallAutoReplyEnabled,
+    userMissedCallMessage: row.userMissedCallMessage,
+    userMissedCallTemplateId: row.userMissedCallTemplateId,
   };
 }
 
@@ -343,7 +360,8 @@ async function outboundAnswerXml(body: Record<string, string>): Promise<string> 
   const headerCallerId = extraHeaderCallerId(body);
   const callerId = (headerCallerId && owned.has(headerCallerId) ? headerCallerId : null) ?? row.selectedNumber;
 
-  return plivoXmlDialNumber({ callerId, number: toDigits });
+  const dialCallbackUrl = `${config.backendPublicUrl}/api/virtual-number/dial-callback?requestId=${encodeURIComponent(row.id)}&from=${encodeURIComponent(toDigits)}&side=user`;
+  return plivoXmlDialNumber({ callerId, number: toDigits, actionUrl: dialCallbackUrl });
 }
 
 export default async function virtualNumberRoutes(fastify: FastifyInstance) {
@@ -592,40 +610,52 @@ export default async function virtualNumberRoutes(fastify: FastifyInstance) {
     return { status: 'ok' };
   });
 
-  /** Fires once the inbound <Dial> finishes — if the agent's browser never answered
-   * and missed-call auto-reply is on for that specific number, sends the WhatsApp message. */
+  /** Fires once a <Dial> finishes. Platform miss = inbound, agent never answered.
+   * User miss = outbound, callee never answered. Same send helper either way. */
   app.post('/dial-callback', async (request, reply) => {
-    const query = request.query as { requestId?: string; from?: string };
+    const query = request.query as { requestId?: string; from?: string; side?: string };
     const body = (request.body ?? {}) as Record<string, string>;
     const dialStatus = (body.DialStatus || body.DialCallStatus || body.DialBLegStatus || '').toLowerCase();
-    const wasAnswered = dialStatus === 'completed' || dialStatus === 'answer' || dialStatus === 'answered';
+    const side = query.side === 'user' ? 'user' : 'platform';
     reply.header('Content-Type', 'text/xml');
 
-    if (!wasAnswered && query.requestId && query.from) {
+    const shouldReply =
+      Boolean(query.requestId && query.from) &&
+      (side === 'user' ? shouldSendUserMissReply(dialStatus) : !wasDialAnswered(dialStatus));
+
+    if (shouldReply) {
       try {
         const row = await prisma.virtualNumberRequest.findFirst({
           where: { id: query.requestId, status: 'active' },
         });
         if (row) {
-          if (row.missedCallAutoReplyEnabled && row.missedCallMessage) {
-            const creds = await getWorkspaceWhatsAppCredentials(row.workspaceId);
-            if (creds.phoneNumberId) {
-              await sendWhatsAppMessage(creds.accessToken, creds.phoneNumberId, query.from, row.missedCallMessage);
-            }
+          const replyCfg = missedCallReplyConfig(row, side);
+          const callerDigits = query.from!.replace(/\D/g, '');
+          const contactsByDigits = await lookupContactNames(row.workspaceId, [callerDigits]);
+          const contactName = contactsByDigits.get(callerDigits)?.name ?? null;
+
+          if (replyCfg.enabled && (replyCfg.templateId || replyCfg.message)) {
+            await sendMissedCallWhatsApp({
+              workspaceId: row.workspaceId,
+              toPhone: query.from!,
+              message: replyCfg.message,
+              templateId: replyCfg.templateId,
+              contactName,
+            });
           }
 
-          const callerDigits = query.from.replace(/\D/g, '');
-          const contactsByDigits = await lookupContactNames(row.workspaceId, [callerDigits]);
-          const callerLabel = contactsByDigits.get(callerDigits)?.name ?? plivo.formatDisplayNumber(callerDigits);
-          void emitNotification({
-            workspaceId: row.workspaceId,
-            type: NOTIFICATION_TYPES.CALL_MISSED,
-            title: 'Missed call',
-            message: `Missed call from ${callerLabel}${row.label ? ` on ${row.label}` : ''}.`,
-            entityType: 'virtual_number_request',
-            entityId: row.id,
-            metadata: { numberId: row.id, fromNumber: plivo.formatDisplayNumber(callerDigits) },
-          });
+          if (side === 'platform') {
+            const callerLabel = contactName ?? plivo.formatDisplayNumber(callerDigits);
+            void emitNotification({
+              workspaceId: row.workspaceId,
+              type: NOTIFICATION_TYPES.CALL_MISSED,
+              title: 'Missed call',
+              message: `Missed call from ${callerLabel}${row.label ? ` on ${row.label}` : ''}.`,
+              entityType: 'virtual_number_request',
+              entityId: row.id,
+              metadata: { numberId: row.id, fromNumber: plivo.formatDisplayNumber(callerDigits) },
+            });
+          }
         }
       } catch {
         // Best-effort — a failed auto-reply should never break call handling.
@@ -899,11 +929,10 @@ export default async function virtualNumberRoutes(fastify: FastifyInstance) {
     }
 
     if (!config.plivo.enabled) {
-      const outboundBasePaise = Math.round(0.0095 * USD_TO_INR * 100);
       return {
         countryIso: 'IN',
         countryName: 'India',
-        outboundPerMinInrPaise: Math.round(outboundBasePaise * (1 + CALL_MARKUP_RATE)),
+        outboundPerMinInrPaise: outboundPerMinInrPaise(0.0046),
         markupRate: CALL_MARKUP_RATE,
         source: 'mock',
       };
@@ -911,11 +940,10 @@ export default async function virtualNumberRoutes(fastify: FastifyInstance) {
 
     try {
       const pricing = await plivo.getVoicePricing((row.selectedCountryIso as plivo.PlivoCountryIso) ?? 'IN');
-      const outboundBasePaise = Math.round(pricing.outboundRatePerMinUsd * USD_TO_INR * 100);
       return {
         countryIso: pricing.countryIso,
         countryName: pricing.countryName,
-        outboundPerMinInrPaise: Math.round(outboundBasePaise * (1 + CALL_MARKUP_RATE)),
+        outboundPerMinInrPaise: outboundPerMinInrPaise(pricing.outboundRatePerMinUsd),
         markupRate: CALL_MARKUP_RATE,
         source: 'plivo',
       };
@@ -947,6 +975,16 @@ export default async function virtualNumberRoutes(fastify: FastifyInstance) {
           missedCallAutoReplyEnabled: body.missedCallAutoReplyEnabled,
         }),
         ...(body.missedCallMessage !== undefined && { missedCallMessage: body.missedCallMessage || null }),
+        ...(body.missedCallTemplateId !== undefined && { missedCallTemplateId: body.missedCallTemplateId || null }),
+        ...(body.userMissedCallAutoReplyEnabled !== undefined && {
+          userMissedCallAutoReplyEnabled: body.userMissedCallAutoReplyEnabled,
+        }),
+        ...(body.userMissedCallMessage !== undefined && {
+          userMissedCallMessage: body.userMissedCallMessage || null,
+        }),
+        ...(body.userMissedCallTemplateId !== undefined && {
+          userMissedCallTemplateId: body.userMissedCallTemplateId || null,
+        }),
       },
     });
     return serialize(updated);

@@ -3,12 +3,20 @@ import { config } from '../config.js';
 
 export const MESSENGER_INBOUND_QUEUE = 'messenger-inbound';
 
+type MessengerInboundEvent = {
+  timestamp?: number;
+  message?: { mid?: string };
+  postback?: { mid?: string };
+  read?: { mid?: string; watermark?: number };
+  delivery?: { mids?: string[]; watermark?: number };
+};
+
 export type MessengerInboundWebhookBody = {
   object?: string;
   entry?: Array<{
     id?: string;
     changes?: Array<{ field?: string; value?: Record<string, unknown> }>;
-    messaging?: Array<{ message?: { mid?: string }; postback?: { mid?: string } }>;
+    messaging?: MessengerInboundEvent[];
   }>;
 };
 
@@ -35,14 +43,28 @@ export function getMessengerInboundQueue(): Queue<MessengerInboundJobData> {
   return queue;
 }
 
-/** Stable BullMQ jobId (no `:`). Coalesces Meta retries of the same delivery. */
+/**
+ * Stable BullMQ jobId (no `:`). Coalesces Meta retries of the same delivery.
+ * Read/delivery reuse one mid — include status (+ timestamp) so later
+ * receipts still enqueue after the first completes.
+ */
 export function messengerInboundJobId(body: MessengerInboundWebhookBody): string {
   const entry = body?.entry?.[0];
   const change = entry?.changes?.[0];
   const value = (change?.value ?? {}) as Record<string, unknown>;
+  const ev = entry?.messaging?.[0];
+  const readId = ev?.read?.mid ?? (ev?.read?.watermark != null ? String(ev.read.watermark) : '');
+  const deliveryId =
+    ev?.delivery?.mids?.[0] ?? (ev?.delivery?.watermark != null ? String(ev.delivery.watermark) : '');
+  const statusKey = readId
+    ? [readId, 'read', ev?.timestamp].filter((p) => p != null && String(p) !== '').join('-')
+    : deliveryId
+      ? [deliveryId, 'delivered', ev?.timestamp].filter((p) => p != null && String(p) !== '').join('-')
+      : '';
   const raw =
-    entry?.messaging?.[0]?.message?.mid ||
-    entry?.messaging?.[0]?.postback?.mid ||
+    ev?.message?.mid ||
+    ev?.postback?.mid ||
+    statusKey ||
     (typeof value.comment_id === 'string' && value.comment_id) ||
     (typeof value.id === 'string' && value.id) ||
     (typeof entry?.id === 'string' && entry.id

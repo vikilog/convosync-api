@@ -24,6 +24,28 @@ assert.equal(
 
 assert.equal(
   whatsappInboundJobId({
+    entry: [
+      {
+        changes: [
+          { value: { statuses: [{ id: 'wamid.STAT', status: 'delivered', timestamp: '1710000060' }] } },
+        ],
+      },
+    ],
+  }),
+  'wa-inbound-wamid.STAT-delivered-1710000060'
+);
+
+assert.notEqual(
+  whatsappInboundJobId({
+    entry: [{ changes: [{ value: { statuses: [{ id: 'wamid.STAT', status: 'sent' }] } }] }],
+  }),
+  whatsappInboundJobId({
+    entry: [{ changes: [{ value: { statuses: [{ id: 'wamid.STAT', status: 'delivered' }] } }] }],
+  })
+);
+
+assert.equal(
+  whatsappInboundJobId({
     entry: [{ changes: [{ value: { message_echoes: [{ id: 'wamid.ECHO' }] } }] }],
   }),
   'wa-inbound-wamid.ECHO'

@@ -1,4 +1,7 @@
 import { config } from '../config.js';
+import { voiceRatePerMinuteUsd } from './plivoVoicePricing.js';
+
+export { voiceRatePerMinuteUsd };
 
 /**
  * Thin wrapper over Plivo's REST API (Basic Auth over HTTPS — no SDK needed).
@@ -359,10 +362,9 @@ type PlivoPricingRateEntry = {
 };
 
 /**
- * Real per-minute voice rate for this account (Plivo bills in USD, per `voice_unit`-second
- * increments — usually 30s domestically). Prefers the generic domestic network-group entry
- * from `voice.outbound.rates[]` over the flat `voice.outbound.local.rate`, since the latter
- * reflects a special discounted number series (e.g. Plivo's 140-series), not standard numbers.
+ * Real per-minute voice rate for this account (Plivo bills in USD). Prefers the
+ * generic domestic `voice.outbound.rates[]` entry over `voice.outbound.local.rate`,
+ * since the latter can be a special discounted number series (e.g. 140-series).
  */
 export async function getVoicePricing(countryIso: PlivoCountryIso = 'IN'): Promise<PlivoVoicePricing> {
   const data = await plivoRequest<{
@@ -379,18 +381,15 @@ export async function getVoicePricing(countryIso: PlivoCountryIso = 'IN'): Promi
     (r) => r.origination_prefix?.includes(countryIso === 'IN' ? '91' : '') && r.prefix?.length === 1,
   );
 
-  let outboundRatePerMin: number;
-  if (domesticEntry) {
-    outboundRatePerMin = (parseFloat(domesticEntry.rate) * 60) / domesticEntry.voice_unit;
-  } else {
-    outboundRatePerMin = parseFloat(data.voice?.outbound?.local?.rate || '0') * 2;
-  }
+  const outboundRatePerMin = domesticEntry
+    ? voiceRatePerMinuteUsd(domesticEntry.rate, domesticEntry.voice_unit)
+    : voiceRatePerMinuteUsd(data.voice?.outbound?.local?.rate);
 
   return {
     countryIso: data.country_iso,
     countryName: data.country,
     outboundRatePerMinUsd: outboundRatePerMin,
-    inboundRatePerMinUsd: parseFloat(data.voice?.inbound?.local?.rate || '0') * 2,
+    inboundRatePerMinUsd: voiceRatePerMinuteUsd(data.voice?.inbound?.local?.rate),
   };
 }
 

@@ -33,6 +33,7 @@ import { sendWhatsAppMessage } from './whatsapp.js';
 import {
   mergeWhatsAppStatusMetadata,
   normalizeWhatsAppStatusErrors,
+  shouldAdvanceWhatsAppStatus,
   type WhatsAppStatusUpdate,
 } from '../lib/whatsappStatusErrors.js';
 import { redactWebhookPayload } from '../lib/webhookRedact.js';
@@ -308,8 +309,7 @@ export async function processWhatsAppInboundWebhook(body: WhatsAppInboundWebhook
     }
   }
 
-  if (value?.statuses?.[0]) {
-    const statusUpdate = value.statuses[0];
+  for (const statusUpdate of value?.statuses ?? []) {
     const statusErrors = normalizeWhatsAppStatusErrors(statusUpdate.errors);
     logWebhook('POST → status update', {
       id: statusUpdate.id,
@@ -324,21 +324,25 @@ export async function processWhatsAppInboundWebhook(body: WhatsAppInboundWebhook
     });
     if (message?.conversation?.workspaceId) {
       const metadata = mergeWhatsAppStatusMetadata(message.metadata, statusUpdate);
+      const advance = shouldAdvanceWhatsAppStatus(message.status, statusUpdate.status);
       await prisma.message.update({
         where: { id: message.id },
         data: {
-          status: statusUpdate.status,
+          ...(advance ? { status: statusUpdate.status } : {}),
           metadata: metadata as object,
         },
       });
-      getIo().to(message.conversation.workspaceId).emit('message_status', {
-        messageId: message.id,
-        status: statusUpdate.status,
-        ...(statusErrors.length ? { errors: statusErrors } : {}),
-      });
+      if (advance) {
+        getIo().to(message.conversation.workspaceId).emit('message_status', {
+          messageId: message.id,
+          status: statusUpdate.status,
+          ...(statusErrors.length ? { errors: statusErrors } : {}),
+        });
+      }
       logWebhook('POST → status applied', {
         messageId: message.id,
         status: statusUpdate.status,
+        advanced: advance,
         errorCount: statusErrors.length,
         errorCode: statusErrors[0]?.code,
       });

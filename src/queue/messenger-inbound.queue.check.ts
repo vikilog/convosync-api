@@ -43,4 +43,29 @@ assert.ok(
   }).includes(':')
 );
 
+assert.equal(
+  messengerInboundJobId({
+    entry: [{ messaging: [{ read: { watermark: 1710000060 }, timestamp: 1710000060 }] }],
+  }),
+  'msgr-inbound-1710000060-read-1710000060'
+);
+
+assert.notEqual(
+  messengerInboundJobId({
+    entry: [{ messaging: [{ message: { mid: 'mid.STAT' } }] }],
+  }),
+  messengerInboundJobId({
+    entry: [{ messaging: [{ read: { mid: 'mid.STAT' }, timestamp: 1710000060 }] }],
+  })
+);
+
+assert.notEqual(
+  messengerInboundJobId({
+    entry: [{ messaging: [{ delivery: { mids: ['mid.STAT'] }, timestamp: 1710000060 }] }],
+  }),
+  messengerInboundJobId({
+    entry: [{ messaging: [{ read: { mid: 'mid.STAT' }, timestamp: 1710000060 }] }],
+  })
+);
+
 console.log('messenger-inbound.queue.check: ok');
