@@ -1,4 +1,5 @@
 import type { Message } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { prisma } from '../index.js';
 import { getIo } from '../socket.js';
 import {
@@ -27,6 +28,7 @@ import {
   isTemplateMediaHeaderFormat,
   uploadTemplateHeaderMediaForSend,
 } from './templateSendHeader.js';
+import { recordFlowSend } from './whatsappFlowToken.service.js';
 import {
   resolveOutboundInstagramKind,
   sendInstagramMediaMessage,
@@ -258,6 +260,7 @@ async function resendTemplate(
     templateCategory: template.category,
     phoneNumberId: credentials.phoneNumberId,
   });
+  const flowToken = template.buttonType === 'FLOW' ? randomUUID() : undefined;
   const sent = await sendWhatsAppTemplateMessage(
     credentials.accessToken,
     credentials.phoneNumberId,
@@ -265,8 +268,14 @@ async function resendTemplate(
     template.name,
     template.language,
     bodyParams,
-    headerMedia ? { headerMedia } : undefined
+    {
+      ...(headerMedia ? { headerMedia } : {}),
+      ...(flowToken ? { flowToken } : {}),
+    }
   );
+  if (flowToken && template.buttonFlowId) {
+    await recordFlowSend({ flowToken, flowId: template.buttonFlowId, workspaceId });
+  }
 
   const updated = await markResultAfterSuccessfulSend(message, workspaceId, { waMessageId: sent.waMessageId });
   try {
