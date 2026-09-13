@@ -2321,8 +2321,12 @@ model BillingAddOnPurchase {
   @@map("billing_addon_purchases")
 }
 
-/// Workspace request for a Plivo-backed virtual phone number — reviewed by
-/// ConvoSync staff (super-admin) before the workspace can pick a number and pay.
+/// Workspace request for a virtual phone number — reviewed by ConvoSync staff
+/// (super-admin) before the workspace can pick a number and pay. Backed by either
+/// Plivo (India) or Telnyx (US/GB/SG) — see `provider` and resolveVoiceProvider()
+/// in config.ts. The `plivo*` columns below are historical names kept for the sake
+/// of not touching a production, money-handling migration — they hold whichever
+/// provider's opaque ids `provider` says is active on this row, not Plivo specifically.
 model VirtualNumberRequest {
   id          String    @id @default(cuid())
   workspaceId String
@@ -2330,6 +2334,12 @@ model VirtualNumberRequest {
 
   // pending_approval | approved | rejected | number_selected | paid | active | released
   status String @default("pending_approval")
+
+  /// "plivo" | "telnyx" — decided once from Workspace.country at request-access time.
+  provider String @default("plivo")
+  /// Telnyx-only, admin-filled: the Requirement Group id fulfilled out-of-band (KYC
+  /// docs) for countries like Singapore that require it before a number can be bought.
+  requirementGroupId String?
 
   /** User-given name for this number, e.g. "Sales Line" — shown wherever it's picked from a list. */
   label       String?

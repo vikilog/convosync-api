@@ -22,6 +22,9 @@ export const config = {
     'http://127.0.0.1:3001',
     'http://localhost:3100',
     'http://127.0.0.1:3100',
+    /** apps/convosync-shadcn's Vite dev server default port. */
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
     ...(process.env.CORS_ALLOWED_ORIGINS || '')
       .split(',')
       .map((o) => o.trim())
@@ -190,6 +193,22 @@ export const config = {
     authToken: process.env.PLIVO_AUTH_TOKEN || '',
     enabled: Boolean(process.env.PLIVO_AUTH_ID && process.env.PLIVO_AUTH_TOKEN),
   },
+  telnyx: {
+    apiKey: process.env.TELNYX_API_KEY || '',
+    /** Public key Telnyx signs webhook requests with — verified in virtualNumberWebhooks.telnyx.ts. */
+    publicKey: process.env.TELNYX_PUBLIC_KEY || '',
+    /** Fallback TeXML Application/connection id used for server-initiated outbound calls
+     * (POST /texml/calls/{id}) before a workspace-specific Application exists yet. */
+    connectionId: process.env.TELNYX_CONNECTION_ID || '',
+    /** Every TeXML Application/Connection needs an Outbound Voice Profile assigned before
+     * it can place outbound calls (Telnyx rejects with "Connection has no Outbound Profile
+     * assigned" otherwise — confirmed live). One profile is shared across every workspace's
+     * TeXML Application; create it once in the Telnyx dashboard (or via POST
+     * /v2/outbound_voice_profiles) and make sure its whitelisted_destinations covers every
+     * country this app's customers actually call. */
+    outboundVoiceProfileId: process.env.TELNYX_OUTBOUND_VOICE_PROFILE_ID || '',
+    enabled: Boolean(process.env.TELNYX_API_KEY),
+  },
   aws: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
@@ -315,3 +334,18 @@ export const config = {
     nightlyHour: parseInt(process.env.CONTACT_INSIGHT_NIGHTLY_HOUR || '2', 10),
   },
 };
+
+export type VoiceProviderName = 'plivo' | 'telnyx';
+
+/** Countries served via Telnyx instead of Plivo. India (and anything not listed
+ * here) stays on Plivo — that's today's behavior, so nothing already-active breaks. */
+const TELNYX_COUNTRIES = new Set(['US', 'GB', 'SG']);
+
+/** Decides which telephony provider a workspace's virtual numbers use, from its
+ * `Workspace.country`. Called once at request-access time and the result is stored
+ * on the VirtualNumberRequest row — never re-derived later, so a workspace changing
+ * its country afterward can't strand an already-active number's provider wiring. */
+export function resolveVoiceProvider(countryIso: string | null | undefined): VoiceProviderName {
+  const iso = (countryIso || 'IN').trim().toUpperCase();
+  return TELNYX_COUNTRIES.has(iso) ? 'telnyx' : 'plivo';
+}

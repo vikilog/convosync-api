@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import { voiceRatePerMinuteUsd } from './plivoVoicePricing.js';
+import type { VoiceProvider } from './voiceProvider.types.js';
 
 export { voiceRatePerMinuteUsd };
 
@@ -493,3 +494,31 @@ export async function setEndpointApplication(endpointId: string, appId: string):
     body: JSON.stringify({ app_id: appId }),
   });
 }
+
+/** Adapter onto the shared VoiceProvider shape (see voiceProvider.types.ts) — lets
+ * routes/virtualNumber.ts dispatch between Plivo and Telnyx without a provider-specific
+ * import at the call site. Plivo only ever backs IN/US/GB (Telnyx handles SG), so the
+ * `SupportedCountryIso` casts below are safe — this account never receives 'SG'. */
+export const plivoProvider: VoiceProvider = {
+  searchAvailableNumbers: (params) =>
+    searchAvailableNumbers({ ...params, countryIso: params.countryIso as PlivoCountryIso | undefined }),
+  buyNumber: async (number, alias) => {
+    const bought = await buyNumber(number, alias);
+    return { providerNumberId: bought.plivoNumberId, number: bought.number };
+  },
+  formatDisplayNumber: (raw, countryIso) => formatDisplayNumber(raw, countryIso as PlivoCountryIso | undefined),
+  listOwnedNumbers,
+  listCalls,
+  getCallDetail,
+  makeCall,
+  listRecordedCallUuids,
+  getVoicePricing: (countryIso) => getVoicePricing(countryIso as PlivoCountryIso | undefined),
+  releaseNumber,
+  createEndpoint,
+  deleteEndpoint,
+  createApplication,
+  deleteApplication,
+  updateApplication,
+  setNumberApplication,
+  setEndpointApplication,
+};
