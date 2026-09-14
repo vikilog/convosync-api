@@ -2405,6 +2405,33 @@ model PlivoCallTranscript {
   @@map("plivo_call_transcripts")
 }
 
+/// Telnyx's own Detail Record Search API (used for Plivo-parity call-log listing) has
+/// been observed live to 500 persistently for this account across both the `call-control`
+/// and `webrtc` record types — confirmed by hitting Telnyx's API directly, independent of
+/// this app's code. Rather than depend on that beta API's uptime, Telnyx call events are
+/// captured here in real time via webhook (see virtualNumberWebhooks.telnyx.ts) and the
+/// call-log routes read from this table instead for Telnyx-provider numbers.
+model TelnyxCallLog {
+  id              String    @id @default(cuid())
+  callUuid        String    @unique
+  workspaceId     String
+  fromNumber      String
+  toNumber        String
+  direction       String
+  callState       String
+  durationSeconds Int       @default(0)
+  startTime       DateTime?
+  endTime         DateTime?
+  hangupCause     String?
+  recordUrl       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([workspaceId])
+  @@index([startTime])
+  @@map("telnyx_call_logs")
+}
+
 /// Per-workspace usage limits (base plan + addons).
 model WorkspaceUsageLimits {
   workspaceId       String   @id

@@ -1,3 +1,4 @@
+import { prisma } from '../lib/prisma.js';
 import { config } from '../config.js';
 import type {
   AvailableNumber,
@@ -171,67 +172,79 @@ export async function releaseNumber(number: string): Promise<void> {
   await telnyxRequest<unknown>(`/phone_numbers/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
-type TelnyxDetailRecord = {
-  call_leg_id?: string;
-  call_session_id?: string;
-  from_number?: string;
-  to_number?: string;
-  direction?: string;
-  call_state?: string;
-  duration_seconds?: number | string;
-  start_time?: string;
-  end_time?: string;
-  hangup_cause?: string;
-};
-
-function toCallRecord(r: TelnyxDetailRecord): CallRecord {
-  return {
-    callUuid: r.call_leg_id ?? r.call_session_id ?? '',
-    conferenceUuid: r.call_session_id ?? null,
-    from: r.from_number ?? '',
-    to: r.to_number ?? '',
-    direction: r.direction === 'inbound' ? 'inbound' : 'outbound',
-    callState: r.call_state ?? 'unknown',
-    durationSeconds: Number(r.duration_seconds || 0),
-    startTime: r.start_time ?? null,
-    endTime: r.end_time ?? null,
-    hangupCause: r.hangup_cause ?? null,
-  };
-}
-
-/** Telnyx's Detail Record Search API — the equivalent of Plivo's `/Call/` list.
- * Unlike Plivo, results can lag slightly behind real-time (indexed asynchronously). */
+/** Telnyx's Detail Record Search API has been observed live to 500 persistently for this
+ * account, on every record_type tried, independent of this app's code — so the call log
+ * is instead built from real-time Call Control webhooks into TelnyxCallLog (see
+ * virtualNumberWebhooks.telnyx.ts's `/telnyx/call-events` handler) rather than querying
+ * that API. Every call site in this app always passes `number` (the workspace's own
+ * selected number), so filtering by it is enough to scope results without also needing
+ * a workspaceId param on this shared VoiceProvider interface method. */
 export async function listCalls(params: {
   number?: string;
   limit?: number;
   offset?: number;
 }): Promise<{ records: CallRecord[]; hasMore: boolean }> {
   const limit = params.limit ?? 20;
-  const query = new URLSearchParams({
-    'filter[record_type]': 'call-control',
-    'page[size]': String(limit),
-    'page[number]': String(Math.floor((params.offset ?? 0) / limit) + 1),
-  });
-  const data = await telnyxRequest<{ data: TelnyxDetailRecord[]; meta?: { total_pages?: number } }>(
-    `/detail_records?${query.toString()}`,
-  );
-  const all = (data.data ?? []).map(toCallRecord);
-  const currentPage = Math.floor((params.offset ?? 0) / limit) + 1;
-  const hasMore = Boolean(data.meta?.total_pages && currentPage < data.meta.total_pages);
+  const offset = params.offset ?? 0;
+  const digits = params.number?.replace(/\D/g, '') ?? '';
+  const where = digits ? { OR: [{ fromNumber: { contains: digits } }, { toNumber: { contains: digits } }] } : {};
 
-  if (!params.number) return { records: all, hasMore };
-  const digits = params.number.replace(/\D/g, '');
-  return { records: all.filter((c) => c.from.includes(digits) || c.to.includes(digits)), hasMore };
+  const [rows, total] = await Promise.all([
+    prisma.telnyxCallLog.findMany({ where, orderBy: { startTime: 'desc' }, skip: offset, take: limit }),
+    prisma.telnyxCallLog.count({ where }),
+  ]);
+
+  return { records: rows.map(toCallRecordFromLog), hasMore: offset + rows.length < total };
+}
+
+function toCallRecordFromLog(row: {
+  callUuid: string;
+  fromNumber: string;
+  toNumber: string;
+  direction: string;
+  callState: string;
+  durationSeconds: number;
+  startTime: Date | null;
+  endTime: Date | null;
+  hangupCause: string | null;
+}): CallRecord {
+  return {
+    callUuid: row.callUuid,
+    conferenceUuid: null,
+    from: row.fromNumber,
+    to: row.toNumber,
+    direction: row.direction === 'inbound' ? 'inbound' : 'outbound',
+    callState: row.callState,
+    durationSeconds: row.durationSeconds,
+    startTime: row.startTime?.toISOString() ?? null,
+    endTime: row.endTime?.toISOString() ?? null,
+    hangupCause: row.hangupCause,
+  };
+}
+
+/** Looked up live rather than trusting TelnyxCallLog.recordUrl (fed by the
+ * call.recording.saved webhook) — confirmed live that the recording exists and this
+ * endpoint returns it correctly well before that webhook field ever got populated, so
+ * this is the more reliable of the two paths today. */
+async function findRecordingUrl(callUuid: string): Promise<string | null> {
+  try {
+    const data = await telnyxRequest<{ data: { call_leg_id: string; download_urls?: Record<string, string> }[] }>(
+      `/recordings?filter[call_leg_id]=${encodeURIComponent(callUuid)}`,
+    );
+    const urls = data.data?.[0]?.download_urls;
+    return urls?.mp3 ?? urls?.wav ?? Object.values(urls ?? {})[0] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getCallDetail(callUuid: string): Promise<CallDetail> {
-  const data = await telnyxRequest<{ data: TelnyxDetailRecord & { recording_urls?: string[] } }>(
-    `/detail_records/${encodeURIComponent(callUuid)}`,
-  );
-  const base = toCallRecord(data.data);
+  const row = await prisma.telnyxCallLog.findUnique({ where: { callUuid } });
+  if (!row) throw new Error('Call not found.');
+  const recordUrl = row.recordUrl ?? (await findRecordingUrl(callUuid));
   return {
-    ...base,
-    recordUrl: data.data.recording_urls?.[0] ?? null,
+    ...toCallRecordFromLog(row),
+    recordUrl,
     answerTime: null,
     ringDurationSeconds: null,
     postDialDelaySeconds: null,
@@ -397,9 +410,32 @@ export async function setEndpointApplication(endpointId: string, _appId: string)
     method: 'PATCH',
     body: JSON.stringify({
       webrtc: { enabled: true },
+      // Real-time call lifecycle events (call.initiated/hangup/recording.saved) feed
+      // TelnyxCallLog — see /telnyx/call-events — since Telnyx's Detail Record Search
+      // API can't be relied on to list these calls (confirmed live, persistent 500s).
+      webhook_event_url: `${config.backendPublicUrl}/api/virtual-number/telnyx/call-events`,
       ...(config.telnyx.outboundVoiceProfileId
         ? { outbound: { outbound_voice_profile_id: config.telnyx.outboundVoiceProfileId } }
         : {}),
+    }),
+  });
+}
+
+/** Without this, a browser (Credential Connection) call's caller ID is left unset — confirmed
+ * live to get the call rejected outright by the destination carrier before it even rings.
+ * Fetches the connection's current `outbound` block first and merges rather than blindly
+ * PATCHing just ani_override, since a bare `{outbound: {...}}` PATCH looked like it could
+ * clobber sibling outbound fields (e.g. outbound_voice_profile_id) set by setEndpointApplication. */
+export async function setEndpointCallerId(endpointId: string, callerId: string): Promise<void> {
+  assertEnabled();
+  const e164 = callerId.startsWith('+') ? callerId : `+${callerId.replace(/\D/g, '')}`;
+  const current = await telnyxRequest<{ data: { outbound?: Record<string, unknown> } }>(
+    `/credential_connections/${encodeURIComponent(endpointId)}`,
+  );
+  await telnyxRequest<unknown>(`/credential_connections/${encodeURIComponent(endpointId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      outbound: { ...current.data.outbound, ani_override: e164, ani_override_type: 'always' },
     }),
   });
 }

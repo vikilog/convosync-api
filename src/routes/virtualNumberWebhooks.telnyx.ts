@@ -62,7 +62,12 @@ export async function ensureTelnyxBrowserCalling(row: VirtualNumberRow): Promise
   }
 
   await telnyx.setNumberApplication(row.selectedNumber, appId);
-  if (endpointId) await telnyx.setEndpointApplication(endpointId, appId);
+  if (endpointId) {
+    await telnyx.setEndpointApplication(endpointId, appId);
+    // Must run after setEndpointApplication — see setEndpointCallerId's own comment on why
+    // it merges rather than assuming PATCH order doesn't matter.
+    await telnyx.setEndpointCallerId(endpointId, row.selectedNumber);
+  }
 
   if (
     row.plivoEndpointId === endpointId &&
@@ -273,6 +278,88 @@ export default function registerTelnyxWebhooks(app: FastifyInstance) {
       create: { callUuid, text },
       update: { text },
     });
+    return { status: 'ok' };
+  });
+
+  /** Telnyx's Detail Record Search API has been observed to 500 persistently for this
+   * account (confirmed live, independent of our code) — so the call log for Telnyx
+   * numbers is built from these real-time Call Control webhooks into TelnyxCallLog
+   * instead of querying that API. Configured as the Credential Connection's
+   * webhook_event_url (see setEndpointCallerId's sibling call in ensureTelnyxBrowserCalling).
+   * VERIFICATION STATUS: field names below are best-effort from Telnyx's documented Call
+   * Control webhook envelope — not yet confirmed against a real payload from this account. */
+  app.post('/telnyx/call-events', async (request, reply) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    request.log.info({ telnyxCallEvent: body }, 'telnyx call-events webhook');
+
+    const data = (body.data ?? body) as Record<string, unknown>;
+    const eventType = String(data.event_type ?? data.EventType ?? '');
+    const payload = (data.payload ?? data) as Record<string, unknown>;
+
+    const callUuid = String(payload.call_leg_id ?? payload.call_control_id ?? payload.CallLegId ?? '');
+    if (!callUuid || !eventType.startsWith('call.')) return reply.code(200).send({ status: 'ignored' });
+
+    const fromDigits = String(payload.from ?? payload.From ?? '').replace(/\D/g, '');
+    const toDigits = String(payload.to ?? payload.To ?? '').replace(/\D/g, '');
+    const direction = String(payload.direction ?? payload.Direction ?? '').toLowerCase().includes('inbound')
+      ? 'inbound'
+      : 'outbound';
+
+    const row = fromDigits || toDigits
+      ? await prisma.virtualNumberRequest.findFirst({
+          where: {
+            status: 'active',
+            provider: 'telnyx',
+            OR: [{ selectedNumber: fromDigits }, { selectedNumber: toDigits }],
+          },
+        })
+      : null;
+    if (!row) return reply.code(200).send({ status: 'ignored', reason: 'no matching workspace number' });
+
+    const callState = eventType.replace('call.', '');
+    const now = new Date();
+    const existing = await prisma.telnyxCallLog.findUnique({
+      where: { callUuid },
+      select: { startTime: true, callState: true },
+    });
+    // Don't let call.hangup's own event name ("hangup") clobber a prior call.answered —
+    // statusFromCallRecord (shared with Plivo) reads callState==='answered' to show the
+    // row as Answered rather than Missed/Failed, so the hangup update must preserve that.
+    const nextCallState = eventType === 'call.hangup' && existing?.callState === 'answered' ? 'answered' : callState;
+
+    await prisma.telnyxCallLog.upsert({
+      where: { callUuid },
+      create: {
+        callUuid,
+        workspaceId: row.workspaceId,
+        fromNumber: fromDigits,
+        toNumber: toDigits,
+        direction,
+        callState,
+        startTime: now,
+      },
+      update: {
+        callState: nextCallState,
+        ...(eventType === 'call.hangup'
+          ? {
+              endTime: now,
+              hangupCause: (payload.hangup_cause ?? payload.HangupCause) as string | undefined,
+              durationSeconds: existing?.startTime
+                ? Math.max(0, Math.round((now.getTime() - existing.startTime.getTime()) / 1000))
+                : 0,
+            }
+          : {}),
+        ...(eventType === 'call.recording.saved'
+          ? {
+              recordUrl:
+                ((payload.recording_urls as { mp3?: string }[] | undefined)?.[0]?.mp3 as string | undefined) ??
+                (payload.public_recording_urls as { mp3?: string } | undefined)?.mp3 ??
+                null,
+            }
+          : {}),
+      },
+    });
+
     return { status: 'ok' };
   });
 }
