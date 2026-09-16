@@ -21,6 +21,7 @@ export const templateBodySchema = z.object({
   buttonFlowId: z.string().optional().nullable(),
   variableSamples: z.array(z.string()).optional(),
   submitToMeta: z.boolean().optional(),
+  groupId: z.string().optional().nullable(),
 });
 
 export const templateUpdateSchema = templateBodySchema.partial();

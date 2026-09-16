@@ -26,6 +26,15 @@ function isPrismaUniqueViolation(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
 }
 
+/** groupId is a free-form string field on the request body — without this check a
+ * client could point it at another workspace's TemplateGroup id (same class of gap
+ * assertHeaderMediaStorageKeyOwnership guards against for header media). */
+async function assertGroupOwnership(workspaceId: string, groupId: string | null | undefined): Promise<void> {
+  if (!groupId) return;
+  const group = await prisma.templateGroup.findFirst({ where: { id: groupId, workspaceId }, select: { id: true } });
+  if (!group) throw new Error('Group not found');
+}
+
 /**
  * The stored Template.variables length drives buildCampaignBodyParams at
  * campaign-send time (one param built per entry) — if it doesn't match the
@@ -112,6 +121,7 @@ export async function createTemplate(request: FastifyRequest, reply: FastifyRepl
 
   try {
     assertHeaderMediaStorageKeyOwnership(workspaceId, body.headerMediaStorageKey);
+    await assertGroupOwnership(workspaceId, body.groupId);
     assertVariablesMatchBody(body.bodyPattern, body.variables ?? []);
     assertMetaContentLimits({
       bodyPattern: body.bodyPattern,
@@ -214,6 +224,7 @@ export async function createTemplate(request: FastifyRequest, reply: FastifyRepl
         status,
         waTemplateId,
         rejectionReason,
+        groupId: body.groupId ?? null,
         workspaceId,
       },
     });
@@ -244,22 +255,26 @@ export async function updateTemplate(request: FastifyRequest, reply: FastifyRepl
 
   try {
     assertHeaderMediaStorageKeyOwnership(workspaceId, body.headerMediaStorageKey);
+    await assertGroupOwnership(workspaceId, body.groupId);
   } catch (err) {
-    return reply.code(400).send({ error: err instanceof Error ? err.message : 'Invalid header media' });
+    return reply.code(400).send({ error: err instanceof Error ? err.message : 'Invalid template' });
   }
 
-  // Approved on Meta: name/body locked; allow local language fix so send matches Meta's code.
+  // Approved on Meta: name/body locked, but language (to match Meta) and groupId (pure
+  // local organization, no Meta involvement) can still change.
   if (existing.status === 'approved') {
-    if (body.language == null || !String(body.language).trim()) {
+    const data: { language?: string; groupId?: string | null } = {};
+    if (body.language != null && String(body.language).trim()) {
+      data.language = normalizeMetaLanguageCode(body.language);
+    }
+    if ('groupId' in body) data.groupId = body.groupId ?? null;
+    if (Object.keys(data).length === 0) {
       return reply.code(400).send({
         error:
-          'Approved templates can only update language (must match Meta). Create a new template to change content.',
+          'Approved templates can only update language (must match Meta) or group. Create a new template to change content.',
       });
     }
-    const template = await prisma.template.update({
-      where: { id },
-      data: { language: normalizeMetaLanguageCode(body.language) },
-    });
+    const template = await prisma.template.update({ where: { id }, data });
     return template;
   }
 

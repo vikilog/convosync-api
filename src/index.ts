@@ -47,6 +47,7 @@ import instagramJourneyRoutes from './modules/instagram-journey/routes/ig-journe
 import agentRoutes from './routes/agents.js';
 import mediaGalleryRoutes from './routes/media-gallery.js';
 import templateRoutes from './routes/templates.js';
+import templateGroupRoutes from './routes/templateGroups.js';
 import cannedResponseRoutes from './routes/canned-responses.js';
 import webhookRoutes from './routes/webhooks.js';
 import analyticsRoutes from './routes/analytics.js';
@@ -211,6 +212,7 @@ async function start() {
   await fastify.register(agentRoutes, { prefix: '/api/agents' });
   await fastify.register(mediaGalleryRoutes, { prefix: '/api/media-gallery' });
   await fastify.register(templateRoutes, { prefix: '/api/templates' });
+  await fastify.register(templateGroupRoutes, { prefix: '/api/template-groups' });
   await fastify.register(cannedResponseRoutes, { prefix: '/api/canned-responses' });
   await fastify.register(webhookRoutes, { prefix: '/api/webhook' });
   await fastify.register(analyticsRoutes, { prefix: '/api/analytics' });

@@ -106,6 +106,7 @@ model Workspace {
   agentFlowSessions AgentFlowSession[]
   mediaAssets       MediaAsset[]
   templates         Template[]
+  templateGroups    TemplateGroup[]
   whatsAppFlows     WhatsAppFlow[]
   dataTables        DataTable[]
   webWidget         WebWidget?
@@ -1272,6 +1273,10 @@ model Template {
   waTemplateId     String?
   workspaceId      String
   workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// User-defined organizational group (e.g. "Product", "Service", "Feedback") — purely
+  /// local, unrelated to `category` (Meta's compliance category). Null = ungrouped.
+  groupId          String?
+  group            TemplateGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -1282,6 +1287,25 @@ model Template {
   /// upsert key collide two different-language templates that share a name.
   @@unique([workspaceId, name, language])
   @@index([workspaceId])
+  @@index([groupId])
+}
+
+/// A workspace-defined folder for organizing Templates (e.g. "Product", "Service",
+/// "Feedback") — purely local, has no bearing on Meta's own template category/review.
+model TemplateGroup {
+  id          String     @id @default(cuid())
+  workspaceId String
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  /// Manual sort position (lower = earlier) — set by the reorder UI.
+  order       Int        @default(0)
+  templates   Template[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+  @@map("template_groups")
 }
 
 /// WhatsApp Flow (navigate-only, MVP): authored as raw Meta Flow JSON.
