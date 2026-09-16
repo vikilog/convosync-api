@@ -109,10 +109,13 @@ export default async function virtualNumberRoutes(fastify: FastifyInstance) {
             return records
               .filter((r) => whatsappCanonicalDigits(otherPartyDigits(r, row.selectedNumber)) === canonical)
               .map((r) => ({
-                ...toCallLogEntry(r, row.selectedNumber, (raw) => svc.formatDisplayNumber(raw), recordedUuids.has(r.callUuid), {
-                  id: contact.id,
-                  name: contact.name,
-                }),
+                ...toCallLogEntry(
+                  r,
+                  row.selectedNumber,
+                  (raw) => svc.formatDisplayNumber(raw, (row.selectedCountryIso ?? undefined) as SupportedCountryIso | undefined),
+                  recordedUuids.has(r.callUuid),
+                  { id: contact.id, name: contact.name },
+                ),
                 numberId: row.id,
                 numberLabel: row.label,
               }));
@@ -161,7 +164,7 @@ export default async function virtualNumberRoutes(fastify: FastifyInstance) {
             toCallLogEntry(
               r,
               row.selectedNumber!,
-              (raw) => svc.formatDisplayNumber(raw),
+              (raw) => svc.formatDisplayNumber(raw, (row.selectedCountryIso ?? undefined) as SupportedCountryIso | undefined),
               recordedUuids.has(r.callUuid),
               contactsByDigits.get(digitsByRecord[i]) ?? null,
             ),
@@ -195,7 +198,7 @@ export default async function virtualNumberRoutes(fastify: FastifyInstance) {
       const entry = toCallLogEntry(
         detail,
         row.selectedNumber,
-        (raw) => svc.formatDisplayNumber(raw),
+        (raw) => svc.formatDisplayNumber(raw, (row.selectedCountryIso ?? undefined) as SupportedCountryIso | undefined),
         Boolean(detail.recordUrl),
         namesByDigits.get(otherDigits) ?? null,
       );

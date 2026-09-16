@@ -63,7 +63,7 @@ export async function ensureTelnyxBrowserCalling(row: VirtualNumberRow): Promise
 
   await telnyx.setNumberApplication(row.selectedNumber, appId);
   if (endpointId) {
-    await telnyx.setEndpointApplication(endpointId, appId);
+    await telnyx.setEndpointApplication(endpointId, appId, row.selectedCountryIso as telnyx.TelnyxCountryIso | undefined);
     // Must run after setEndpointApplication — see setEndpointCallerId's own comment on why
     // it merges rather than assuming PATCH order doesn't matter.
     await telnyx.setEndpointCallerId(endpointId, row.selectedNumber);

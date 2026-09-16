@@ -68,6 +68,7 @@ export function toCallLogEntry(
     status: statusFromCallRecord(record),
     contact: {
       phone: formatDisplayNumber(otherParty),
+      rawPhone: otherParty,
       name: contact?.name ?? null,
       contactId: contact?.id ?? null,
     },

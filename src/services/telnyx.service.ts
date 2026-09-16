@@ -403,8 +403,17 @@ export async function setNumberApplication(number: string, appId: string): Promi
 /** `appId` (kept for VoiceProvider interface parity with Plivo, where it really is an
  * Application id) is unused here — a Credential Connection's outbound calls need an
  * Outbound Voice Profile assigned the same way a TeXML Application does (see
- * createApplication above), not a link to the Application itself. */
-export async function setEndpointApplication(endpointId: string, _appId: string): Promise<void> {
+ * createApplication above), not a link to the Application itself.
+ *
+ * `countryIso` sets the connection's outbound `localization` — without it Telnyx falls
+ * back to US dialing-plan rules for any number dialed without a leading "+" (confirmed
+ * live: an SG workspace's agent dialing a bare local number got it silently reinterpreted
+ * as NANP and prefixed with "1", producing a dead +1 destination and a failed call). */
+export async function setEndpointApplication(
+  endpointId: string,
+  _appId: string,
+  countryIso?: TelnyxCountryIso,
+): Promise<void> {
   assertEnabled();
   await telnyxRequest<unknown>(`/credential_connections/${encodeURIComponent(endpointId)}`, {
     method: 'PATCH',
@@ -414,8 +423,15 @@ export async function setEndpointApplication(endpointId: string, _appId: string)
       // TelnyxCallLog — see /telnyx/call-events — since Telnyx's Detail Record Search
       // API can't be relied on to list these calls (confirmed live, persistent 500s).
       webhook_event_url: `${config.backendPublicUrl}/api/virtual-number/telnyx/call-events`,
-      ...(config.telnyx.outboundVoiceProfileId
-        ? { outbound: { outbound_voice_profile_id: config.telnyx.outboundVoiceProfileId } }
+      ...(config.telnyx.outboundVoiceProfileId || countryIso
+        ? {
+            outbound: {
+              ...(config.telnyx.outboundVoiceProfileId
+                ? { outbound_voice_profile_id: config.telnyx.outboundVoiceProfileId }
+                : {}),
+              ...(countryIso ? { localization: countryIso } : {}),
+            },
+          }
         : {}),
     }),
   });
