@@ -6,6 +6,7 @@ import { getJwtUser } from '../../middleware/auth.js';
 import { prisma } from '../../lib/prisma.js';
 import { emitNotification } from '../../services/notifications/emitNotification.js';
 import { NOTIFICATION_TYPES } from '../../services/notifications/types.js';
+import { allocateNumberForPaidRequest } from '../virtualNumber.js';
 
 const STATUS = z.enum([
   'pending_approval',
@@ -157,5 +158,40 @@ export default async function platformVirtualNumberRequestRoutes(fastify: Fastif
       data: { status: 'rejected', rejectedAt: new Date(), rejectionReason: body.reason },
     });
     return serialize(updated);
+  });
+
+  /** The manual gate: a workspace's payment only reaches `paid` — the actual carrier
+   * number isn't bought until an admin allocates one here. See allocateNumberForPaidRequest()
+   * in ../virtualNumber.ts for what this triggers. */
+  app.post('/:id/allocate-number', { schema: { params: idParamsSchema } }, async (request, reply) => {
+    const { id } = request.params;
+
+    const existing = await prisma.virtualNumberRequest.findUnique({ where: { id } });
+    if (!existing) return reply.code(404).send({ error: 'Request not found' });
+    if (existing.status !== 'paid') {
+      return reply.code(409).send({ error: `Cannot allocate a number for a request in "${existing.status}" state.` });
+    }
+
+    try {
+      const active = await allocateNumberForPaidRequest(existing);
+
+      void emitNotification({
+        workspaceId: active.workspaceId,
+        type: NOTIFICATION_TYPES.VIRTUAL_NUMBER_ACTIVATED,
+        title: 'Your virtual number is live',
+        message: 'Your virtual number has been activated and is ready to use in Calls and Journeys.',
+        entityType: 'virtual_number_request',
+        entityId: active.id,
+        targetUserId: active.requestedByUserId,
+      });
+
+      return serialize(active);
+    } catch (err) {
+      const failed = await prisma.virtualNumberRequest.update({
+        where: { id: existing.id },
+        data: { purchaseError: err instanceof Error ? err.message : 'Number purchase failed' },
+      });
+      return reply.code(502).send({ ...serialize(failed), error: failed.purchaseError });
+    }
   });
 }

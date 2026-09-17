@@ -12,6 +12,10 @@ import {
   webhookPaymentEntity,
   webhookSubscriptionEntity,
 } from './razorpay-webhook.types.js';
+import {
+  handleVirtualNumberSubscriptionCharged,
+  handleVirtualNumberSubscriptionEvent,
+} from '../../routes/virtualNumber.helpers.js';
 
 type RazorpayWebhookRequest = FastifyRequest & { rawBody?: string };
 
@@ -116,12 +120,20 @@ export class WebhookController {
           case 'subscription.cancelled':
           case 'subscription.paused':
           case 'subscription.resumed':
-          case 'subscription.halted':
+          case 'subscription.halted': {
             await this.billing.handleSubscriptionEvent(event.event, event.payload ?? {});
+            // Not mutually exclusive with the SaaS-plan handler above — each no-ops if
+            // the subscription id isn't theirs, so both can safely run for every event.
+            const sub = webhookSubscriptionEntity(event.payload ?? {});
+            if (sub) await handleVirtualNumberSubscriptionEvent(event.event, sub);
             break;
-          case 'subscription.charged':
+          }
+          case 'subscription.charged': {
             await this.billing.handleSubscriptionCharged(event.payload ?? {});
+            const sub = webhookSubscriptionEntity(event.payload ?? {});
+            if (sub) await handleVirtualNumberSubscriptionCharged(sub);
             break;
+          }
           case 'invoice.paid':
             await this.billing.handleInvoicePaid(event.payload ?? {});
             break;

@@ -2379,11 +2379,34 @@ model VirtualNumberRequest {
   selectedNumber        String?
   selectedCity          String?
   selectedCountryIso    String?
+  /// Legacy INR-only field — kept populated (only) when selectedCurrency is "INR" so
+  /// withGst()/older reads keep working unchanged. New code should read
+  /// selectedPriceMinor + selectedCurrency instead, which are always both set.
   selectedPriceInrPaise Int?
+  /// Minor units (paise/cents) of selectedCurrency — the actual amount charged.
+  selectedPriceMinor Int?
+  /// "INR" | "USD" — the only two currencies checkout can settle (see CHECKOUT_CURRENCY
+  /// in virtualNumber.schemas.ts). Defaults to INR so pre-existing rows behave exactly
+  /// as before this column existed.
+  selectedCurrency String @default("INR")
 
+  /// Legacy — populated only for requests created before the switch to recurring
+  /// subscriptions. New rows use razorpaySubscriptionId instead.
   razorpayOrderId   String?
   razorpayPaymentId String?
   paidAt            DateTime?
+
+  /// The number's monthly rental IS a real recurring Razorpay Subscription (not a
+  /// one-time order) — see resolveRentalPlanId()/allocateNumberForPaidRequest() and
+  /// /pay/create-subscription in virtualNumber.ts. Cancelled automatically on release.
+  razorpaySubscriptionId String? @unique
+  razorpayCustomerId     String?
+  /// Mirrors Razorpay's own subscription status (created|authenticated|active|paused|
+  /// cancelled|completed|expired|halted) — kept in sync by the subscription.* webhooks.
+  subscriptionStatus     String?
+  /// End of the currently paid billing cycle — refreshed on every subscription.charged
+  /// webhook, so support/admin can see when the next renewal is due.
+  currentPeriodEnd       DateTime?
 
   plivoNumberId  String?
   activatedAt    DateTime?
@@ -2399,6 +2422,17 @@ model VirtualNumberRequest {
   userMissedCallAutoReplyEnabled Boolean @default(false)
   userMissedCallMessage          String?
   userMissedCallTemplateId       String?
+
+  /// Workspace preference: bill per-minute call transcription from the wallet, at the
+  /// admin-configured VirtualNumberAddOnPricing rate for this number's provider. Stored
+  /// now so the setting survives once the actual recording/billing wiring ships — flipping
+  /// this on does not yet trigger anything on its own (see CallingSettingsPage copy).
+  transcriptionEnabled Boolean @default(false)
+  /// Workspace preference: keep call recordings in storage past the free window, billed
+  /// per-minute-per-month from the wallet at the admin-configured VirtualNumberAddOnPricing
+  /// "storage" rate. Same "preference only for now" status as transcriptionEnabled — set at
+  /// checkout (add-ons panel) or later from CallingSettingsPage, doesn't trigger anything yet.
+  recordingStorageEnabled Boolean @default(false)
 
   // Browser calling — a Plivo Endpoint is the SIP/WebRTC identity the workspace's
   // browser (Plivo Browser SDK) logs into so agents can talk over real audio.
@@ -2416,6 +2450,131 @@ model VirtualNumberRequest {
   @@index([status])
   @@index([razorpayOrderId])
   @@map("virtual_number_requests")
+}
+
+/// Super-admin-configured price for a virtual number, by country and currency —
+/// looked up in GET /available-numbers ahead of the flat priceForType() fallback
+/// in virtualNumber.helpers.ts. One row per (countryIso, numberType).
+model VirtualNumberPricing {
+  id         String @id @default(cuid())
+  countryIso String
+  countryName String
+  /// "local" | "tollfree" — matches the distinction priceForType() already draws.
+  numberType String @default("local")
+  /// ISO 4217 currency code, e.g. "INR" | "USD" | "GBP" | "SGD".
+  currency   String
+  /// Minor units (paise/cents/pence) of `currency` — the RAW PROVIDER COST (what Plivo/
+  /// Telnyx actually charges us), not what the workspace pays. See commissionPercent.
+  monthlyPriceMinor Int
+  /// Platform markup, percent, added on top of monthlyPriceMinor to get the price a
+  /// workspace actually pays — e.g. 20 turns a ₹200 cost into a ₹240 charge. 0 = resell
+  /// at cost (today's behavior for every row before this field existed).
+  commissionPercent Float @default(0)
+
+  createdByPlatformAdminId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([countryIso, numberType])
+  @@map("virtual_number_pricing")
+}
+
+/// Super-admin-editable checkout tax rate, by country — GST/VAT/sales-tax is a national
+/// policy, not a per-number-type thing, so this is keyed by countryIso alone (unlike
+/// VirtualNumberPricing above). Looked up in /pay/create-order instead of the old
+/// hardcoded "18% GST, INR only" rule — see resolveTax() in virtualNumber.helpers.ts.
+model VirtualNumberCountryTax {
+  id          String @id @default(cuid())
+  countryIso  String @unique
+  countryName String
+  /// Shown on checkout next to the amount, e.g. "GST", "VAT", "Sales Tax".
+  taxLabel String @default("Tax")
+  /// Percent, e.g. 18 for 18%. 0 is valid — means "no tax charged" for that country.
+  taxRatePercent Float
+
+  createdByPlatformAdminId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("virtual_number_country_tax")
+}
+
+/// Super-admin-editable per-minute outbound CALL rate, by country — the workspace-facing
+/// price shown on /:id/pricing, admin-configured ahead of the old always-live-fetch
+/// behavior. One row per countryIso; an unconfigured country still falls back to a live
+/// Plivo/Telnyx pricing-API call (see resolveCallRate() in virtualNumber.helpers.ts) so
+/// nothing breaks before an admin sets a rate.
+model VirtualNumberCallPricing {
+  id         String @id @default(cuid())
+  countryIso String @unique
+  countryName String
+  /// ISO 4217 currency code, e.g. "INR" | "USD" | "GBP" | "SGD".
+  currency   String
+  /// Minor units of `currency`, per minute — the RAW PROVIDER COST, not what the
+  /// workspace pays. See commissionPercent. Float since real per-minute carrier rates
+  /// are rarely a whole minor unit (e.g. $0.0046/min).
+  baseCostPerMinMinor Float
+  /// Platform markup, percent, added on top of baseCostPerMinMinor to get the price a
+  /// workspace actually pays. 0 = resell at cost.
+  commissionPercent Float @default(0)
+
+  createdByPlatformAdminId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("virtual_number_call_pricing")
+}
+
+/// Caches the Razorpay Subscription Plan created for a given monthly rental total
+/// (base cost + commission + tax, in minor units) — Razorpay Plans are immutable and
+/// created lazily on first checkout at that exact price point, then reused for every
+/// later checkout that lands on the same (currency, amountMinor) pair. See
+/// resolveRentalPlanId() in virtualNumber.ts. A later admin price change simply lands
+/// on a different amountMinor and gets its own new Plan — it never mutates this row
+/// or any workspace's already-created subscription (Razorpay plans can't be edited).
+model VirtualNumberRentalPlan {
+  id             String @id @default(cuid())
+  /// "INR" | "USD" — matches CHECKOUT_CURRENCY in virtualNumber.schemas.ts.
+  currency       String
+  /// Minor units of `currency` — the exact monthly total (incl. tax) this plan bills.
+  amountMinor    Int
+  razorpayPlanId String
+
+  createdAt DateTime @default(now())
+
+  @@unique([currency, amountMinor])
+  @@map("virtual_number_rental_plans")
+}
+
+/// Super-admin-editable per-minute add-on rate (call recording / transcription /
+/// recording storage), shown on the checkout page as reference pricing. NOT fetched
+/// live from Plivo/Telnyx — neither provider's account-level Pricing API exposes these
+/// rates (only voice in/outbound), so this is seeded from their real account billing
+/// pages and admin can adjust it. One row per (countryIso, addOnType) — rates can differ
+/// by country even under the same provider, e.g. US/GB/SG all route through Telnyx today
+/// but aren't guaranteed to stay priced identically. `provider` is derived from
+/// countryIso (resolveVoiceProvider) at write time and kept as a plain column for
+/// display/filtering, not part of the identity key.
+model VirtualNumberAddOnPricing {
+  id         String @id @default(cuid())
+  countryIso String
+  /// "plivo" | "telnyx" — derived from countryIso, stored for display/filtering.
+  provider   String
+  /// "recording" | "transcription" | "storage" (recording storage, billed per minute
+  /// stored per month — Plivo's is free for the first 90 days, then charged).
+  addOnType  String
+  /// ISO 4217 — Plivo's India account bills in INR, Telnyx's in USD.
+  currency   String @default("USD")
+  /// Minor units (paise/cents) of `currency`, per minute — Float because Plivo's real
+  /// storage rate (₹0.032/min/month) isn't a whole number of paise.
+  ratePerMinMinor Float
+
+  createdByPlatformAdminId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([countryIso, addOnType])
+  @@map("virtual_number_addon_pricing")
 }
 
 /// Async transcript delivered by Plivo's `<Record transcriptionUrl>` callback,

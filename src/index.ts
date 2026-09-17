@@ -80,6 +80,10 @@ import platformDemoRequestRoutes from './routes/platform/demo-requests.js';
 import platformSupportRequestRoutes from './routes/platform/support-requests.js';
 import platformInfrastructureRoutes from './routes/platform/infrastructure.js';
 import platformVirtualNumberRequestRoutes from './routes/platform/virtual-number-requests.js';
+import platformVirtualNumberPricingRoutes from './routes/platform/virtual-number-pricing.js';
+import platformVirtualNumberAddOnPricingRoutes from './routes/platform/virtual-number-addon-pricing.js';
+import platformVirtualNumberCallPricingRoutes from './routes/platform/virtual-number-call-pricing.js';
+import platformVirtualNumberTaxRoutes from './routes/platform/virtual-number-tax.js';
 import demoRequestRoutes from './routes/demo-requests.js';
 import supportRequestRoutes from './routes/support-requests.js';
 import aiKnowledgeRoutes from './modules/ai-knowledge/routes/ai-knowledge.routes.js';
@@ -247,6 +251,18 @@ async function start() {
   await fastify.register(platformInfrastructureRoutes, { prefix: '/api/platform/infrastructure' });
   await fastify.register(platformVirtualNumberRequestRoutes, {
     prefix: '/api/platform/virtual-number-requests',
+  });
+  await fastify.register(platformVirtualNumberPricingRoutes, {
+    prefix: '/api/platform/virtual-number-pricing',
+  });
+  await fastify.register(platformVirtualNumberAddOnPricingRoutes, {
+    prefix: '/api/platform/virtual-number-addon-pricing',
+  });
+  await fastify.register(platformVirtualNumberCallPricingRoutes, {
+    prefix: '/api/platform/virtual-number-call-pricing',
+  });
+  await fastify.register(platformVirtualNumberTaxRoutes, {
+    prefix: '/api/platform/virtual-number-tax',
   });
   await fastify.register(demoRequestRoutes, { prefix: '/api/demo-requests' });
   await fastify.register(supportRequestRoutes, { prefix: '/api/support-requests' });

@@ -316,8 +316,10 @@ export async function getVoicePricing(countryIso: TelnyxCountryIso = 'US'): Prom
     };
   } catch {
     const countryNames: Record<TelnyxCountryIso, string> = { US: 'United States', GB: 'United Kingdom', SG: 'Singapore' };
-    // Published headline figures (telnyx.com/pricing/voice-api) as of the research
-    // behind this integration — verify against the real account once credentials exist.
+    // US outbound ($0.007/min) reconfirmed live against telnyx.com/pricing/voice-api
+    // on 2026-09-16 — matches this fallback exactly. Inbound, and both GB/SG rates,
+    // are NOT published on that page (Telnyx gates non-US SIP trunking rates behind a
+    // downloadable price sheet) — those three numbers are still an unverified estimate.
     return { countryIso, countryName: countryNames[countryIso], outboundRatePerMinUsd: 0.007, inboundRatePerMinUsd: 0.0035 };
   }
 }
